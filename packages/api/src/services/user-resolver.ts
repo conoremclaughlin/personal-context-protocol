@@ -1,0 +1,143 @@
+import { z } from 'zod';
+import type { DataComposer } from '../data/composer';
+import type { User } from '../data/models/user.model';
+import { logger } from '../utils/logger';
+
+/**
+ * Base schema for user identification fields.
+ * Use this for extending with additional fields (it's a plain ZodObject).
+ */
+export const userIdentifierFields = {
+  // Direct UUID lookup
+  userId: z.string().uuid().optional().describe('User UUID (if known)'),
+
+  // Email lookup
+  email: z.string().email().optional().describe('User email address'),
+
+  // Phone lookup
+  phone: z.string().optional().describe('Phone number in E.164 format (e.g., +14155551234)'),
+
+  // Platform-based lookup
+  platform: z.enum(['telegram', 'whatsapp', 'discord']).optional().describe('Platform name'),
+  platformId: z.string().optional().describe('Platform-specific user ID or username'),
+};
+
+/**
+ * Base schema object (without refinement) - use this for extending
+ */
+export const userIdentifierBaseSchema = z.object(userIdentifierFields);
+
+/**
+ * Schema for flexible user identification with validation.
+ * Supports multiple ways to identify a user:
+ * 1. userId - direct UUID lookup
+ * 2. email - lookup by email address
+ * 3. phone - lookup by phone number (E.164 format)
+ * 4. platform + platformId - lookup by platform-specific identifier
+ */
+export const userIdentifierSchema = userIdentifierBaseSchema.refine(
+  (data) => {
+    // Must have at least one identifier
+    const hasUserId = !!data.userId;
+    const hasEmail = !!data.email;
+    const hasPhone = !!data.phone;
+    const hasPlatform = !!data.platform && !!data.platformId;
+    return hasUserId || hasEmail || hasPhone || hasPlatform;
+  },
+  {
+    message: 'Must provide at least one identifier: userId, email, phone, or platform+platformId',
+  }
+);
+
+export type UserIdentifier = z.infer<typeof userIdentifierBaseSchema>;
+
+/**
+ * Result of user resolution
+ */
+export interface ResolvedUser {
+  user: User;
+  resolvedBy: 'userId' | 'email' | 'phone' | 'platform';
+}
+
+/**
+ * Resolves a user from various identifiers.
+ * Tries identifiers in priority order: userId > email > platform > phone
+ */
+export async function resolveUser(
+  identifier: UserIdentifier,
+  dataComposer: DataComposer
+): Promise<ResolvedUser | null> {
+  const usersRepo = dataComposer.repositories.users;
+
+  // 1. Try userId first (most specific)
+  if (identifier.userId) {
+    const user = await usersRepo.findById(identifier.userId);
+    if (user) {
+      logger.debug(`User resolved by userId: ${identifier.userId}`);
+      return { user, resolvedBy: 'userId' };
+    }
+  }
+
+  // 2. Try email
+  if (identifier.email) {
+    const user = await usersRepo.findByEmail(identifier.email);
+    if (user) {
+      logger.debug(`User resolved by email: ${identifier.email}`);
+      return { user, resolvedBy: 'email' };
+    }
+  }
+
+  // 3. Try platform + platformId
+  if (identifier.platform && identifier.platformId) {
+    const user = await usersRepo.findByPlatformId(identifier.platform, identifier.platformId);
+    if (user) {
+      logger.debug(`User resolved by ${identifier.platform}: ${identifier.platformId}`);
+      return { user, resolvedBy: 'platform' };
+    }
+  }
+
+  // 4. Try phone number
+  if (identifier.phone) {
+    const user = await usersRepo.findByPhoneNumber(identifier.phone);
+    if (user) {
+      logger.debug(`User resolved by phone: ${identifier.phone}`);
+      return { user, resolvedBy: 'phone' };
+    }
+  }
+
+  logger.warn('User not found with provided identifiers', { identifier });
+  return null;
+}
+
+/**
+ * Resolves a user or throws an error if not found.
+ */
+export async function resolveUserOrThrow(
+  identifier: UserIdentifier,
+  dataComposer: DataComposer
+): Promise<ResolvedUser> {
+  const result = await resolveUser(identifier, dataComposer);
+
+  if (!result) {
+    const identifierDescription = describeIdentifier(identifier);
+    throw new Error(`User not found: ${identifierDescription}`);
+  }
+
+  return result;
+}
+
+/**
+ * Creates a human-readable description of the identifier used.
+ */
+function describeIdentifier(identifier: UserIdentifier): string {
+  const parts: string[] = [];
+
+  if (identifier.userId) parts.push(`userId=${identifier.userId}`);
+  if (identifier.email) parts.push(`email=${identifier.email}`);
+  if (identifier.phone) parts.push(`phone=${identifier.phone}`);
+  if (identifier.platform && identifier.platformId) {
+    parts.push(`${identifier.platform}=${identifier.platformId}`);
+  }
+
+  return parts.join(', ') || 'no identifiers provided';
+}

@@ -1,0 +1,3 @@
+[submodule "packages/clawdbot"]
+	path = packages/clawdbot
+	url = git@github.com:clawdbot/clawdbot.git

@@ -1,0 +1,58 @@
+{
+  "name": "@personal-context/api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal context protocol API server with MCP, Telegram bot, and REST API",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "server": "tsx src/server.ts",
+    "server:dev": "tsx watch src/server.ts",
+    "test": "jest",
+    "test:connection": "tsx src/test-connection.ts",
+    "test:channels": "tsx src/test-channels.ts",
+    "test:orchestrator": "tsx src/scripts/test-orchestrator.ts",
+    "test:message-flow": "tsx src/scripts/test-message-flow.ts",
+    "sessions": "tsx src/scripts/sessions.ts",
+    "lint": "eslint src --ext .ts",
+    "type-check": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.4",
+    "@supabase/supabase-js": "^2.39.3",
+    "bcrypt": "^5.1.1",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "telegraf": "^4.15.0",
+    "winston": "^3.11.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/bcrypt": "^5.0.2",
+    "@types/compression": "^1.7.5",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/jest": "^29.5.11",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/node": "^20.10.6",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

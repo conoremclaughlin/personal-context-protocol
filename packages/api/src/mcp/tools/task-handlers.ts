@@ -1,0 +1,318 @@
+/**
+ * MCP Tool Handlers for Project Tasks
+ *
+ * These tools enable Claude to create, manage, and track tasks
+ * tied to specific projects across sessions.
+ */
+
+import { z } from 'zod';
+import type { DataComposer } from '../../data/composer';
+import type { TaskStatus, TaskPriority } from '../../data/repositories/project-tasks.repository';
+import { resolveUser, type UserIdentifier } from '../../services/user-resolver';
+
+// Common user identifier schema
+const userIdentifierSchema = z.object({
+  userId: z.string().uuid().optional().describe('Direct user UUID'),
+  email: z.string().email().optional().describe('User email address'),
+  platform: z.enum(['telegram', 'whatsapp', 'discord']).optional(),
+  platformId: z.string().optional().describe('Platform-specific user ID'),
+});
+
+// ============================================================================
+// CREATE TASK
+// ============================================================================
+
+export const createTaskSchema = z.object({
+  ...userIdentifierSchema.shape,
+  projectId: z.string().uuid().describe('Project ID to add the task to'),
+  title: z.string().min(1).max(500).describe('Task title'),
+  description: z.string().optional().describe('Detailed task description'),
+  priority: z.enum(['low', 'medium', 'high', 'critical']).optional().default('medium'),
+  tags: z.array(z.string()).optional().describe('Tags for categorization'),
+  createdBy: z.string().optional().describe('Who created this task (e.g., "claude", "user")'),
+});
+
+type McpResponse = {
+  content: Array<{ type: 'text'; text: string }>;
+  isError?: boolean;
+};
+
+function mcpResponse(data: object, isError = false): McpResponse {
+  return {
+    content: [{ type: 'text' as const, text: JSON.stringify(data) }],
+    isError,
+  };
+}
+
+export async function handleCreateTask(
+  args: z.infer<typeof createTaskSchema>,
+  dataComposer: DataComposer
+): Promise<McpResponse> {
+  try {
+    const resolved = await resolveUser(args as UserIdentifier, dataComposer);
+    if (!resolved) {
+      return mcpResponse({ success: false, error: 'User not found' }, true);
+    }
+
+    // Verify project exists and belongs to user
+    const project = await dataComposer.repositories.projects.findById(args.projectId);
+    if (!project) {
+      return mcpResponse({ success: false, error: 'Project not found' }, true);
+    }
+    if (project.user_id !== resolved.user.id) {
+      return mcpResponse({ success: false, error: 'Project does not belong to this user' }, true);
+    }
+
+    const task = await dataComposer.repositories.projectTasks.create({
+      project_id: args.projectId,
+      user_id: resolved.user.id,
+      title: args.title,
+      description: args.description,
+      priority: args.priority as TaskPriority,
+      tags: args.tags,
+      created_by: args.createdBy || 'claude',
+    });
+
+    return mcpResponse({
+      success: true,
+      task: {
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        tags: task.tags,
+        createdAt: task.created_at,
+      },
+    });
+  } catch (error) {
+    return mcpResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to create task',
+    }, true);
+  }
+}
+
+// ============================================================================
+// LIST TASKS
+// ============================================================================
+
+export const listTasksSchema = z.object({
+  ...userIdentifierSchema.shape,
+  projectId: z.string().uuid().optional().describe('Filter by project (optional)'),
+  status: z.enum(['pending', 'in_progress', 'completed', 'blocked']).optional(),
+  activeOnly: z.boolean().optional().default(false).describe('Only show pending/in_progress tasks'),
+  limit: z.number().optional().default(50),
+});
+
+export async function handleListTasks(
+  args: z.infer<typeof listTasksSchema>,
+  dataComposer: DataComposer
+): Promise<McpResponse> {
+  try {
+    const resolved = await resolveUser(args as UserIdentifier, dataComposer);
+    if (!resolved) {
+      return mcpResponse({ success: false, error: 'User not found' }, true);
+    }
+
+    let tasks;
+    if (args.activeOnly) {
+      tasks = await dataComposer.repositories.projectTasks.listActiveTasks(
+        resolved.user.id,
+        args.projectId
+      );
+    } else {
+      tasks = await dataComposer.repositories.projectTasks.listByUser(resolved.user.id, {
+        status: args.status as TaskStatus | undefined,
+        projectId: args.projectId,
+        limit: args.limit,
+      });
+    }
+
+    // Get project names for context
+    const projectIds = [...new Set(tasks.map(t => t.project_id))];
+    const projects = await Promise.all(
+      projectIds.map(id => dataComposer.repositories.projects.findById(id))
+    );
+    const projectMap = new Map(projects.filter(Boolean).map(p => [p!.id, p!.name]));
+
+    return mcpResponse({
+      success: true,
+      tasks: tasks.map(task => ({
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        tags: task.tags,
+        projectId: task.project_id,
+        projectName: projectMap.get(task.project_id) || 'Unknown',
+        createdAt: task.created_at,
+        completedAt: task.completed_at,
+      })),
+    });
+  } catch (error) {
+    return mcpResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to list tasks',
+    }, true);
+  }
+}
+
+// ============================================================================
+// UPDATE TASK
+// ============================================================================
+
+export const updateTaskSchema = z.object({
+  ...userIdentifierSchema.shape,
+  taskId: z.string().uuid().describe('Task ID to update'),
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().optional(),
+  status: z.enum(['pending', 'in_progress', 'completed', 'blocked']).optional(),
+  priority: z.enum(['low', 'medium', 'high', 'critical']).optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+export async function handleUpdateTask(
+  args: z.infer<typeof updateTaskSchema>,
+  dataComposer: DataComposer
+): Promise<McpResponse> {
+  try {
+    const resolved = await resolveUser(args as UserIdentifier, dataComposer);
+    if (!resolved) {
+      return mcpResponse({ success: false, error: 'User not found' }, true);
+    }
+
+    // Verify task exists and belongs to user
+    const existing = await dataComposer.repositories.projectTasks.findById(args.taskId);
+    if (!existing) {
+      return mcpResponse({ success: false, error: 'Task not found' }, true);
+    }
+    if (existing.user_id !== resolved.user.id) {
+      return mcpResponse({ success: false, error: 'Task does not belong to this user' }, true);
+    }
+
+    const updates: Record<string, unknown> = {};
+    if (args.title !== undefined) updates.title = args.title;
+    if (args.description !== undefined) updates.description = args.description;
+    if (args.status !== undefined) updates.status = args.status;
+    if (args.priority !== undefined) updates.priority = args.priority;
+    if (args.tags !== undefined) updates.tags = args.tags;
+
+    const task = await dataComposer.repositories.projectTasks.update(args.taskId, updates);
+
+    return mcpResponse({
+      success: true,
+      task: {
+        id: task.id,
+        title: task.title,
+        description: task.description,
+        status: task.status,
+        priority: task.priority,
+        tags: task.tags,
+        completedAt: task.completed_at,
+      },
+    });
+  } catch (error) {
+    return mcpResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to update task',
+    }, true);
+  }
+}
+
+// ============================================================================
+// COMPLETE TASK
+// ============================================================================
+
+export const completeTaskSchema = z.object({
+  ...userIdentifierSchema.shape,
+  taskId: z.string().uuid().describe('Task ID to mark as completed'),
+});
+
+export async function handleCompleteTask(
+  args: z.infer<typeof completeTaskSchema>,
+  dataComposer: DataComposer
+): Promise<McpResponse> {
+  try {
+    const resolved = await resolveUser(args as UserIdentifier, dataComposer);
+    if (!resolved) {
+      return mcpResponse({ success: false, error: 'User not found' }, true);
+    }
+
+    // Verify task exists and belongs to user
+    const existing = await dataComposer.repositories.projectTasks.findById(args.taskId);
+    if (!existing) {
+      return mcpResponse({ success: false, error: 'Task not found' }, true);
+    }
+    if (existing.user_id !== resolved.user.id) {
+      return mcpResponse({ success: false, error: 'Task does not belong to this user' }, true);
+    }
+
+    const task = await dataComposer.repositories.projectTasks.completeTask(args.taskId);
+
+    return mcpResponse({
+      success: true,
+      task: {
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        completedAt: task.completed_at,
+      },
+    });
+  } catch (error) {
+    return mcpResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to complete task',
+    }, true);
+  }
+}
+
+// ============================================================================
+// GET PROJECT TASK STATS
+// ============================================================================
+
+export const getTaskStatsSchema = z.object({
+  ...userIdentifierSchema.shape,
+  projectId: z.string().uuid().describe('Project ID to get stats for'),
+});
+
+export async function handleGetTaskStats(
+  args: z.infer<typeof getTaskStatsSchema>,
+  dataComposer: DataComposer
+): Promise<McpResponse> {
+  try {
+    const resolved = await resolveUser(args as UserIdentifier, dataComposer);
+    if (!resolved) {
+      return mcpResponse({ success: false, error: 'User not found' }, true);
+    }
+
+    // Verify project exists and belongs to user
+    const project = await dataComposer.repositories.projects.findById(args.projectId);
+    if (!project) {
+      return mcpResponse({ success: false, error: 'Project not found' }, true);
+    }
+    if (project.user_id !== resolved.user.id) {
+      return mcpResponse({ success: false, error: 'Project does not belong to this user' }, true);
+    }
+
+    const stats = await dataComposer.repositories.projectTasks.getProjectStats(args.projectId);
+
+    return mcpResponse({
+      success: true,
+      stats: {
+        projectId: args.projectId,
+        projectName: project.name,
+        ...stats,
+        completionRate: stats.total > 0
+          ? Math.round((stats.completed / stats.total) * 100)
+          : 0,
+      },
+    });
+  } catch (error) {
+    return mcpResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Failed to get task stats',
+    }, true);
+  }
+}
