@@ -1,0 +1,34 @@
+{
+  "name": "personal-context-protocol",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Personal context protocol - MCP server for managing personal context across services",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "yarn workspace @personal-context/api dev",
+    "build": "yarn workspaces run build",
+    "test": "yarn workspaces run test",
+    "lint": "yarn workspaces run lint",
+    "type-check": "yarn workspaces run type-check",
+    "clean": "yarn workspaces run clean && rm -rf node_modules"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "yarn": ">=1.22.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/personal-context-protocol.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "personal-context",
+    "telegram-bot",
+    "ai-assistant"
+  ],
+  "author": "",
+  "license": "MIT"
+}
