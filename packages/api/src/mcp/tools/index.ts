@@ -64,6 +64,21 @@ import {
 
 import { registerMiniAppRecordTools } from './mini-app-records';
 
+import {
+  handleListPermissions,
+  handleGetUserPermissions,
+  handleSetPermission,
+  handleResetPermission,
+  handleQueryAuditLog,
+  handleGetActivitySummary,
+  listPermissionsSchema,
+  getUserPermissionsSchema,
+  setPermissionSchema,
+  resetPermissionSchema,
+  queryAuditLogSchema,
+  getActivitySummarySchema,
+} from './permissions';
+
 // Re-export for external use
 export { setResponseCallback, addPendingMessage } from './response-handlers';
 export { setTelegramListener, registerChannelListener } from './chat-context-handlers';
@@ -1195,6 +1210,136 @@ Part of the "summarize-and-forget" pattern - after you've extracted what you nee
   // =====================================================
 
   registerMiniAppRecordTools(server, dataComposer);
+
+  // =====================================================
+  // PERMISSION & AUDIT TOOLS
+  // =====================================================
+
+  server.registerTool(
+    'list_permissions',
+    {
+      description: 'List all available permission definitions with their risk levels and defaults',
+      inputSchema: listPermissionsSchema,
+    },
+    async () => {
+      try {
+        return await handleListPermissions();
+      } catch (error) {
+        logger.error('Error in list_permissions:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_user_permissions',
+    {
+      description: `Get the effective permissions for a user (defaults + overrides).
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: getUserPermissionsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetUserPermissions(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_user_permissions:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'set_permission',
+    {
+      description: `Enable or disable a specific permission for a user.
+
+Permissions: web_search, web_fetch, bash_curl, bash_general, file_read, file_write, mcp_tools
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: setPermissionSchema,
+    },
+    async (args) => {
+      try {
+        return await handleSetPermission(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in set_permission:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'reset_permission',
+    {
+      description: `Reset a permission to its default value (remove user override).
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: resetPermissionSchema,
+    },
+    async (args) => {
+      try {
+        return await handleResetPermission(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in reset_permission:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'query_audit_log',
+    {
+      description: `Query the audit log for security monitoring.
+
+Filter by action, category, status, or user. Returns logs from the past N hours.`,
+      inputSchema: queryAuditLogSchema,
+    },
+    async (args) => {
+      try {
+        return await handleQueryAuditLog(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in query_audit_log:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_activity_summary',
+    {
+      description: `Get a summary of user activity over the past N hours.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: getActivitySummarySchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetActivitySummary(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_activity_summary:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
 
   logger.info('All MCP tools registered');
 }

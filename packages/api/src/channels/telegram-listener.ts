@@ -11,6 +11,7 @@ import { EventEmitter } from 'events';
 import type { InboundMessage, ChannelPlatform } from './types';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
+import { getAuthorizationService, type AuthorizationService } from '../services/authorization';
 
 const TELEGRAM_API = 'https://api.telegram.org';
 
@@ -115,6 +116,7 @@ export class TelegramListener extends EventEmitter {
   private lastUpdateId = 0;
   private pollTimeout: NodeJS.Timeout | null = null;
   private messageCallback?: MessageCallback;
+  private authService: AuthorizationService;
 
   // Ephemeral message cache - keyed by chatId, stores last N messages
   // Auto-cleaned periodically, never persisted to disk
@@ -134,6 +136,7 @@ export class TelegramListener extends EventEmitter {
       timeout: config?.timeout ?? 30000,
       allowedChatIds: new Set(config?.allowedChatIds ?? []),
     };
+    this.authService = getAuthorizationService();
   }
 
   /**
@@ -240,6 +243,50 @@ export class TelegramListener extends EventEmitter {
       return;
     }
 
+    const chatId = String(telegramMessage.chat.id);
+    const userId = telegramMessage.from ? String(telegramMessage.from.id) : null;
+    const isGroupChat = telegramMessage.chat.type === 'group' || telegramMessage.chat.type === 'supergroup';
+    const text = telegramMessage.text || telegramMessage.caption || '';
+
+    // ========== AUTHORIZATION CHECK (before any processing) ==========
+
+    if (isGroupChat) {
+      // For group chats: check if group is authorized
+      const isAuthorized = await this.authService.isGroupAuthorized('telegram', chatId);
+
+      if (!isAuthorized) {
+        // Only respond to /authorize command in unauthorized groups
+        if (this.isAuthorizeCommand(text)) {
+          await this.handleAuthorizeCommand(telegramMessage, chatId);
+          return;
+        }
+
+        // Complete silence for all other messages - no tokens, no API calls
+        logger.debug(`Ignoring message from unauthorized group: ${chatId}`);
+        return;
+      }
+    } else {
+      // For DMs: check if user is trusted
+      if (!userId) {
+        return;
+      }
+
+      const trustedUser = await this.authService.isUserTrusted('telegram', userId);
+
+      if (!trustedUser) {
+        // Complete silence for untrusted users in DMs
+        logger.debug(`Ignoring DM from untrusted user: ${userId}`);
+        return;
+      }
+
+      // Handle DM commands for trusted users
+      if (await this.handleTrustedUserCommand(telegramMessage, chatId, userId)) {
+        return; // Command was handled
+      }
+    }
+
+    // ========== NORMAL MESSAGE PROCESSING ==========
+
     // Check if message has text OR photo (with optional caption)
     const hasText = !!telegramMessage.text;
     const hasPhoto = !!telegramMessage.photo && telegramMessage.photo.length > 0;
@@ -249,9 +296,7 @@ export class TelegramListener extends EventEmitter {
       return;
     }
 
-    const chatId = String(telegramMessage.chat.id);
-
-    // Check allowlist if configured
+    // Check legacy allowlist if configured (in addition to new auth)
     if (this.config.allowedChatIds.size > 0 && !this.config.allowedChatIds.has(chatId)) {
       logger.debug(`Ignoring message from non-allowed chat: ${chatId}`);
       return;
@@ -288,6 +333,209 @@ export class TelegramListener extends EventEmitter {
         this.emit('error', error);
       }
     }
+  }
+
+  /**
+   * Check if text is an /authorize command
+   */
+  private isAuthorizeCommand(text: string): boolean {
+    return text.trim().toLowerCase().startsWith('/authorize');
+  }
+
+  /**
+   * Handle /authorize command in an unauthorized group
+   */
+  private async handleAuthorizeCommand(msg: TelegramMessage, chatId: string): Promise<void> {
+    const text = msg.text || msg.caption || '';
+    const parts = text.trim().split(/\s+/);
+
+    if (parts.length < 2) {
+      // No code provided - just silently ignore to avoid giving hints
+      return;
+    }
+
+    const code = parts[1];
+    const groupName = msg.chat.title || null;
+
+    const result = await this.authService.authorizeGroupWithCode('telegram', chatId, groupName, code);
+
+    if (result.success) {
+      await this.sendMessage(chatId, `✓ Group authorized! I'm now active in this chat.`);
+      logger.info('Group authorized via challenge code', { chatId, groupName });
+    } else {
+      // Only respond with error if code was invalid (to avoid spam on random /authorize attempts)
+      if (result.error === 'Invalid or expired code') {
+        await this.sendMessage(chatId, `✗ Invalid or expired code. Please get a new code from a trusted user.`);
+      }
+    }
+  }
+
+  /**
+   * Handle DM commands for trusted users
+   * Returns true if a command was handled
+   */
+  private async handleTrustedUserCommand(
+    msg: TelegramMessage,
+    chatId: string,
+    userId: string
+  ): Promise<boolean> {
+    const text = msg.text || '';
+    const command = text.trim().toLowerCase().split(/\s+/)[0];
+
+    switch (command) {
+      case '/generate-group-code':
+      case '/groupcode':
+        return this.handleGenerateCodeCommand(chatId, userId);
+
+      case '/list-groups':
+      case '/groups':
+        return this.handleListGroupsCommand(chatId);
+
+      case '/list-trusted':
+      case '/trusted':
+        return this.handleListTrustedCommand(chatId);
+
+      case '/add-trusted':
+        return this.handleAddTrustedCommand(msg, chatId, userId);
+
+      case '/revoke-group':
+        return this.handleRevokeGroupCommand(msg, chatId, userId);
+
+      default:
+        return false; // Not a command, continue to normal processing
+    }
+  }
+
+  /**
+   * Handle /generate-group-code command
+   */
+  private async handleGenerateCodeCommand(chatId: string, userId: string): Promise<boolean> {
+    const code = await this.authService.generateChallengeCode('telegram', userId);
+
+    if (code) {
+      await this.sendMessage(
+        chatId,
+        `🔑 Group authorization code: \`${code}\`\n\n` +
+          `This code expires in 24 hours.\n` +
+          `To authorize a group, add me to the group and send:\n` +
+          `/authorize ${code}`,
+        { parseMode: 'Markdown' }
+      );
+    } else {
+      await this.sendMessage(
+        chatId,
+        `Unable to generate code. You may have reached the limit of 5 active codes.`
+      );
+    }
+    return true;
+  }
+
+  /**
+   * Handle /list-groups command
+   */
+  private async handleListGroupsCommand(chatId: string): Promise<boolean> {
+    const groups = await this.authService.listAuthorizedGroups('telegram');
+
+    if (groups.length === 0) {
+      await this.sendMessage(chatId, `No authorized groups yet.`);
+    } else {
+      const lines = groups.map(
+        (g) => `• ${g.groupName || g.platformGroupId} (${g.authorizationMethod})`
+      );
+      await this.sendMessage(chatId, `Authorized groups:\n${lines.join('\n')}`);
+    }
+    return true;
+  }
+
+  /**
+   * Handle /list-trusted command
+   */
+  private async handleListTrustedCommand(chatId: string): Promise<boolean> {
+    const users = await this.authService.listTrustedUsers('telegram');
+
+    if (users.length === 0) {
+      await this.sendMessage(chatId, `No trusted users configured.`);
+    } else {
+      const lines = users.map((u) => `• ${u.platformUserId} (${u.trustLevel})`);
+      await this.sendMessage(chatId, `Trusted users:\n${lines.join('\n')}`);
+    }
+    return true;
+  }
+
+  /**
+   * Handle /add-trusted command
+   * Usage: /add-trusted <userId> [admin|member]
+   */
+  private async handleAddTrustedCommand(
+    msg: TelegramMessage,
+    chatId: string,
+    addedByUserId: string
+  ): Promise<boolean> {
+    const text = msg.text || '';
+    const parts = text.trim().split(/\s+/);
+
+    if (parts.length < 2) {
+      await this.sendMessage(
+        chatId,
+        `Usage: /add-trusted <telegram_user_id> [admin|member]\nExample: /add-trusted 123456789 member`
+      );
+      return true;
+    }
+
+    const targetUserId = parts[1];
+    const trustLevel = (parts[2]?.toLowerCase() === 'admin' ? 'admin' : 'member') as 'admin' | 'member';
+
+    const result = await this.authService.addTrustedUser(
+      'telegram',
+      targetUserId,
+      trustLevel,
+      addedByUserId
+    );
+
+    if (result.success) {
+      await this.sendMessage(chatId, `✓ Added ${targetUserId} as trusted ${trustLevel}.`);
+    } else {
+      await this.sendMessage(chatId, `✗ ${result.error}`);
+    }
+    return true;
+  }
+
+  /**
+   * Handle /revoke-group command
+   * Usage: /revoke-group <group_id>
+   */
+  private async handleRevokeGroupCommand(
+    msg: TelegramMessage,
+    chatId: string,
+    userId: string
+  ): Promise<boolean> {
+    const text = msg.text || '';
+    const parts = text.trim().split(/\s+/);
+
+    if (parts.length < 2) {
+      await this.sendMessage(
+        chatId,
+        `Usage: /revoke-group <group_chat_id>\nExample: /revoke-group -1001234567890`
+      );
+      return true;
+    }
+
+    const groupId = parts[1];
+
+    const result = await this.authService.revokeGroup('telegram', groupId, userId);
+
+    if (result.success) {
+      // Leave the group
+      try {
+        await this.apiCall('leaveChat', { chat_id: groupId });
+        await this.sendMessage(chatId, `✓ Revoked and left group ${groupId}.`);
+      } catch {
+        await this.sendMessage(chatId, `✓ Revoked group ${groupId}. (Could not leave - may have already left)`);
+      }
+    } else {
+      await this.sendMessage(chatId, `✗ ${result.error}`);
+    }
+    return true;
   }
 
   /**
@@ -537,7 +785,6 @@ export class TelegramListener extends EventEmitter {
     }
 
     // Debug: log content details to diagnose formatting issues
-    const hasNewlines = content.includes('\n');
     const newlineCount = (content.match(/\n/g) || []).length;
     logger.info(`Telegram message sending`, {
       chatId,
