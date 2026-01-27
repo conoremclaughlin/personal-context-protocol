@@ -349,6 +349,22 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       parts.push(`[From: ${message.sender.name}]`);
     }
 
+    // Media attachments
+    if (message.media && message.media.length > 0) {
+      parts.push('');
+      parts.push('[Attachments]');
+      for (const attachment of message.media) {
+        if (attachment.type === 'image' && attachment.path) {
+          parts.push(`- Image: ${attachment.path}`);
+          parts.push('  (Use the Read tool to view and analyze this image)');
+        } else if (attachment.type === 'image' && attachment.url) {
+          parts.push(`- Image URL: ${attachment.url}`);
+        } else if (attachment.path) {
+          parts.push(`- ${attachment.type}: ${attachment.path}`);
+        }
+      }
+    }
+
     // The actual message
     parts.push('');
     parts.push(message.content);

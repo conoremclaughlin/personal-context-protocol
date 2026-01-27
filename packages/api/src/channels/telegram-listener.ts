@@ -33,12 +33,29 @@ interface TelegramChat {
   last_name?: string;
 }
 
+interface TelegramPhotoSize {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  file_size?: number;
+}
+
+interface TelegramFile {
+  file_id: string;
+  file_unique_id: string;
+  file_size?: number;
+  file_path?: string;
+}
+
 interface TelegramMessage {
   message_id: number;
   from?: TelegramUser;
   date: number;
   chat: TelegramChat;
   text?: string;
+  caption?: string;
+  photo?: TelegramPhotoSize[];
   reply_to_message?: TelegramMessage;
   forward_from?: TelegramUser;
   forward_date?: number;
@@ -69,6 +86,16 @@ export interface TelegramListenerConfig {
 
 export type MessageCallback = (message: InboundMessage) => Promise<void>;
 
+// Ephemeral message storage for context (not persisted to DB)
+interface EphemeralMessage {
+  messageId: number;
+  chatId: string;
+  from: string;
+  fromId: string;
+  text: string;
+  timestamp: Date;
+}
+
 export class TelegramListener extends EventEmitter {
   private token: string;
   private config: Required<Omit<TelegramListenerConfig, 'token' | 'allowedChatIds'>> & {
@@ -78,6 +105,12 @@ export class TelegramListener extends EventEmitter {
   private lastUpdateId = 0;
   private pollTimeout: NodeJS.Timeout | null = null;
   private messageCallback?: MessageCallback;
+
+  // Ephemeral message cache - keyed by chatId, stores last N messages
+  // Auto-cleaned periodically, never persisted to disk
+  private messageCache = new Map<string, EphemeralMessage[]>();
+  private readonly maxMessagesPerChat = 100;
+  private readonly messageTtlMs = 30 * 60 * 1000; // 30 minutes
 
   constructor(config?: TelegramListenerConfig) {
     super();
@@ -196,9 +229,12 @@ export class TelegramListener extends EventEmitter {
       return;
     }
 
-    // Skip non-text messages for now
-    if (!telegramMessage.text) {
-      logger.debug('Skipping non-text message');
+    // Check if message has text OR photo (with optional caption)
+    const hasText = !!telegramMessage.text;
+    const hasPhoto = !!telegramMessage.photo && telegramMessage.photo.length > 0;
+
+    if (!hasText && !hasPhoto) {
+      logger.debug('Skipping message without text or photo');
       return;
     }
 
@@ -210,8 +246,18 @@ export class TelegramListener extends EventEmitter {
       return;
     }
 
-    // Convert to InboundMessage
-    const message = this.convertMessage(telegramMessage);
+    // Convert to InboundMessage (async due to photo URL fetching)
+    const message = await this.convertMessage(telegramMessage);
+
+    // Cache message for context retrieval (ephemeral, not persisted)
+    this.cacheMessage({
+      messageId: telegramMessage.message_id,
+      chatId,
+      from: message.sender.name || message.sender.username || 'Unknown',
+      fromId: message.sender.id || chatId,
+      text: message.body,
+      timestamp: new Date(telegramMessage.date * 1000),
+    });
 
     logger.info(`Received message from @${message.sender.username || message.sender.id}`, {
       chatId,
@@ -236,13 +282,16 @@ export class TelegramListener extends EventEmitter {
   /**
    * Convert Telegram message to InboundMessage format
    */
-  private convertMessage(msg: TelegramMessage): InboundMessage {
+  private async convertMessage(msg: TelegramMessage): Promise<InboundMessage> {
     const chatType = msg.chat.type === 'private' ? 'direct' :
                      msg.chat.type === 'channel' ? 'channel' : 'group';
 
+    // For photos, use caption as text body; for text messages use text
+    const textContent = msg.text || msg.caption || '';
+
     const message: InboundMessage = {
-      body: msg.text || '',
-      rawBody: msg.text || '',
+      body: textContent,
+      rawBody: textContent,
       timestamp: msg.date * 1000, // Convert to ms
       messageId: String(msg.message_id),
       platform: 'telegram' as ChannelPlatform,
@@ -256,6 +305,35 @@ export class TelegramListener extends EventEmitter {
       conversationLabel: msg.chat.title || msg.chat.username || msg.chat.first_name,
       groupSubject: msg.chat.title,
     };
+
+    // Handle photo attachments
+    if (msg.photo && msg.photo.length > 0) {
+      // Get the largest photo (last in array)
+      const largestPhoto = msg.photo[msg.photo.length - 1];
+
+      // Download the file locally so Claude can use Read tool on it
+      const localPath = await this.downloadFile(largestPhoto.file_id);
+
+      if (localPath) {
+        message.media = [{
+          type: 'image',
+          path: localPath, // Local path for Read tool access
+        }];
+
+        // If no caption, add a placeholder body indicating an image was sent
+        if (!textContent) {
+          message.body = '[Image attached]';
+        }
+
+        logger.info('Photo attachment downloaded', {
+          fileId: largestPhoto.file_id,
+          localPath,
+          width: largestPhoto.width,
+          height: largestPhoto.height,
+          hasCaption: !!msg.caption,
+        });
+      }
+    }
 
     // Add reply context if present
     if (msg.reply_to_message) {
@@ -279,6 +357,64 @@ export class TelegramListener extends EventEmitter {
     message.raw = msg;
 
     return message;
+  }
+
+  /**
+   * Get a downloadable URL for a Telegram file
+   */
+  async getFileUrl(fileId: string): Promise<string | null> {
+    try {
+      const file = await this.apiCall<TelegramFile>('getFile', { file_id: fileId });
+      if (file.file_path) {
+        return `${TELEGRAM_API}/file/bot${this.token}/${file.file_path}`;
+      }
+      return null;
+    } catch (error) {
+      logger.error('Failed to get file URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Download a file from Telegram and save locally
+   * Returns the local file path
+   *
+   * Files are saved to ~/.pcp/files/telegram/ which is whitelisted in
+   * Claude Code's additionalDirectories setting, allowing Myra to read them.
+   */
+  async downloadFile(fileId: string): Promise<string | null> {
+    const url = await this.getFileUrl(fileId);
+    if (!url) return null;
+
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`Failed to download: ${response.status}`);
+      }
+
+      const buffer = await response.arrayBuffer();
+
+      // Save to ~/.pcp/files/telegram/ (whitelisted in Claude Code additionalDirectories)
+      const fs = await import('fs/promises');
+      const path = await import('path');
+      const os = await import('os');
+
+      const pcpFilesDir = path.join(os.homedir(), '.pcp', 'files', 'telegram');
+      await fs.mkdir(pcpFilesDir, { recursive: true });
+
+      // Extract extension from URL or default to .jpg
+      const ext = url.match(/\.(\w+)$/)?.[1] || 'jpg';
+      const filename = `${fileId.substring(0, 20)}_${Date.now()}.${ext}`;
+      const filePath = path.join(pcpFilesDir, filename);
+
+      await fs.writeFile(filePath, Buffer.from(buffer));
+
+      logger.info('Downloaded Telegram file', { fileId, filePath, size: buffer.byteLength });
+      return filePath;
+    } catch (error) {
+      logger.error('Failed to download Telegram file:', error);
+      return null;
+    }
   }
 
   /**
@@ -307,6 +443,28 @@ export class TelegramListener extends EventEmitter {
    */
   get running(): boolean {
     return this.isRunning;
+  }
+
+  /**
+   * Send a "typing" indicator to show the bot is working on a response
+   * Call this before starting to process a message
+   */
+  async sendTypingIndicator(conversationId: string): Promise<void> {
+    const chatId = conversationId.startsWith('telegram:')
+      ? conversationId.replace('telegram:', '')
+      : conversationId;
+
+    try {
+      logger.info(`Sending typing indicator to chat ${chatId}...`);
+      const result = await this.apiCall('sendChatAction', {
+        chat_id: chatId,
+        action: 'typing',
+      });
+      logger.info(`Typing indicator sent to chat ${chatId}`, { result });
+    } catch (error) {
+      // Non-critical, don't throw
+      logger.error(`Failed to send typing indicator to chat ${chatId}:`, error);
+    }
   }
 
   /**
@@ -339,6 +497,17 @@ export class TelegramListener extends EventEmitter {
       params.parse_mode = options.parseMode;
     }
 
+    // Debug: log content details to diagnose formatting issues
+    const hasNewlines = content.includes('\n');
+    const newlineCount = (content.match(/\n/g) || []).length;
+    logger.info(`Telegram message sending`, {
+      chatId,
+      length: content.length,
+      newlineCount,
+      parseMode: options?.parseMode || 'plain text',
+      preview: content.substring(0, 80).replace(/\n/g, '↵'),
+    });
+
     try {
       await this.apiCall('sendMessage', params);
       logger.info(`Sent message to Telegram chat ${chatId}`);
@@ -346,6 +515,82 @@ export class TelegramListener extends EventEmitter {
       logger.error(`Failed to send message to Telegram chat ${chatId}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Cache a message for context retrieval
+   * Messages are stored in memory only, never persisted
+   */
+  private cacheMessage(message: EphemeralMessage): void {
+    const { chatId } = message;
+
+    if (!this.messageCache.has(chatId)) {
+      this.messageCache.set(chatId, []);
+    }
+
+    const cache = this.messageCache.get(chatId)!;
+    cache.push(message);
+
+    // Trim to max messages
+    if (cache.length > this.maxMessagesPerChat) {
+      cache.shift();
+    }
+
+    // Clean expired messages periodically
+    this.cleanExpiredMessages(chatId);
+  }
+
+  /**
+   * Remove messages older than TTL
+   */
+  private cleanExpiredMessages(chatId: string): void {
+    const cache = this.messageCache.get(chatId);
+    if (!cache) return;
+
+    const now = Date.now();
+    const filtered = cache.filter((msg) => now - msg.timestamp.getTime() < this.messageTtlMs);
+
+    if (filtered.length !== cache.length) {
+      this.messageCache.set(chatId, filtered);
+      logger.debug(`Cleaned ${cache.length - filtered.length} expired messages from chat ${chatId}`);
+    }
+  }
+
+  /**
+   * Get recent messages from a chat for context
+   * Returns ephemeral data - not persisted, disappears after TTL
+   *
+   * @param chatId - The chat ID to get history from
+   * @param limit - Max messages to return (default: 50)
+   * @returns Array of recent messages, newest last
+   */
+  getRecentMessages(chatId: string, limit = 50): EphemeralMessage[] {
+    this.cleanExpiredMessages(chatId);
+    const cache = this.messageCache.get(chatId) || [];
+    return cache.slice(-limit);
+  }
+
+  /**
+   * Clear message cache for a chat
+   * Call this after summarizing context to free memory
+   */
+  clearMessageCache(chatId: string): void {
+    this.messageCache.delete(chatId);
+    logger.debug(`Cleared message cache for chat ${chatId}`);
+  }
+
+  /**
+   * Get cache stats for debugging
+   */
+  getCacheStats(): { chatCount: number; totalMessages: number } {
+    let totalMessages = 0;
+    for (const messages of this.messageCache.values()) {
+      totalMessages += messages.length;
+    }
+    return {
+      chatCount: this.messageCache.size,
+      totalMessages,
+    };
   }
 }
 

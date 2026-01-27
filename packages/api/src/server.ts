@@ -17,8 +17,11 @@ import { getDataComposer } from './data/composer';
 import { createTelegramListener, TelegramListener } from './channels/telegram-listener';
 import { createSessionHost, SessionHost } from './agent';
 import { createMCPServer, MCPServer } from './mcp/server';
+import { setTelegramListener } from './mcp/tools';
 import { logger } from './utils/logger';
 import { env } from './config/env';
+// @ts-expect-error - no types available
+import telegramifyMarkdown from 'telegramify-markdown';
 
 // Server configuration
 interface ServerConfig {
@@ -43,6 +46,40 @@ let sessionHost: SessionHost | null = null;
 let telegramListener: TelegramListener | null = null;
 let mcpServer: MCPServer | null = null;
 let isShuttingDown = false;
+
+// Typing indicator management - keeps indicator alive during processing
+const activeTypingIntervals: Map<string, NodeJS.Timeout> = new Map();
+const TYPING_INTERVAL_MS = 4000; // Telegram typing expires after ~5s
+
+function startTypingIndicator(conversationId: string): void {
+  // Clear any existing interval for this conversation
+  stopTypingIndicator(conversationId);
+
+  // Send immediately
+  if (telegramListener) {
+    telegramListener.sendTypingIndicator(conversationId);
+  }
+
+  // Then send every 4 seconds
+  const interval = setInterval(() => {
+    if (telegramListener) {
+      telegramListener.sendTypingIndicator(conversationId);
+      logger.debug(`Refreshed typing indicator for ${conversationId}`);
+    }
+  }, TYPING_INTERVAL_MS);
+
+  activeTypingIntervals.set(conversationId, interval);
+  logger.debug(`Started typing indicator interval for ${conversationId}`);
+}
+
+function stopTypingIndicator(conversationId: string): void {
+  const interval = activeTypingIntervals.get(conversationId);
+  if (interval) {
+    clearInterval(interval);
+    activeTypingIntervals.delete(conversationId);
+    logger.debug(`Stopped typing indicator interval for ${conversationId}`);
+  }
+}
 
 /**
  * Start the PCP server
@@ -86,6 +123,10 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       pollingInterval: config.telegramPollingInterval || 1000,
       allowedChatIds: config.allowedTelegramChats,
     });
+
+    // Register with MCP tools for chat context fetching
+    setTelegramListener(telegramListener);
+    logger.info('Telegram listener registered with MCP tools');
   }
 
   // 3. Build system prompt with PCP context
@@ -114,9 +155,30 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
     channels: telegramListener ? {
       telegram: {
         sendMessage: async (conversationId, content, options) => {
-          await telegramListener!.sendMessage(conversationId, content, {
+          // Auto-detect markdown syntax and convert for Telegram
+          // This handles cases where the AI uses markdown but doesn't set format='markdown'
+          const hasMarkdown = /\*\*.+?\*\*|\*.+?\*|`.+?`|^#{1,6}\s/m.test(content);
+
+          let parseMode: 'Markdown' | 'MarkdownV2' | 'HTML' | undefined;
+          let processedContent = content;
+
+          if (options?.format === 'markdown' || hasMarkdown) {
+            // Use telegramify-markdown to convert to Telegram MarkdownV2 format
+            // The library handles escaping and conversion properly
+            try {
+              processedContent = telegramifyMarkdown(content, 'escape');
+              parseMode = 'MarkdownV2';
+            } catch (err) {
+              // If conversion fails, send as plain text
+              logger.warn('Markdown conversion failed, sending as plain text:', err);
+              processedContent = content;
+              parseMode = undefined;
+            }
+          }
+
+          await telegramListener!.sendMessage(conversationId, processedContent, {
             replyToMessageId: options?.replyToMessageId,
-            parseMode: options?.format === 'markdown' ? 'Markdown' : undefined,
+            parseMode,
           });
         },
       },
@@ -138,6 +200,10 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
 
   sessionHost.on('response:sent', (response: { channel: string; conversationId: string }) => {
     logger.info(`Response sent to ${response.channel}:${response.conversationId}`);
+    // Stop typing indicator when response is sent
+    if (response.channel === 'telegram') {
+      stopTypingIndicator(response.conversationId);
+    }
   });
 
   sessionHost.on('response:unrouted', (response: { channel: string; content: string }) => {
@@ -159,6 +225,9 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       const conversationId = message.conversationId || senderId;
 
       logger.info(`Received message from @${message.sender.username || senderId}`);
+
+      // Start persistent typing indicator (refreshes every 4s until response is sent)
+      startTypingIndicator(conversationId);
 
       try {
         // Get or resolve user
@@ -182,10 +251,14 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
           {
             userId: user?.id,
             replyToMessageId: message.replyTo?.id,
+            media: message.media,
           }
         );
       } catch (error) {
         logger.error('Error handling Telegram message:', error);
+
+        // Stop typing indicator on error
+        stopTypingIndicator(conversationId);
 
         // Send error response back to Telegram
         try {
@@ -248,7 +321,32 @@ The message metadata shows:
 - [Conversation: X] - The conversation/chat ID
 - [From: X] - The sender's name
 
+### Telegram Formatting
+When responding to Telegram, use plain text. Telegram has limited markdown support:
+- Use single newlines for line breaks (double newlines may not render properly)
+- Avoid complex formatting - keep it simple and readable
+- Lists work best as plain text with - or numbers
+
+## Skills (Mini-Apps)
+
+You have access to specialized skills for common tasks. Before responding to requests
+that might use a skill:
+
+1. Check if a skill applies using \`list_skills\` or recognize triggers like:
+   - "split", "bill", "receipt", "who owes" → bill-split skill
+
+2. If a skill applies, call \`get_skill\` to read the full instructions (SKILL.md)
+
+3. Follow the skill's conversation flow and use its functions correctly
+
+**IMPORTANT**: Always read the skill documentation before using skill functions.
+The skill doc explains proper usage, edge cases, and formatting requirements.
+
 ## Available MCP Tools
+
+### Skill Tools
+- list_skills - List all available mini-app skills with triggers
+- get_skill - Read the full SKILL.md documentation for a skill
 
 ### PCP Tools (mcp__pcp__*)
 Context management:
@@ -257,12 +355,25 @@ Context management:
 - save_project, list_projects, get_project - Manage projects
 - set_focus, get_focus - Track current working context
 
+Memory:
+- remember, recall, forget - Long-term memory management
+- bootstrap - Load identity and context at session start
+
 Task management:
 - create_task, list_tasks, update_task, complete_task - Manage tasks
 - get_task_stats - Get task statistics
 
 Link management:
 - save_link, search_links, tag_link - Manage saved links
+
+Chat context (for understanding conversation history):
+- get_chat_context - Fetch recent messages from a chat (ephemeral, 30 min TTL)
+- clear_chat_context - Clear message cache after summarizing (privacy pattern)
+
+Mini-app records (for persisting skill data):
+- save_mini_app_record - Save structured data for a mini-app
+- query_mini_app_records - Query saved records
+- record_mini_app_debt, get_mini_app_debts, settle_mini_app_debt - Debt tracking
 
 ### Supabase Tools (mcp__supabase__*)
 You also have access to Supabase MCP tools for direct database operations.

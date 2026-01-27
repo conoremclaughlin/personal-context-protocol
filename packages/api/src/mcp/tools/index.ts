@@ -51,8 +51,23 @@ import {
   handleCompactSession,
 } from './memory-handlers';
 
+import {
+  handleGetChatContext,
+  handleClearChatContext,
+  handleGetCacheStats,
+} from './chat-context-handlers';
+
+import {
+  handleListSkills,
+  handleGetSkill,
+} from './skill-handlers';
+
+import { registerMiniAppRecordTools } from './mini-app-records';
+
 // Re-export for external use
 export { setResponseCallback, addPendingMessage } from './response-handlers';
+export { setTelegramListener, registerChannelListener } from './chat-context-handlers';
+export { setMiniAppsRegistry } from './skill-handlers';
 
 // Shared schema for flexible user identification
 // Users can be identified by: userId, email, phone, or platform+platformId
@@ -1032,6 +1047,154 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       }
     }
   );
+
+  // =====================================================
+  // SKILL TOOLS
+  // =====================================================
+
+  // Register list_skills tool
+  server.registerTool(
+    'list_skills',
+    {
+      description: `List all available mini-app skills. Each skill provides specialized capabilities (like bill splitting, expense tracking, etc.).
+
+When a user's message matches a skill's triggers, use get_skill to read the full instructions before proceeding.`,
+      inputSchema: {},
+    },
+    async () => {
+      try {
+        return await handleListSkills({}, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_skills:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Register get_skill tool
+  server.registerTool(
+    'get_skill',
+    {
+      description: `Get the full skill documentation (SKILL.md) for a mini-app. Read this before using a skill's functions.
+
+The skill document contains:
+- Conversation flow guidelines
+- How to use the skill's functions correctly
+- Edge case handling
+- Formatting instructions`,
+      inputSchema: {
+        skillName: z.string().describe('Name of the skill/mini-app to get instructions for'),
+      },
+    },
+    async (args) => {
+      try {
+        return await handleGetSkill(args as Parameters<typeof handleGetSkill>[0], dataComposer);
+      } catch (error) {
+        logger.error('Error in get_skill:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // CHAT CONTEXT TOOLS
+  // =====================================================
+
+  // Register get_chat_context tool
+  server.registerTool(
+    'get_chat_context',
+    {
+      description: `Get recent messages from a chat for context. Messages are ephemeral (30 min TTL, in-memory only).
+
+Use this to understand what was discussed recently before responding. After summarizing, call clear_chat_context to free memory.
+
+This implements the "summarize-and-forget" pattern:
+1. Fetch recent messages when you need context
+2. Summarize the relevant parts into your response
+3. Clear the cache - don't store conversation history long-term`,
+      inputSchema: {
+        channel: z.enum(['telegram', 'discord', 'whatsapp'])
+          .describe('Channel to get context from'),
+        conversationId: z.string()
+          .describe('Conversation/chat ID to get history from'),
+        limit: z.number().min(1).max(100).optional()
+          .describe('Maximum messages to return (default: 50)'),
+      },
+    },
+    async (args) => {
+      try {
+        return await handleGetChatContext(args as Parameters<typeof handleGetChatContext>[0], dataComposer);
+      } catch (error) {
+        logger.error('Error in get_chat_context:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Register clear_chat_context tool
+  server.registerTool(
+    'clear_chat_context',
+    {
+      description: `Clear cached messages for a chat. Call this after summarizing context to free memory.
+
+Part of the "summarize-and-forget" pattern - after you've extracted what you need from chat history, clear it to respect privacy.`,
+      inputSchema: {
+        channel: z.enum(['telegram', 'discord', 'whatsapp'])
+          .describe('Channel to clear context for'),
+        conversationId: z.string()
+          .describe('Conversation/chat ID to clear'),
+      },
+    },
+    async (args) => {
+      try {
+        return await handleClearChatContext(args as Parameters<typeof handleClearChatContext>[0], dataComposer);
+      } catch (error) {
+        logger.error('Error in clear_chat_context:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Register get_cache_stats tool (for debugging)
+  server.registerTool(
+    'get_cache_stats',
+    {
+      description: `Get statistics about the message cache. Useful for debugging and monitoring memory usage.`,
+      inputSchema: {
+        channel: z.enum(['telegram', 'discord', 'whatsapp']).optional()
+          .describe('Specific channel to get stats for (default: all)'),
+      },
+    },
+    async (args) => {
+      try {
+        return await handleGetCacheStats(args as Parameters<typeof handleGetCacheStats>[0], dataComposer);
+      } catch (error) {
+        logger.error('Error in get_cache_stats:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // MINI-APP RECORD TOOLS
+  // =====================================================
+
+  registerMiniAppRecordTools(server, dataComposer);
 
   logger.info('All MCP tools registered');
 }

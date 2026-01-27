@@ -1,0 +1,89 @@
+{
+  "name": "bill-split",
+  "version": "1.0.0",
+  "description": "Split bills and receipts among friends. Handles receipt parsing, item assignment, and fair split calculations.",
+  "triggers": {
+    "keywords": ["split", "bill", "receipt", "who owes", "divide", "share the cost"],
+    "intents": ["split_bill", "parse_receipt", "calculate_owed"]
+  },
+  "capabilities": {
+    "vision": true,
+    "memory": true
+  },
+  "state": {
+    "schema": {
+      "sessionId": "string",
+      "items": [{
+        "id": "string",
+        "name": "string",
+        "price": "number",
+        "quantity": "number"
+      }],
+      "people": ["string"],
+      "assignments": {
+        "itemId": ["personName"]
+      },
+      "tax": "number",
+      "tip": "number",
+      "tipPercent": "number"
+    },
+    "persistence": "conversation"
+  },
+  "functions": [
+    {
+      "name": "parseReceipt",
+      "description": "Extract items and prices from a receipt image or text",
+      "input": {
+        "text": "string?",
+        "imageDescription": "string?"
+      },
+      "output": {
+        "items": "array",
+        "subtotal": "number?",
+        "tax": "number?",
+        "total": "number?"
+      }
+    },
+    {
+      "name": "splitEvenly",
+      "description": "Quick split a total amount evenly among people. Use this for simple 'split $X between N people' requests.",
+      "input": {
+        "total": "number",
+        "peopleCount": "number",
+        "peopleNames": "array?"
+      },
+      "output": {
+        "splits": "object"
+      }
+    },
+    {
+      "name": "calculateSplit",
+      "description": "Calculate how much each person owes based on item assignments. Use for itemized bills where different people had different items.",
+      "input": {
+        "items": "array",
+        "assignments": "object",
+        "tax": "number?",
+        "tip": "number?",
+        "tipPercent": "number?",
+        "splitTaxTipEvenly": "boolean?"
+      },
+      "output": {
+        "breakdown": "object",
+        "totals": "object"
+      }
+    },
+    {
+      "name": "formatSummary",
+      "description": "Format the split results as a human-readable message",
+      "input": {
+        "result": "object",
+        "includeBreakdown": "boolean?",
+        "currency": "string?"
+      },
+      "output": {
+        "text": "string"
+      }
+    }
+  ],
+  "entry": "SKILL.md"
+}

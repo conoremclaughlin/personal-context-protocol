@@ -60,6 +60,13 @@ export interface AgentMessage {
   timestamp: Date;
   metadata?: Record<string, unknown>;
 
+  // Media attachments (images, documents, etc.)
+  media?: Array<{
+    type: 'image' | 'video' | 'audio' | 'document';
+    url?: string;
+    path?: string;
+  }>;
+
   // Context that should be included
   context?: {
     userId?: string;

@@ -54,7 +54,7 @@ export class SessionHost extends EventEmitter {
   constructor(config: SessionHostConfig) {
     super();
     this.dataComposer = config.dataComposer;
-    this.contextCacheTtl = config.contextCacheTtl ?? 5 * 60 * 1000; // 5 minutes default
+    this.contextCacheTtl = config.contextCacheTtl ?? 30 * 60 * 1000; // 30 minutes default
     this.disableContextInjection = config.disableContextInjection ?? false;
 
     // Create backend manager
@@ -253,6 +253,7 @@ export class SessionHost extends EventEmitter {
       sessionId?: string;
       replyToMessageId?: string;
       metadata?: Record<string, unknown>;
+      media?: Array<{ type: 'image' | 'video' | 'audio' | 'document'; url?: string; path?: string }>;
     }
   ): Promise<void> {
     this.messageCounter++;
@@ -265,6 +266,7 @@ export class SessionHost extends EventEmitter {
       sender,
       content,
       timestamp: new Date(),
+      media: options?.media,
       context: {
         userId: options?.userId,
         projectId: options?.projectId,

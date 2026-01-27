@@ -8,13 +8,16 @@ import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../config/constants';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 import type { DataComposer } from '../data/composer';
-import { registerAllTools } from './tools';
+import { registerAllTools, setMiniAppsRegistry } from './tools';
+import { loadMiniApps, registerMiniAppTools, getMiniAppsInfo } from '../mini-apps';
 
 export class MCPServer {
   private server: McpServer;
   private dataComposer: DataComposer;
   private httpServer: Server | null = null;
   private sseTransport: SSEServerTransport | null = null;
+  private miniAppsInfo: Array<{ name: string; version: string; description: string; triggers: string[]; functions: string[] }> = [];
+  private toolsVersion = 0; // Incremented when tools change
 
   constructor(dataComposer: DataComposer) {
     this.dataComposer = dataComposer;
@@ -40,9 +43,19 @@ export class MCPServer {
    * Register all MCP tools
    */
   private registerTools(): void {
-    // Register all tools
+    // Register core PCP tools
     registerAllTools(this.server, this.dataComposer);
-    logger.info('All MCP tools registered');
+    logger.info('Core MCP tools registered');
+
+    // Load and register mini-app tools
+    const miniApps = loadMiniApps();
+    registerMiniAppTools(this.server, miniApps);
+
+    // Register mini-apps with skill handlers so get_skill tool can access them
+    setMiniAppsRegistry(miniApps);
+
+    this.miniAppsInfo = getMiniAppsInfo(miniApps);
+    logger.info(`Mini-apps loaded: ${this.miniAppsInfo.map(a => a.name).join(', ') || 'none'}`);
   }
 
   /**
@@ -118,7 +131,27 @@ export class MCPServer {
         name: MCP_SERVER_NAME,
         version: MCP_SERVER_VERSION,
         connected: this.sseTransport !== null,
+        toolsVersion: this.toolsVersion,
+        miniApps: this.miniAppsInfo,
       });
+    });
+
+    // Refresh tools endpoint - notifies connected clients that tools have changed
+    app.post('/refresh-tools', async (_req, res) => {
+      try {
+        await this.notifyToolsChanged();
+        res.json({
+          success: true,
+          message: 'Tools refresh notification sent',
+          toolsVersion: this.toolsVersion,
+        });
+      } catch (error) {
+        logger.error('Error refreshing tools:', error);
+        res.status(500).json({
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
     });
 
     this.httpServer = app.listen(port, () => {
@@ -173,6 +206,42 @@ export class MCPServer {
       }
     }
     return null;
+  }
+
+  /**
+   * Notify connected clients that tools have changed.
+   * Clients should re-fetch the tools list.
+   */
+  async notifyToolsChanged(): Promise<void> {
+    this.toolsVersion++;
+    logger.info(`Tools changed, notifying clients (version ${this.toolsVersion})`);
+
+    // The MCP protocol supports notifications/tools/list_changed
+    // This tells clients to re-fetch the tools list
+    try {
+      // Access the underlying Protocol server to send notification
+      const protocol = this.server.server;
+
+      // Send the list_changed notification
+      // Note: This will only work if a client is connected
+      // The SDK uses 'notification' method with method name and params
+      await protocol.notification({
+        method: 'notifications/tools/list_changed',
+        params: {},
+      });
+
+      logger.info('Tools list_changed notification sent');
+    } catch (error) {
+      // This might fail if no client is connected, which is fine
+      logger.debug('Could not send tools notification (client may not be connected):', error);
+    }
+  }
+
+  /**
+   * Get current tools version
+   */
+  getToolsVersion(): number {
+    return this.toolsVersion;
   }
 }
 
