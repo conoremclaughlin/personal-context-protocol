@@ -25,6 +25,7 @@ export const rememberSchema = userIdentifierBaseSchema.extend({
   topics: z.array(z.string()).optional().describe('Topics for categorization'),
   metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
   expiresAt: z.string().datetime().optional().describe('Optional expiration date (ISO 8601)'),
+  agentId: z.string().optional().describe('Which AI being created this memory (e.g., "wren", "benson"). Null = shared memory.'),
 });
 
 export const recallSchema = userIdentifierBaseSchema.extend({
@@ -34,6 +35,8 @@ export const recallSchema = userIdentifierBaseSchema.extend({
   topics: z.array(z.string()).optional().describe('Filter by topics (any match)'),
   limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
   includeExpired: z.boolean().optional().describe('Include expired memories'),
+  agentId: z.string().optional().describe('Filter by agent (e.g., "wren"). Omit to include all memories.'),
+  includeShared: z.boolean().optional().describe('Include shared memories (agentId=null) when filtering by agentId (default: true)'),
 });
 
 export const forgetSchema = userIdentifierBaseSchema.extend({
@@ -131,9 +134,10 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
     topics: params.topics,
     metadata: params.metadata,
     expiresAt: params.expiresAt ? new Date(params.expiresAt) : undefined,
+    agentId: params.agentId,
   });
 
-  logger.info(`Memory created for user ${user.id}`, { memoryId: memory.id, source: memory.source });
+  logger.info(`Memory created for user ${user.id}`, { memoryId: memory.id, source: memory.source, agentId: params.agentId });
 
   return {
     content: [
@@ -149,6 +153,7 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
               source: memory.source,
               salience: memory.salience,
               topics: memory.topics,
+              agentId: memory.agentId,
               createdAt: memory.createdAt.toISOString(),
             },
           },
@@ -170,9 +175,11 @@ export async function handleRecall(args: unknown, dataComposer: DataComposer) {
     topics: params.topics,
     limit: params.limit,
     includeExpired: params.includeExpired,
+    agentId: params.agentId,
+    includeShared: params.includeShared,
   });
 
-  logger.info(`Recalled ${memories.length} memories for user ${user.id}`);
+  logger.info(`Recalled ${memories.length} memories for user ${user.id}`, { agentId: params.agentId });
 
   return {
     content: [
@@ -189,6 +196,7 @@ export async function handleRecall(args: unknown, dataComposer: DataComposer) {
               source: m.source,
               salience: m.salience,
               topics: m.topics,
+              agentId: m.agentId,
               metadata: m.metadata,
               createdAt: m.createdAt.toISOString(),
               expiresAt: m.expiresAt?.toISOString(),

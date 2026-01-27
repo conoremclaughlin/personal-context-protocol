@@ -12,6 +12,7 @@ export interface Memory {
   source: MemorySource;
   salience: Salience;
   topics: string[];
+  agentId?: string; // Which AI being created this memory (wren, benson, etc). Null = shared memory.
   embedding?: number[]; // 1024 dimensions for Voyage AI, nullable for now
   metadata: Record<string, unknown>;
   version: number;
@@ -44,6 +45,7 @@ export interface MemoryCreateInput {
   topics?: string[];
   metadata?: Record<string, unknown>;
   expiresAt?: Date;
+  agentId?: string; // Which AI being created this memory
 }
 
 export interface MemorySearchOptions {
@@ -53,6 +55,8 @@ export interface MemorySearchOptions {
   limit?: number;
   offset?: number;
   includeExpired?: boolean;
+  agentId?: string; // Filter by agent
+  includeShared?: boolean; // Include shared memories (agentId=null) when filtering. Default true.
 }
 
 export interface Session {
@@ -93,6 +97,7 @@ export interface MemoryRow {
   source: MemorySource;
   salience: Salience;
   topics: string[];
+  agent_id: string | null;
   embedding: number[] | null;
   metadata: Record<string, unknown>;
   version: number;

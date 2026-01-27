@@ -10,6 +10,10 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  __InternalSupabase: {
+    PostgrestVersion: "13.0.5"
+  }
   public: {
     Tables: {
       agent_sessions: {
@@ -70,6 +74,181 @@ export type Database = {
           user_id?: string
           working_directory?: string | null
         }
+        Relationships: [
+          {
+            foreignKeyName: "agent_sessions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      audit_log: {
+        Row: {
+          action: string
+          backend: string | null
+          category: string
+          conversation_id: string | null
+          id: string
+          metadata: Json | null
+          platform: string | null
+          platform_user_id: string | null
+          request_summary: string | null
+          response_status: string | null
+          response_summary: string | null
+          session_id: string | null
+          target: string | null
+          timestamp: string
+          user_id: string | null
+        }
+        Insert: {
+          action: string
+          backend?: string | null
+          category: string
+          conversation_id?: string | null
+          id?: string
+          metadata?: Json | null
+          platform?: string | null
+          platform_user_id?: string | null
+          request_summary?: string | null
+          response_status?: string | null
+          response_summary?: string | null
+          session_id?: string | null
+          target?: string | null
+          timestamp?: string
+          user_id?: string | null
+        }
+        Update: {
+          action?: string
+          backend?: string | null
+          category?: string
+          conversation_id?: string | null
+          id?: string
+          metadata?: Json | null
+          platform?: string | null
+          platform_user_id?: string | null
+          request_summary?: string | null
+          response_status?: string | null
+          response_summary?: string | null
+          session_id?: string | null
+          target?: string | null
+          timestamp?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "audit_log_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      authorized_groups: {
+        Row: {
+          authorization_method: string | null
+          authorized_at: string | null
+          authorized_by: string | null
+          group_name: string | null
+          id: string
+          platform: string
+          platform_group_id: string
+          revoked_at: string | null
+          revoked_by: string | null
+          status: string
+        }
+        Insert: {
+          authorization_method?: string | null
+          authorized_at?: string | null
+          authorized_by?: string | null
+          group_name?: string | null
+          id?: string
+          platform: string
+          platform_group_id: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+        }
+        Update: {
+          authorization_method?: string | null
+          authorized_at?: string | null
+          authorized_by?: string | null
+          group_name?: string | null
+          id?: string
+          platform?: string
+          platform_group_id?: string
+          revoked_at?: string | null
+          revoked_by?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "authorized_groups_authorized_by_fkey"
+            columns: ["authorized_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "authorized_groups_revoked_by_fkey"
+            columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      context_history: {
+        Row: {
+          archived_at: string | null
+          change_type: string
+          context_id: string
+          context_key: string | null
+          context_type: string
+          created_at: string
+          id: string
+          metadata: Json | null
+          summary: string
+          user_id: string
+          version: number
+        }
+        Insert: {
+          archived_at?: string | null
+          change_type?: string
+          context_id: string
+          context_key?: string | null
+          context_type: string
+          created_at: string
+          id?: string
+          metadata?: Json | null
+          summary: string
+          user_id: string
+          version: number
+        }
+        Update: {
+          archived_at?: string | null
+          change_type?: string
+          context_id?: string
+          context_key?: string | null
+          context_type?: string
+          created_at?: string
+          id?: string
+          metadata?: Json | null
+          summary?: string
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "context_history_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       context_summaries: {
         Row: {
@@ -105,6 +284,15 @@ export type Database = {
           user_id?: string
           version?: number | null
         }
+        Relationships: [
+          {
+            foreignKeyName: "context_summaries_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       conversations: {
         Row: {
@@ -137,6 +325,56 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "conversations_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      group_challenge_codes: {
+        Row: {
+          code: string
+          created_at: string | null
+          created_by: string | null
+          expires_at: string | null
+          id: string
+          used_at: string | null
+          used_for_group_id: string | null
+          used_for_platform: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string | null
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          used_at?: string | null
+          used_for_group_id?: string | null
+          used_for_platform?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string | null
+          created_by?: string | null
+          expires_at?: string | null
+          id?: string
+          used_at?: string | null
+          used_for_group_id?: string | null
+          used_for_platform?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_challenge_codes_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       links: {
         Row: {
@@ -178,6 +416,121 @@ export type Database = {
           url?: string
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "links_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memories: {
+        Row: {
+          agent_id: string | null
+          content: string
+          created_at: string | null
+          embedding: string | null
+          expires_at: string | null
+          id: string
+          metadata: Json | null
+          salience: string
+          source: string
+          topics: string[] | null
+          user_id: string
+          version: number
+        }
+        Insert: {
+          agent_id?: string | null
+          content: string
+          created_at?: string | null
+          embedding?: string | null
+          expires_at?: string | null
+          id?: string
+          metadata?: Json | null
+          salience?: string
+          source?: string
+          topics?: string[] | null
+          user_id: string
+          version?: number
+        }
+        Update: {
+          agent_id?: string | null
+          content?: string
+          created_at?: string | null
+          embedding?: string | null
+          expires_at?: string | null
+          id?: string
+          metadata?: Json | null
+          salience?: string
+          source?: string
+          topics?: string[] | null
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memories_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      memory_history: {
+        Row: {
+          archived_at: string | null
+          change_type: string
+          content: string
+          created_at: string
+          id: string
+          memory_id: string
+          metadata: Json | null
+          salience: string
+          source: string
+          topics: string[] | null
+          user_id: string
+          version: number
+        }
+        Insert: {
+          archived_at?: string | null
+          change_type?: string
+          content: string
+          created_at: string
+          id?: string
+          memory_id: string
+          metadata?: Json | null
+          salience: string
+          source: string
+          topics?: string[] | null
+          user_id: string
+          version?: number
+        }
+        Update: {
+          archived_at?: string | null
+          change_type?: string
+          content?: string
+          created_at?: string
+          id?: string
+          memory_id?: string
+          metadata?: Json | null
+          salience?: string
+          source?: string
+          topics?: string[] | null
+          user_id?: string
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "memory_history_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       messages: {
         Row: {
@@ -213,6 +566,91 @@ export type Database = {
           platform_message_id?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      mini_app_records: {
+        Row: {
+          amount: number | null
+          app_name: string
+          created_at: string
+          data: Json
+          id: string
+          metadata: Json | null
+          recorded_at: string | null
+          related_entity_id: string | null
+          related_entity_type: string | null
+          related_record_id: string | null
+          tags: string[] | null
+          text: string | null
+          type: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount?: number | null
+          app_name: string
+          created_at?: string
+          data?: Json
+          id?: string
+          metadata?: Json | null
+          recorded_at?: string | null
+          related_entity_id?: string | null
+          related_entity_type?: string | null
+          related_record_id?: string | null
+          tags?: string[] | null
+          text?: string | null
+          type: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount?: number | null
+          app_name?: string
+          created_at?: string
+          data?: Json
+          id?: string
+          metadata?: Json | null
+          recorded_at?: string | null
+          related_entity_id?: string | null
+          related_entity_type?: string | null
+          related_record_id?: string | null
+          tags?: string[] | null
+          text?: string | null
+          type?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "mini_app_records_related_record_id_fkey"
+            columns: ["related_record_id"]
+            isOneToOne: false
+            referencedRelation: "mini_app_records"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "mini_app_records_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       notes: {
         Row: {
@@ -251,6 +689,45 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "notes_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      permission_definitions: {
+        Row: {
+          category: string
+          created_at: string | null
+          default_enabled: boolean | null
+          description: string | null
+          id: string
+          name: string
+          risk_level: string
+        }
+        Insert: {
+          category: string
+          created_at?: string | null
+          default_enabled?: boolean | null
+          description?: string | null
+          id: string
+          name: string
+          risk_level?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string | null
+          default_enabled?: boolean | null
+          description?: string | null
+          id?: string
+          name?: string
+          risk_level?: string
+        }
+        Relationships: []
       }
       project_tasks: {
         Row: {
@@ -298,6 +775,22 @@ export type Database = {
           updated_at?: string
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "project_tasks_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "project_tasks_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       projects: {
         Row: {
@@ -339,6 +832,15 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "projects_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       reminders: {
         Row: {
@@ -380,6 +882,15 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "reminders_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       session_focus: {
         Row: {
@@ -412,6 +923,105 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "session_focus_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_focus_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      session_logs: {
+        Row: {
+          compacted_at: string | null
+          compacted_into_memory_id: string | null
+          content: string
+          created_at: string | null
+          id: string
+          salience: string
+          session_id: string
+        }
+        Insert: {
+          compacted_at?: string | null
+          compacted_into_memory_id?: string | null
+          content: string
+          created_at?: string | null
+          id?: string
+          salience?: string
+          session_id: string
+        }
+        Update: {
+          compacted_at?: string | null
+          compacted_into_memory_id?: string | null
+          content?: string
+          created_at?: string | null
+          id?: string
+          salience?: string
+          session_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "session_logs_compacted_into_memory_id_fkey"
+            columns: ["compacted_into_memory_id"]
+            isOneToOne: false
+            referencedRelation: "memories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "session_logs_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sessions: {
+        Row: {
+          agent_id: string | null
+          ended_at: string | null
+          id: string
+          metadata: Json | null
+          started_at: string | null
+          summary: string | null
+          user_id: string
+        }
+        Insert: {
+          agent_id?: string | null
+          ended_at?: string | null
+          id?: string
+          metadata?: Json | null
+          started_at?: string | null
+          summary?: string | null
+          user_id: string
+        }
+        Update: {
+          agent_id?: string | null
+          ended_at?: string | null
+          id?: string
+          metadata?: Json | null
+          started_at?: string | null
+          summary?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sessions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       tasks: {
         Row: {
@@ -456,6 +1066,115 @@ export type Database = {
           updated_at?: string | null
           user_id?: string
         }
+        Relationships: [
+          {
+            foreignKeyName: "tasks_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trusted_users: {
+        Row: {
+          added_at: string | null
+          added_by: string | null
+          id: string
+          platform: string
+          platform_user_id: string
+          trust_level: Database["public"]["Enums"]["trust_level"]
+          user_id: string | null
+        }
+        Insert: {
+          added_at?: string | null
+          added_by?: string | null
+          id?: string
+          platform: string
+          platform_user_id: string
+          trust_level?: Database["public"]["Enums"]["trust_level"]
+          user_id?: string | null
+        }
+        Update: {
+          added_at?: string | null
+          added_by?: string | null
+          id?: string
+          platform?: string
+          platform_user_id?: string
+          trust_level?: Database["public"]["Enums"]["trust_level"]
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trusted_users_added_by_fkey"
+            columns: ["added_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trusted_users_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_permissions: {
+        Row: {
+          enabled: boolean
+          expires_at: string | null
+          granted_at: string | null
+          granted_by: string | null
+          id: string
+          permission_id: string
+          reason: string | null
+          user_id: string
+        }
+        Insert: {
+          enabled: boolean
+          expires_at?: string | null
+          granted_at?: string | null
+          granted_by?: string | null
+          id?: string
+          permission_id: string
+          reason?: string | null
+          user_id: string
+        }
+        Update: {
+          enabled?: boolean
+          expires_at?: string | null
+          granted_at?: string | null
+          granted_by?: string | null
+          id?: string
+          permission_id?: string
+          reason?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_permissions_granted_by_fkey"
+            columns: ["granted_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_permissions_permission_id_fkey"
+            columns: ["permission_id"]
+            isOneToOne: false
+            referencedRelation: "permission_definitions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_permissions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       users: {
         Row: {
@@ -503,6 +1222,7 @@ export type Database = {
           username?: string | null
           whatsapp_id?: string | null
         }
+        Relationships: []
       }
     }
     Views: {
@@ -555,12 +1275,122 @@ export type Database = {
           title: string
         }[]
       }
+      show_limit: { Args: never; Returns: number }
+      show_trgm: { Args: { "": string }; Returns: string[] }
     }
     Enums: {
-      [_ in never]: never
+      trust_level: "owner" | "admin" | "member"
     }
     CompositeTypes: {
       [_ in never]: never
     }
   }
 }
+
+type DatabaseWithoutInternals = Omit<Database, "__InternalSupabase">
+
+type DefaultSchema = DatabaseWithoutInternals[Extract<keyof Database, "public">]
+
+export type Tables<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+        DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
+      DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])[TableName] extends {
+      Row: infer R
+    }
+    ? R
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])
+    ? (DefaultSchema["Tables"] &
+        DefaultSchema["Views"])[DefaultSchemaTableNameOrOptions] extends {
+        Row: infer R
+      }
+      ? R
+      : never
+    : never
+
+export type TablesInsert<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Insert: infer I
+    }
+    ? I
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Insert: infer I
+      }
+      ? I
+      : never
+    : never
+
+export type TablesUpdate<
+  DefaultSchemaTableNameOrOptions extends
+    | keyof DefaultSchema["Tables"]
+    | { schema: keyof DatabaseWithoutInternals },
+  TableName extends DefaultSchemaTableNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
+    : never = never,
+> = DefaultSchemaTableNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"][TableName] extends {
+      Update: infer U
+    }
+    ? U
+    : never
+  : DefaultSchemaTableNameOrOptions extends keyof DefaultSchema["Tables"]
+    ? DefaultSchema["Tables"][DefaultSchemaTableNameOrOptions] extends {
+        Update: infer U
+      }
+      ? U
+      : never
+    : never
+
+export type Enums<
+  DefaultSchemaEnumNameOrOptions extends
+    | keyof DefaultSchema["Enums"]
+    | { schema: keyof DatabaseWithoutInternals },
+  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+    schema: keyof DatabaseWithoutInternals
+  }
+    ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
+    : never = never,
+> = DefaultSchemaEnumNameOrOptions extends {
+  schema: keyof DatabaseWithoutInternals
+}
+  ? DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"][EnumName]
+  : DefaultSchemaEnumNameOrOptions extends keyof DefaultSchema["Enums"]
+    ? DefaultSchema["Enums"][DefaultSchemaEnumNameOrOptions]
+    : never
+
+export const Constants = {
+  public: {
+    Enums: {
+      trust_level: ["owner", "admin", "member"],
+    },
+  },
+} as const

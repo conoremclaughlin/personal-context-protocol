@@ -39,6 +39,7 @@ export class MemoryRepository {
         topics: input.topics || [],
         metadata: input.metadata || {},
         expires_at: input.expiresAt?.toISOString(),
+        agent_id: input.agentId || null,
       })
       .select()
       .single();
@@ -78,6 +79,18 @@ export class MemoryRepository {
     // Filter by topics (any match)
     if (options.topics && options.topics.length > 0) {
       queryBuilder = queryBuilder.overlaps('topics', options.topics);
+    }
+
+    // Filter by agent
+    if (options.agentId) {
+      const includeShared = options.includeShared !== false; // default true
+      if (includeShared) {
+        // Include both agent-specific and shared (null) memories
+        queryBuilder = queryBuilder.or(`agent_id.eq.${options.agentId},agent_id.is.null`);
+      } else {
+        // Only agent-specific memories
+        queryBuilder = queryBuilder.eq('agent_id', options.agentId);
+      }
     }
 
     // Exclude expired unless requested
@@ -556,6 +569,7 @@ export class MemoryRepository {
       source: row.source,
       salience: row.salience,
       topics: row.topics,
+      agentId: row.agent_id || undefined,
       embedding: row.embedding || undefined,
       metadata: row.metadata,
       version: row.version || 1,

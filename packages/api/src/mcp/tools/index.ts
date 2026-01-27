@@ -674,6 +674,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         topics: z.array(z.string()).optional().describe('Topics for categorization'),
         metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
         expiresAt: z.string().datetime().optional().describe('Optional expiration date (ISO 8601)'),
+        agentId: z.string().optional().describe('Which AI being created this memory (e.g., "wren", "benson"). Null = shared memory.'),
       },
     },
     async (args) => {
@@ -706,6 +707,8 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         topics: z.array(z.string()).optional().describe('Filter by topics (any match)'),
         limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
         includeExpired: z.boolean().optional().describe('Include expired memories'),
+        agentId: z.string().optional().describe('Filter by agent (e.g., "wren"). Omit to include all memories.'),
+        includeShared: z.boolean().optional().describe('Include shared memories (agentId=null) when filtering by agentId (default: true)'),
       },
     },
     async (args) => {
