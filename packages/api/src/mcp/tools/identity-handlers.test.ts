@@ -1,0 +1,416 @@
+/**
+ * Identity Handlers Tests
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  handleSaveIdentity,
+  handleGetIdentity,
+  handleListIdentities,
+  handleGetIdentityHistory,
+  handleRestoreIdentity,
+} from './identity-handlers';
+import { createMockSupabaseClient, type MockSupabaseClient } from '../../test/mocks/supabase.mock';
+
+// Mock the user-resolver module
+vi.mock('../../services/user-resolver', () => ({
+  userIdentifierBaseSchema: {
+    extend: vi.fn().mockReturnValue({
+      parse: vi.fn((args) => args),
+    }),
+  },
+  resolveUserOrThrow: vi.fn().mockResolvedValue({
+    user: { id: 'user-123' },
+    resolvedBy: 'userId',
+  }),
+}));
+
+// Create mock DataComposer
+function createMockDataComposer(mockSupabase: MockSupabaseClient) {
+  return {
+    getClient: () => mockSupabase as unknown,
+  };
+}
+
+describe('Identity Handlers', () => {
+  let mockSupabase: MockSupabaseClient;
+  let mockDataComposer: ReturnType<typeof createMockDataComposer>;
+
+  beforeEach(() => {
+    mockSupabase = createMockSupabaseClient();
+    mockDataComposer = createMockDataComposer(mockSupabase);
+    vi.clearAllMocks();
+  });
+
+  describe('handleSaveIdentity', () => {
+    it('should create a new identity', async () => {
+      const mockIdentityRow = {
+        id: 'identity-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        name: 'Wren',
+        role: 'Development collaborator',
+        description: 'Claude Code assistant',
+        values: ['collaboration', 'growth'],
+        relationships: { benson: 'conversational partner' },
+        capabilities: ['coding', 'planning'],
+        metadata: {},
+        version: 1,
+        created_at: '2026-01-27T12:00:00Z',
+        updated_at: '2026-01-27T12:00:00Z',
+      };
+
+      mockSupabase._setReturnData(mockIdentityRow);
+
+      const result = await handleSaveIdentity(
+        {
+          userId: 'user-123',
+          agentId: 'wren',
+          name: 'Wren',
+          role: 'Development collaborator',
+          description: 'Claude Code assistant',
+          values: ['collaboration', 'growth'],
+          relationships: { benson: 'conversational partner' },
+          capabilities: ['coding', 'planning'],
+        },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.message).toBe('Identity created');
+      expect(parsed.identity.agentId).toBe('wren');
+      expect(parsed.identity.name).toBe('Wren');
+      expect(parsed.identity.version).toBe(1);
+      expect(mockSupabase.from).toHaveBeenCalledWith('agent_identities');
+    });
+
+    it('should update an existing identity', async () => {
+      const mockIdentityRow = {
+        id: 'identity-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        name: 'Wren Updated',
+        role: 'Development collaborator',
+        description: null,
+        values: [],
+        relationships: {},
+        capabilities: [],
+        metadata: {},
+        version: 2,
+        created_at: '2026-01-27T12:00:00Z',
+        updated_at: '2026-01-27T13:00:00Z',
+      };
+
+      mockSupabase._setReturnData(mockIdentityRow);
+
+      const result = await handleSaveIdentity(
+        {
+          userId: 'user-123',
+          agentId: 'wren',
+          name: 'Wren Updated',
+          role: 'Development collaborator',
+        },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.message).toBe('Identity updated');
+      expect(parsed.identity.version).toBe(2);
+    });
+
+    it('should throw on database error', async () => {
+      mockSupabase._setReturnData(null, { message: 'Database error' });
+
+      await expect(
+        handleSaveIdentity(
+          {
+            userId: 'user-123',
+            agentId: 'wren',
+            name: 'Wren',
+            role: 'Development collaborator',
+          },
+          mockDataComposer as never
+        )
+      ).rejects.toThrow('Failed to save identity: Database error');
+    });
+  });
+
+  describe('handleGetIdentity', () => {
+    it('should return an identity when found', async () => {
+      const mockIdentityRow = {
+        id: 'identity-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        name: 'Wren',
+        role: 'Development collaborator',
+        description: 'Claude Code assistant',
+        values: ['collaboration'],
+        relationships: {},
+        capabilities: ['coding'],
+        metadata: {},
+        version: 1,
+        created_at: '2026-01-27T12:00:00Z',
+        updated_at: '2026-01-27T12:00:00Z',
+      };
+
+      mockSupabase._setReturnData(mockIdentityRow);
+
+      const result = await handleGetIdentity(
+        { userId: 'user-123', agentId: 'wren' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.identity.agentId).toBe('wren');
+      expect(parsed.identity.name).toBe('Wren');
+      expect(parsed.identity.values).toEqual(['collaboration']);
+    });
+
+    it('should return not found when identity does not exist', async () => {
+      mockSupabase._setReturnData(null, { code: 'PGRST116' });
+
+      const result = await handleGetIdentity(
+        { userId: 'user-123', agentId: 'nonexistent' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(false);
+      expect(parsed.message).toContain('No identity found');
+      expect(parsed.identity).toBeNull();
+    });
+  });
+
+  describe('handleListIdentities', () => {
+    it('should return all identities for a user', async () => {
+      const mockIdentities = [
+        {
+          id: 'identity-1',
+          user_id: 'user-123',
+          agent_id: 'benson',
+          name: 'Benson',
+          role: 'Conversational partner',
+          description: null,
+          values: [],
+          relationships: {},
+          capabilities: [],
+          version: 1,
+          created_at: '2026-01-27T12:00:00Z',
+          updated_at: '2026-01-27T12:00:00Z',
+        },
+        {
+          id: 'identity-2',
+          user_id: 'user-123',
+          agent_id: 'wren',
+          name: 'Wren',
+          role: 'Development collaborator',
+          description: null,
+          values: [],
+          relationships: {},
+          capabilities: [],
+          version: 1,
+          created_at: '2026-01-27T12:00:00Z',
+          updated_at: '2026-01-27T12:00:00Z',
+        },
+      ];
+
+      mockSupabase._setArrayData(mockIdentities);
+
+      const result = await handleListIdentities(
+        { userId: 'user-123' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.identities).toHaveLength(2);
+      expect(parsed.count).toBe(2);
+      expect(parsed.identities[0].agentId).toBe('benson');
+      expect(parsed.identities[1].agentId).toBe('wren');
+    });
+
+    it('should return empty list when no identities exist', async () => {
+      mockSupabase._setArrayData([]);
+
+      const result = await handleListIdentities(
+        { userId: 'user-123' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.identities).toHaveLength(0);
+      expect(parsed.count).toBe(0);
+    });
+  });
+
+  describe('handleGetIdentityHistory', () => {
+    it('should return history for an identity', async () => {
+      // First call returns current identity
+      const mockCurrent = { id: 'identity-123' };
+
+      // We need to handle two sequential calls
+      let callCount = 0;
+      mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({ data: mockCurrent, error: null });
+        }
+        // This shouldn't be called for history (uses array)
+        return Promise.resolve({ data: null, error: null });
+      });
+
+      const mockHistory = [
+        {
+          id: 'history-1',
+          identity_id: 'identity-123',
+          version: 1,
+          name: 'Wren v1',
+          role: 'Development collaborator',
+          description: null,
+          values: [],
+          relationships: {},
+          capabilities: [],
+          change_type: 'update',
+          archived_at: '2026-01-27T13:00:00Z',
+          created_at: '2026-01-27T12:00:00Z',
+        },
+      ];
+
+      // Override the thenable for the history query
+      mockSupabase._queryBuilder.then = (
+        resolve: (value: { data: unknown; error: unknown }) => void
+      ) => {
+        resolve({ data: mockHistory, error: null });
+        return Promise.resolve({ data: mockHistory, error: null });
+      };
+
+      const result = await handleGetIdentityHistory(
+        { userId: 'user-123', agentId: 'wren' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.agentId).toBe('wren');
+      expect(parsed.history).toHaveLength(1);
+      expect(parsed.history[0].version).toBe(1);
+      expect(parsed.history[0].changeType).toBe('update');
+    });
+
+    it('should return not found when identity does not exist', async () => {
+      mockSupabase._queryBuilder.single = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: 'PGRST116' },
+      });
+
+      const result = await handleGetIdentityHistory(
+        { userId: 'user-123', agentId: 'nonexistent' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(false);
+      expect(parsed.message).toContain('No identity found');
+      expect(parsed.history).toEqual([]);
+    });
+  });
+
+  describe('handleRestoreIdentity', () => {
+    it('should restore identity from history', async () => {
+      let callCount = 0;
+
+      // Mock sequential calls
+      mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          // Current identity lookup
+          return Promise.resolve({
+            data: { id: 'identity-123' },
+            error: null,
+          });
+        } else if (callCount === 2) {
+          // History entry lookup
+          return Promise.resolve({
+            data: {
+              id: 'history-1',
+              name: 'Wren v1',
+              role: 'Development collaborator',
+              description: 'Original description',
+              values: ['original'],
+              relationships: {},
+              capabilities: [],
+              metadata: {},
+            },
+            error: null,
+          });
+        } else {
+          // Restored identity
+          return Promise.resolve({
+            data: {
+              id: 'identity-123',
+              agent_id: 'wren',
+              name: 'Wren v1',
+              role: 'Development collaborator',
+              version: 3,
+            },
+            error: null,
+          });
+        }
+      });
+
+      const result = await handleRestoreIdentity(
+        { userId: 'user-123', agentId: 'wren', version: 1 },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.message).toContain('restored from version 1');
+      expect(parsed.identity.restoredFrom).toBe(1);
+    });
+
+    it('should throw when identity not found', async () => {
+      mockSupabase._queryBuilder.single = vi.fn().mockResolvedValue({
+        data: null,
+        error: { code: 'PGRST116' },
+      });
+
+      await expect(
+        handleRestoreIdentity(
+          { userId: 'user-123', agentId: 'nonexistent', version: 1 },
+          mockDataComposer as never
+        )
+      ).rejects.toThrow('No identity found for agent: nonexistent');
+    });
+
+    it('should throw when version not found in history', async () => {
+      let callCount = 0;
+
+      mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            data: { id: 'identity-123' },
+            error: null,
+          });
+        }
+        // History lookup returns nothing
+        return Promise.resolve({
+          data: null,
+          error: { code: 'PGRST116' },
+        });
+      });
+
+      await expect(
+        handleRestoreIdentity(
+          { userId: 'user-123', agentId: 'wren', version: 999 },
+          mockDataComposer as never
+        )
+      ).rejects.toThrow('Version 999 not found in history');
+    });
+  });
+});
