@@ -1,7 +1,14 @@
 'use client';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { MantineProvider, createTheme } from '@mantine/core';
 import { useState } from 'react';
+
+import '@mantine/core/styles.css';
+
+const theme = createTheme({
+  // Customize Mantine theme if needed
+});
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -17,6 +24,10 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <QueryClientProvider client={queryClient}>
+      <MantineProvider theme={theme}>
+        {children}
+      </MantineProvider>
+    </QueryClientProvider>
   );
 }

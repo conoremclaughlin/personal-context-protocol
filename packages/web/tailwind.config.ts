@@ -6,6 +6,16 @@ const config: Config = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/stories/**/*.{js,ts,jsx,tsx,mdx}',
+  ],
+  // Safelist classes used dynamically (e.g., by TipTap marks)
+  safelist: [
+    // Diff viewer marks
+    'bg-green-200',
+    'bg-red-100',
+    'line-through',
+    'rounded',
+    'px-0.5',
   ],
   theme: {
     extend: {

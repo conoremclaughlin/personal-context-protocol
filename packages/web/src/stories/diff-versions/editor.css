@@ -1,0 +1,61 @@
+/* TipTap editor styles */
+.tiptap {
+  @apply text-gray-900;
+}
+
+.tiptap h1 {
+  @apply text-2xl font-bold mt-4 mb-2;
+}
+
+.tiptap h2 {
+  @apply text-xl font-semibold mt-4 mb-2;
+}
+
+.tiptap h3 {
+  @apply text-lg font-semibold mt-3 mb-2;
+}
+
+.tiptap p {
+  @apply my-2;
+}
+
+.tiptap ul {
+  @apply list-disc pl-6 my-2;
+}
+
+.tiptap ol {
+  @apply list-decimal pl-6 my-2;
+}
+
+.tiptap li {
+  @apply list-outside my-1;
+}
+
+.tiptap li > p {
+  @apply block m-0;
+}
+
+.tiptap strong {
+  @apply font-bold;
+}
+
+.tiptap em {
+  @apply italic;
+}
+
+/* Mantine RichTextEditor overrides */
+.mantine-RichTextEditor-content {
+  @apply text-gray-900;
+}
+
+.mantine-RichTextEditor-content ul {
+  @apply list-disc pl-6;
+}
+
+.mantine-RichTextEditor-content ol {
+  @apply list-decimal pl-6;
+}
+
+.mantine-RichTextEditor-content li {
+  @apply my-1;
+}

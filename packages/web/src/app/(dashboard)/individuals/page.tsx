@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, History, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, History } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { createClient } from '@/lib/supabase/client';
 
@@ -23,18 +24,6 @@ interface Identity {
   updatedAt: string;
 }
 
-interface HistoryEntry {
-  id: string;
-  version: number;
-  name: string;
-  role: string;
-  description?: string;
-  values?: string[];
-  relationships?: Record<string, string>;
-  capabilities?: string[];
-  changeType: string;
-  archivedAt: string;
-}
 
 /**
  * Generate IDENTITY.md content from identity data
@@ -93,37 +82,6 @@ function generateIdentityMarkdown(identity: Identity): string {
 }
 
 function IdentityCard({ identity }: { identity: Identity }) {
-  const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-
-  const fetchHistory = async () => {
-    setIsLoadingHistory(true);
-    try {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await fetch(`/api/admin/individuals/${identity.agentId}/history`, {
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to fetch history');
-      const data = await response.json();
-      setHistory(data.history);
-    } catch (err) {
-      console.error('Failed to fetch history:', err);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
-  const handleToggleHistory = async () => {
-    if (!showHistory && history.length === 0) {
-      await fetchHistory();
-    }
-    setShowHistory(!showHistory);
-  };
-
   const markdown = generateIdentityMarkdown(identity);
 
   return (
@@ -141,25 +99,11 @@ function IdentityCard({ identity }: { identity: Identity }) {
           </div>
           <div className="flex items-center gap-2">
             <Badge variant="secondary">v{identity.version}</Badge>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleToggleHistory}
-              disabled={isLoadingHistory}
-            >
-              {isLoadingHistory ? (
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              ) : (
-                <>
-                  <History className="mr-1 h-4 w-4" />
-                  History
-                  {showHistory ? (
-                    <ChevronUp className="ml-1 h-4 w-4" />
-                  ) : (
-                    <ChevronDown className="ml-1 h-4 w-4" />
-                  )}
-                </>
-              )}
+            <Button variant="outline" size="sm" asChild>
+              <Link href={`/individuals/${identity.agentId}/versions`}>
+                <History className="mr-1 h-4 w-4" />
+                Version History
+              </Link>
             </Button>
           </div>
         </div>
@@ -168,34 +112,6 @@ function IdentityCard({ identity }: { identity: Identity }) {
         <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
           <ReactMarkdown>{markdown}</ReactMarkdown>
         </div>
-
-        {showHistory && (
-          <div className="mt-6 border-t pt-4">
-            <h4 className="mb-3 text-sm font-medium text-gray-700">Version History</h4>
-            {history.length === 0 ? (
-              <p className="text-sm text-gray-500">No history available (current is version 1)</p>
-            ) : (
-              <div className="space-y-2">
-                {history.map((entry) => (
-                  <div
-                    key={entry.id}
-                    className="flex items-center justify-between rounded-md border p-3"
-                  >
-                    <div>
-                      <span className="font-medium">v{entry.version}</span>
-                      <span className="ml-2 text-sm text-gray-500">
-                        {entry.changeType === 'update' ? 'Updated' : entry.changeType}
-                      </span>
-                    </div>
-                    <div className="text-sm text-gray-500">
-                      {new Date(entry.archivedAt).toLocaleString()}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
       </CardContent>
     </Card>
   );
