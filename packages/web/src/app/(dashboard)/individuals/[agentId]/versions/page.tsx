@@ -1,14 +1,14 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import React from 'react';
+import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
-import { createClient } from '@/lib/supabase/client';
+import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
 
 // Dynamic import for TipTap diff viewer (client-only, heavy deps)
@@ -43,16 +43,49 @@ interface HistoryEntry {
   archivedAt: string;
 }
 
+interface IndividualsResponse {
+  individuals: Identity[];
+}
+
+interface HistoryResponse {
+  history: HistoryEntry[];
+}
+
 export default function VersionExplorerPage() {
   const params = useParams();
-  const router = useRouter();
   const agentId = params.agentId as string;
 
-  const [identity, setIdentity] = useState<Identity | null>(null);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selectedVersionIndex, setSelectedVersionIndex] = useState(0);
+  const [selectedVersionIndex, setSelectedVersionIndex] = React.useState(0);
+
+  // Fetch identity
+  const {
+    data: individualsData,
+    isLoading: individualsLoading,
+    error: individualsError,
+    refetch: refetchIndividuals,
+  } = useApiQuery<IndividualsResponse>(['individuals'], '/api/admin/individuals');
+
+  // Fetch history
+  const {
+    data: historyData,
+    isLoading: historyLoading,
+    error: historyError,
+    refetch: refetchHistory,
+  } = useApiQuery<HistoryResponse>(
+    ['individuals', agentId, 'history'],
+    `/api/admin/individuals/${agentId}/history`
+  );
+
+  const identity = individualsData?.individuals.find((i) => i.agentId === agentId) ?? null;
+  const history = historyData?.history ?? [];
+
+  const isLoading = individualsLoading || historyLoading;
+  const error = individualsError || historyError;
+
+  const refetch = () => {
+    refetchIndividuals();
+    refetchHistory();
+  };
 
   // Build all versions array: current + history (newest to oldest)
   const allVersions: HistoryEntry[] = identity
@@ -76,48 +109,6 @@ export default function VersionExplorerPage() {
   const selectedVersion = allVersions[selectedVersionIndex];
   const comparisonVersion = allVersions[selectedVersionIndex + 1];
 
-  const fetchData = async () => {
-    setIsLoading(true);
-    try {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const headers = { Authorization: `Bearer ${session?.access_token}` };
-
-      // Fetch identity and history in parallel
-      const [identityRes, historyRes] = await Promise.all([
-        fetch('/api/admin/individuals', { headers }),
-        fetch(`/api/admin/individuals/${agentId}/history`, { headers }),
-      ]);
-
-      if (!identityRes.ok || !historyRes.ok) {
-        throw new Error('Failed to fetch data');
-      }
-
-      const identityData = await identityRes.json();
-      const historyData = await historyRes.json();
-
-      const foundIdentity = identityData.individuals.find(
-        (i: Identity) => i.agentId === agentId
-      );
-
-      if (!foundIdentity) {
-        throw new Error(`Identity not found: ${agentId}`);
-      }
-
-      setIdentity(foundIdentity);
-      setHistory(historyData.history || []);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchData();
-  }, [agentId]);
-
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -130,7 +121,7 @@ export default function VersionExplorerPage() {
   if (error) {
     return (
       <div className="rounded-md bg-red-50 p-4 text-red-800">
-        {error}
+        {error.message}
         <Link href="/individuals" className="ml-2 underline">
           Back to Individuals
         </Link>
@@ -139,7 +130,14 @@ export default function VersionExplorerPage() {
   }
 
   if (!identity) {
-    return null;
+    return (
+      <div className="rounded-md bg-yellow-50 p-4 text-yellow-800">
+        Identity not found: {agentId}
+        <Link href="/individuals" className="ml-2 underline">
+          Back to Individuals
+        </Link>
+      </div>
+    );
   }
 
   return (
@@ -162,7 +160,7 @@ export default function VersionExplorerPage() {
             </p>
           </div>
         </div>
-        <Button onClick={fetchData} variant="outline" size="sm">
+        <Button onClick={refetch} variant="outline" size="sm">
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>

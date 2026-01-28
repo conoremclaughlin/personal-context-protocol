@@ -1,11 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Plus, Trash2, RefreshCw } from 'lucide-react';
+import { useApiQuery, useApiPost, useApiDelete, useQueryClient } from '@/lib/api';
 
 interface TrustedUser {
   id: string;
@@ -15,69 +16,65 @@ interface TrustedUser {
   addedAt: string;
 }
 
+interface TrustedUsersResponse {
+  users: TrustedUser[];
+}
+
+interface AddUserInput {
+  platform: string;
+  platformUserId: string;
+  trustLevel: string;
+}
+
 export default function TrustedUsersPage() {
-  const [users, setUsers] = useState<TrustedUser[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newUser, setNewUser] = useState({
+  const [newUser, setNewUser] = useState<AddUserInput>({
     platform: 'whatsapp',
     platformUserId: '',
     trustLevel: 'member',
   });
 
-  const fetchUsers = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch('/api/admin/trusted-users');
-      if (!response.ok) throw new Error('Failed to fetch users');
-      const data = await response.json();
-      setUsers(data.users);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Fetch users with React Query
+  const { data, isLoading, error, refetch } = useApiQuery<TrustedUsersResponse>(
+    ['trusted-users'],
+    '/api/admin/trusted-users'
+  );
 
-  const handleAddUser = async (e: React.FormEvent) => {
+  // Add user mutation
+  const addMutation = useApiPost<TrustedUsersResponse, AddUserInput>(
+    '/api/admin/trusted-users',
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['trusted-users'] });
+        setShowAddForm(false);
+        setNewUser({ platform: 'whatsapp', platformUserId: '', trustLevel: 'member' });
+      },
+    }
+  );
+
+  // Delete user mutation
+  const deleteMutation = useApiDelete<void>(
+    '/api/admin/trusted-users',
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['trusted-users'] });
+      },
+    }
+  );
+
+  const handleAddUser = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      const response = await fetch('/api/admin/trusted-users', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newUser),
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to add user');
-      }
-      await fetchUsers();
-      setShowAddForm(false);
-      setNewUser({ platform: 'whatsapp', platformUserId: '', trustLevel: 'member' });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add user');
-    }
+    addMutation.mutate(newUser);
   };
 
-  const handleDeleteUser = async (id: string) => {
+  const handleDeleteUser = (id: string) => {
     if (!confirm('Are you sure you want to remove this trusted user?')) return;
-
-    try {
-      const response = await fetch(`/api/admin/trusted-users/${id}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) throw new Error('Failed to delete user');
-      await fetchUsers();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete user');
-    }
+    deleteMutation.mutate(id);
   };
 
-  useEffect(() => {
-    fetchUsers();
-  }, []);
+  const users = data?.users ?? [];
+  const errorMessage = error?.message || addMutation.error?.message || deleteMutation.error?.message;
 
   const getTrustLevelBadge = (level: string) => {
     switch (level) {
@@ -100,7 +97,7 @@ export default function TrustedUsersPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={fetchUsers} variant="outline" size="sm">
+          <Button onClick={() => refetch()} variant="outline" size="sm">
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
@@ -111,12 +108,9 @@ export default function TrustedUsersPage() {
         </div>
       </div>
 
-      {error && (
+      {errorMessage && (
         <div className="mt-4 rounded-md bg-red-50 p-4 text-red-800">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 underline">
-            Dismiss
-          </button>
+          {errorMessage}
         </div>
       )}
 
@@ -177,7 +171,9 @@ export default function TrustedUsersPage() {
                 </div>
               </div>
               <div className="flex gap-2">
-                <Button type="submit">Add User</Button>
+                <Button type="submit" disabled={addMutation.isPending}>
+                  {addMutation.isPending ? 'Adding...' : 'Add User'}
+                </Button>
                 <Button
                   type="button"
                   variant="outline"
@@ -234,6 +230,7 @@ export default function TrustedUsersPage() {
                             variant="ghost"
                             size="sm"
                             onClick={() => handleDeleteUser(user.id)}
+                            disabled={deleteMutation.isPending}
                           >
                             <Trash2 className="h-4 w-4 text-red-500" />
                           </Button>

@@ -615,4 +615,196 @@ router.get('/individuals/:agentId/history', async (req: Request, res: Response) 
   }
 });
 
+// =============================================================================
+// Memory Timeline
+// =============================================================================
+
+interface TimelineEntry {
+  id: string;
+  type: 'memory_created' | 'memory_updated' | 'memory_deleted' | 'log_compacted' | 'log_discarded';
+  timestamp: string;
+  content: string;
+  salience: string;
+  source?: string;
+  topics?: string[];
+  metadata?: Record<string, unknown>;
+  version?: number;
+  memoryId?: string;
+  sessionId?: string;
+  changeType?: string;
+}
+
+/**
+ * GET /api/admin/individuals/:agentId/memories/timeline
+ * Get full memory activity timeline for an AI being
+ */
+router.get('/individuals/:agentId/memories/timeline', async (req: Request, res: Response) => {
+  try {
+    const { agentId } = req.params;
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const timeline: TimelineEntry[] = [];
+
+    // 1. Get current memories (created events)
+    const { data: memories, error: memoriesError } = await supabase
+      .from('memories')
+      .select('*')
+      .eq('agent_id', agentId)
+      .order('created_at', { ascending: false });
+
+    if (memoriesError) {
+      logger.error('Failed to fetch memories:', memoriesError);
+    } else if (memories) {
+      for (const m of memories) {
+        timeline.push({
+          id: `memory-created-${m.id}`,
+          type: 'memory_created',
+          timestamp: m.created_at,
+          content: m.content,
+          salience: m.salience,
+          source: m.source,
+          topics: m.topics,
+          metadata: m.metadata as Record<string, unknown>,
+          version: m.version,
+          memoryId: m.id,
+        });
+      }
+    }
+
+    // 2. Get memory history (update and delete events)
+    // We need to filter by agent_id through the memories table or check metadata
+    const { data: history, error: historyError } = await supabase
+      .from('memory_history')
+      .select('*')
+      .order('archived_at', { ascending: false });
+
+    if (historyError) {
+      logger.error('Failed to fetch memory history:', historyError);
+    } else if (history) {
+      // Filter history entries that belong to this agent's memories
+      const agentMemoryIds = new Set(memories?.map((m) => m.id) || []);
+
+      for (const h of history) {
+        // Include if it's a deleted memory that belonged to this agent
+        // or if it's an update to an existing agent memory
+        const isAgentMemory = agentMemoryIds.has(h.memory_id);
+        const hasAgentMetadata = (h.metadata as Record<string, unknown>)?.agentId === agentId;
+
+        if (isAgentMemory || hasAgentMetadata) {
+          timeline.push({
+            id: `memory-${h.change_type}-${h.id}`,
+            type: h.change_type === 'delete' ? 'memory_deleted' : 'memory_updated',
+            timestamp: h.archived_at,
+            content: h.content,
+            salience: h.salience,
+            source: h.source,
+            topics: h.topics,
+            metadata: h.metadata as Record<string, unknown>,
+            version: h.version,
+            memoryId: h.memory_id,
+            changeType: h.change_type,
+          });
+        }
+      }
+    }
+
+    // 3. Get compacted session logs (through sessions with matching agent_id)
+    const { data: sessions, error: sessionsError } = await supabase
+      .from('sessions')
+      .select('id')
+      .eq('agent_id', agentId);
+
+    if (sessionsError) {
+      logger.error('Failed to fetch sessions:', sessionsError);
+    } else if (sessions && sessions.length > 0) {
+      const sessionIds = sessions.map((s) => s.id);
+
+      const { data: logs, error: logsError } = await supabase
+        .from('session_logs')
+        .select('*')
+        .in('session_id', sessionIds)
+        .not('compacted_at', 'is', null)
+        .order('compacted_at', { ascending: false });
+
+      if (logsError) {
+        logger.error('Failed to fetch session logs:', logsError);
+      } else if (logs) {
+        for (const log of logs) {
+          timeline.push({
+            id: `log-compacted-${log.id}`,
+            type: log.compacted_into_memory_id ? 'log_compacted' : 'log_discarded',
+            timestamp: log.compacted_at!,
+            content: log.content,
+            salience: log.salience,
+            sessionId: log.session_id,
+            memoryId: log.compacted_into_memory_id || undefined,
+          });
+        }
+      }
+    }
+
+    // Sort by timestamp descending
+    timeline.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+    // Apply pagination
+    const paginatedTimeline = timeline.slice(offset, offset + limit);
+
+    res.json({
+      agentId,
+      timeline: paginatedTimeline,
+      total: timeline.length,
+      limit,
+      offset,
+    });
+  } catch (error) {
+    logger.error('Failed to get memory timeline:', error);
+    res.status(500).json({ error: 'Failed to get memory timeline' });
+  }
+});
+
+/**
+ * GET /api/admin/individuals/:agentId/memories/:memoryId/history
+ * Get version history for a specific memory
+ */
+router.get('/individuals/:agentId/memories/:memoryId/history', async (req: Request, res: Response) => {
+  try {
+    const { memoryId } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+
+    // Get memory history
+    const { data, error } = await supabase
+      .from('memory_history')
+      .select('*')
+      .eq('memory_id', memoryId)
+      .order('version', { ascending: false });
+
+    if (error) {
+      logger.error('Failed to get memory history:', error);
+      res.status(500).json({ error: 'Failed to get memory history' });
+      return;
+    }
+
+    res.json({
+      memoryId,
+      history: (data || []).map((h) => ({
+        id: h.id,
+        version: h.version,
+        content: h.content,
+        salience: h.salience,
+        source: h.source,
+        topics: h.topics,
+        metadata: h.metadata,
+        changeType: h.change_type,
+        createdAt: h.created_at,
+        archivedAt: h.archived_at,
+      })),
+    });
+  } catch (error) {
+    logger.error('Failed to get memory history:', error);
+    res.status(500).json({ error: 'Failed to get memory history' });
+  }
+});
+
 export default router;

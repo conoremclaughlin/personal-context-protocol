@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { RefreshCw, XCircle } from 'lucide-react';
+import { useApiQuery, useApiPostDynamic, useQueryClient } from '@/lib/api';
 
 interface AuthorizedGroup {
   id: string;
@@ -16,27 +16,36 @@ interface AuthorizedGroup {
   status: 'active' | 'revoked';
 }
 
+interface GroupsResponse {
+  groups: AuthorizedGroup[];
+}
+
+interface RevokeInput {
+  id: string;
+  platformGroupId: string;
+}
+
 export default function GroupsPage() {
-  const [groups, setGroups] = useState<AuthorizedGroup[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
-  const fetchGroups = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch('/api/admin/groups');
-      if (!response.ok) throw new Error('Failed to fetch groups');
-      const data = await response.json();
-      setGroups(data.groups);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setIsLoading(false);
+  // Fetch groups
+  const { data, isLoading, error, refetch } = useApiQuery<GroupsResponse>(
+    ['groups'],
+    '/api/admin/groups'
+  );
+
+  // Revoke mutation
+  const revokeMutation = useApiPostDynamic<void, RevokeInput>(
+    ({ id }) => `/api/admin/groups/${id}/revoke`,
+    ({ platformGroupId }) => ({ platformGroupId }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: ['groups'] });
+      },
     }
-  };
+  );
 
-  const handleRevokeGroup = async (id: string, platformGroupId: string) => {
+  const handleRevokeGroup = (id: string, platformGroupId: string) => {
     if (
       !confirm(
         'Are you sure you want to revoke this group? Myra will leave the group and stop responding.'
@@ -44,22 +53,12 @@ export default function GroupsPage() {
     )
       return;
 
-    try {
-      const response = await fetch(`/api/admin/groups/${id}/revoke`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ platformGroupId }),
-      });
-      if (!response.ok) throw new Error('Failed to revoke group');
-      await fetchGroups();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to revoke group');
-    }
+    revokeMutation.mutate({ id, platformGroupId });
   };
 
-  useEffect(() => {
-    fetchGroups();
-  }, []);
+  const groups = data?.groups ?? [];
+  const activeGroups = groups.filter((g) => g.status === 'active');
+  const errorMessage = error?.message || revokeMutation.error?.message;
 
   return (
     <div>
@@ -70,18 +69,15 @@ export default function GroupsPage() {
             View and manage groups where Myra is active.
           </p>
         </div>
-        <Button onClick={fetchGroups} variant="outline" size="sm">
+        <Button onClick={() => refetch()} variant="outline" size="sm">
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
       </div>
 
-      {error && (
+      {errorMessage && (
         <div className="mt-4 rounded-md bg-red-50 p-4 text-red-800">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 underline">
-            Dismiss
-          </button>
+          {errorMessage}
         </div>
       )}
 
@@ -89,8 +85,8 @@ export default function GroupsPage() {
         <CardHeader>
           <CardTitle>Groups</CardTitle>
           <CardDescription>
-            {groups.filter((g) => g.status === 'active').length} active group
-            {groups.filter((g) => g.status === 'active').length !== 1 ? 's' : ''}
+            {activeGroups.length} active group
+            {activeGroups.length !== 1 ? 's' : ''}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -160,6 +156,7 @@ export default function GroupsPage() {
                             onClick={() =>
                               handleRevokeGroup(group.id, group.platformGroupId)
                             }
+                            disabled={revokeMutation.isPending}
                           >
                             <XCircle className="h-4 w-4 text-red-500" />
                           </Button>

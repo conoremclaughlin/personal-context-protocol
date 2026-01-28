@@ -1,13 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, History } from 'lucide-react';
+import { RefreshCw, History, Brain } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { createClient } from '@/lib/supabase/client';
+import { useApiQuery } from '@/lib/api';
 
 interface Identity {
   id: string;
@@ -24,6 +23,9 @@ interface Identity {
   updatedAt: string;
 }
 
+interface IndividualsResponse {
+  individuals: Identity[];
+}
 
 /**
  * Generate IDENTITY.md content from identity data
@@ -100,9 +102,15 @@ function IdentityCard({ identity }: { identity: Identity }) {
           <div className="flex items-center gap-2">
             <Badge variant="secondary">v{identity.version}</Badge>
             <Button variant="outline" size="sm" asChild>
+              <Link href={`/individuals/${identity.agentId}/memories`}>
+                <Brain className="mr-1 h-4 w-4" />
+                Memories
+              </Link>
+            </Button>
+            <Button variant="outline" size="sm" asChild>
               <Link href={`/individuals/${identity.agentId}/versions`}>
                 <History className="mr-1 h-4 w-4" />
-                Version History
+                Versions
               </Link>
             </Button>
           </div>
@@ -118,34 +126,13 @@ function IdentityCard({ identity }: { identity: Identity }) {
 }
 
 export default function IndividualsPage() {
-  const [individuals, setIndividuals] = useState<Identity[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Fetch individuals
+  const { data, isLoading, error, refetch } = useApiQuery<IndividualsResponse>(
+    ['individuals'],
+    '/api/admin/individuals'
+  );
 
-  const fetchIndividuals = async () => {
-    setIsLoading(true);
-    try {
-      const supabase = createClient();
-      const { data: { session } } = await supabase.auth.getSession();
-      const response = await fetch('/api/admin/individuals', {
-        headers: {
-          Authorization: `Bearer ${session?.access_token}`,
-        },
-      });
-      if (!response.ok) throw new Error('Failed to fetch individuals');
-      const data = await response.json();
-      setIndividuals(data.individuals);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchIndividuals();
-  }, []);
+  const individuals = data?.individuals ?? [];
 
   return (
     <div>
@@ -156,7 +143,7 @@ export default function IndividualsPage() {
             AI beings with identity files - Wren, Myra, Benson, and others.
           </p>
         </div>
-        <Button onClick={fetchIndividuals} variant="outline" size="sm">
+        <Button onClick={() => refetch()} variant="outline" size="sm">
           <RefreshCw className="mr-2 h-4 w-4" />
           Refresh
         </Button>
@@ -164,10 +151,7 @@ export default function IndividualsPage() {
 
       {error && (
         <div className="mt-4 rounded-md bg-red-50 p-4 text-red-800">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 underline">
-            Dismiss
-          </button>
+          {error.message}
         </div>
       )}
 

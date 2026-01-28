@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Plus, RefreshCw, Copy, Check } from 'lucide-react';
+import { useApiQuery, useApiPost, useQueryClient } from '@/lib/api';
 
 interface ChallengeCode {
   id: string;
@@ -16,44 +17,29 @@ interface ChallengeCode {
   usedForGroupId: string | null;
 }
 
+interface CodesResponse {
+  codes: ChallengeCode[];
+}
+
 export default function ChallengeCodesPage() {
-  const [codes, setCodes] = useState<ChallengeCode[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
-  const [isGenerating, setIsGenerating] = useState(false);
 
-  const fetchCodes = async () => {
-    setIsLoading(true);
-    try {
-      const response = await fetch('/api/admin/challenge-codes');
-      if (!response.ok) throw new Error('Failed to fetch codes');
-      const data = await response.json();
-      setCodes(data.codes);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setIsLoading(false);
-    }
-  };
+  // Fetch codes
+  const { data, isLoading, error, refetch } = useApiQuery<CodesResponse>(
+    ['challenge-codes'],
+    '/api/admin/challenge-codes'
+  );
 
-  const handleGenerateCode = async () => {
-    setIsGenerating(true);
-    try {
-      const response = await fetch('/api/admin/challenge-codes', {
-        method: 'POST',
-      });
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Failed to generate code');
-      }
-      await fetchCodes();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to generate code');
-    } finally {
-      setIsGenerating(false);
-    }
+  // Generate code mutation
+  const generateMutation = useApiPost<CodesResponse>('/api/admin/challenge-codes', {
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['challenge-codes'] });
+    },
+  });
+
+  const handleGenerateCode = () => {
+    generateMutation.mutate(undefined as never);
   };
 
   const handleCopyCode = (code: string) => {
@@ -62,11 +48,10 @@ export default function ChallengeCodesPage() {
     setTimeout(() => setCopiedCode(null), 2000);
   };
 
-  useEffect(() => {
-    fetchCodes();
-  }, []);
-
+  const codes = data?.codes ?? [];
   const isExpired = (expiresAt: string) => new Date(expiresAt) < new Date();
+  const activeCodes = codes.filter((c) => !c.usedAt && !isExpired(c.expiresAt));
+  const errorMessage = error?.message || generateMutation.error?.message;
 
   const getCodeStatus = (code: ChallengeCode) => {
     if (code.usedAt) {
@@ -78,7 +63,7 @@ export default function ChallengeCodesPage() {
     return <Badge variant="success">Active</Badge>;
   };
 
-  // Filter to show only active/unused codes first, then used ones
+  // Sort: active first, then by creation date
   const sortedCodes = [...codes].sort((a, b) => {
     const aActive = !a.usedAt && !isExpired(a.expiresAt);
     const bActive = !b.usedAt && !isExpired(b.expiresAt);
@@ -86,8 +71,6 @@ export default function ChallengeCodesPage() {
     if (!aActive && bActive) return 1;
     return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
   });
-
-  const activeCodes = codes.filter((c) => !c.usedAt && !isExpired(c.expiresAt));
 
   return (
     <div>
@@ -99,27 +82,24 @@ export default function ChallengeCodesPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button onClick={fetchCodes} variant="outline" size="sm">
+          <Button onClick={() => refetch()} variant="outline" size="sm">
             <RefreshCw className="mr-2 h-4 w-4" />
             Refresh
           </Button>
           <Button
             onClick={handleGenerateCode}
             size="sm"
-            disabled={isGenerating || activeCodes.length >= 5}
+            disabled={generateMutation.isPending || activeCodes.length >= 5}
           >
             <Plus className="mr-2 h-4 w-4" />
-            {isGenerating ? 'Generating...' : 'Generate Code'}
+            {generateMutation.isPending ? 'Generating...' : 'Generate Code'}
           </Button>
         </div>
       </div>
 
-      {error && (
+      {errorMessage && (
         <div className="mt-4 rounded-md bg-red-50 p-4 text-red-800">
-          {error}
-          <button onClick={() => setError(null)} className="ml-2 underline">
-            Dismiss
-          </button>
+          {errorMessage}
         </div>
       )}
 
