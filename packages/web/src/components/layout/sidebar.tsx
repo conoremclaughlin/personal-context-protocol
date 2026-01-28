@@ -9,6 +9,7 @@ import {
   Key,
   LogOut,
   Home,
+  Bot,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
@@ -20,6 +21,7 @@ const navigation = [
   { name: 'Trusted Users', href: '/trusted-users', icon: Users },
   { name: 'Groups', href: '/groups', icon: UsersRound },
   { name: 'Challenge Codes', href: '/challenge-codes', icon: Key },
+  { name: 'Individuals', href: '/individuals', icon: Bot },
 ];
 
 export function Sidebar() {

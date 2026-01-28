@@ -514,4 +514,105 @@ router.get('/reminders', async (_req: Request, res: Response) => {
   }
 });
 
+// =============================================================================
+// Individuals (AI Beings)
+// =============================================================================
+
+/**
+ * GET /api/admin/individuals
+ * List all AI being identities
+ */
+router.get('/individuals', async (_req: Request, res: Response) => {
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+
+    const { data, error } = await supabase
+      .from('agent_identities')
+      .select('*')
+      .order('agent_id', { ascending: true });
+
+    if (error) {
+      logger.error('Failed to list individuals:', error);
+      res.status(500).json({ error: 'Failed to list individuals' });
+      return;
+    }
+
+    res.json({
+      individuals: (data || []).map((identity) => ({
+        id: identity.id,
+        agentId: identity.agent_id,
+        name: identity.name,
+        role: identity.role,
+        description: identity.description,
+        values: identity.values,
+        relationships: identity.relationships,
+        capabilities: identity.capabilities,
+        metadata: identity.metadata,
+        version: identity.version,
+        createdAt: identity.created_at,
+        updatedAt: identity.updated_at,
+      })),
+    });
+  } catch (error) {
+    logger.error('Failed to list individuals:', error);
+    res.status(500).json({ error: 'Failed to list individuals' });
+  }
+});
+
+/**
+ * GET /api/admin/individuals/:agentId/history
+ * Get version history for an AI being
+ */
+router.get('/individuals/:agentId/history', async (req: Request, res: Response) => {
+  try {
+    const { agentId } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+
+    // First get the identity ID
+    const { data: identity } = await supabase
+      .from('agent_identities')
+      .select('id')
+      .eq('agent_id', agentId)
+      .single();
+
+    if (!identity) {
+      res.status(404).json({ error: 'Identity not found' });
+      return;
+    }
+
+    // Get history entries
+    const { data, error } = await supabase
+      .from('agent_identity_history')
+      .select('*')
+      .eq('identity_id', identity.id)
+      .order('archived_at', { ascending: false })
+      .limit(20);
+
+    if (error) {
+      logger.error('Failed to get identity history:', error);
+      res.status(500).json({ error: 'Failed to get history' });
+      return;
+    }
+
+    res.json({
+      agentId,
+      history: (data || []).map((h) => ({
+        id: h.id,
+        version: h.version,
+        name: h.name,
+        role: h.role,
+        description: h.description,
+        values: h.values,
+        relationships: h.relationships,
+        capabilities: h.capabilities,
+        changeType: h.change_type,
+        archivedAt: h.archived_at,
+      })),
+    });
+  } catch (error) {
+    logger.error('Failed to get identity history:', error);
+    res.status(500).json({ error: 'Failed to get history' });
+  }
+});
+
 export default router;

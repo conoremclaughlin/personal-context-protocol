@@ -5,6 +5,9 @@
  */
 
 import { z } from 'zod';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import type { DataComposer } from '../../data/composer';
 import type { Json } from '../../data/supabase/types';
 import { logger } from '../../utils/logger';
@@ -23,6 +26,7 @@ export const saveIdentitySchema = userIdentifierBaseSchema.extend({
   relationships: z.record(z.string()).optional().describe('Map of agentId to relationship description'),
   capabilities: z.array(z.string()).optional().describe('What this agent can do'),
   metadata: z.record(z.unknown()).optional().describe('Additional flexible data'),
+  syncToFile: z.boolean().optional().describe('Also write to ~/.pcp/individuals/{agentId}/IDENTITY.md'),
 });
 
 export const getIdentitySchema = userIdentifierBaseSchema.extend({
@@ -42,6 +46,93 @@ export const restoreIdentitySchema = userIdentifierBaseSchema.extend({
 });
 
 // =====================================================
+// HELPERS
+// =====================================================
+
+/**
+ * Generate IDENTITY.md content from identity data
+ */
+function generateIdentityMarkdown(identity: {
+  agentId: string;
+  name: string;
+  role: string;
+  description?: string | null;
+  values?: string[] | null;
+  capabilities?: string[] | null;
+  relationships?: Record<string, string> | null;
+}): string {
+  const lines: string[] = [];
+  const now = new Date().toISOString().split('T')[0];
+
+  lines.push(`# IDENTITY.md - ${identity.name}`);
+  lines.push('');
+  lines.push('## Who I Am');
+  lines.push('');
+  lines.push(`- **Name:** ${identity.name}`);
+  lines.push(`- **Role:** ${identity.role}`);
+  lines.push('');
+
+  if (identity.description) {
+    lines.push('## Nature');
+    lines.push('');
+    lines.push(identity.description);
+    lines.push('');
+  }
+
+  if (identity.values && identity.values.length > 0) {
+    lines.push('## Values');
+    lines.push('');
+    for (const value of identity.values) {
+      lines.push(`- ${value}`);
+    }
+    lines.push('');
+  }
+
+  if (identity.capabilities && identity.capabilities.length > 0) {
+    lines.push('## Capabilities');
+    lines.push('');
+    for (const cap of identity.capabilities) {
+      lines.push(`- ${cap}`);
+    }
+    lines.push('');
+  }
+
+  if (identity.relationships && Object.keys(identity.relationships).length > 0) {
+    lines.push('## Relationships');
+    lines.push('');
+    for (const [agent, desc] of Object.entries(identity.relationships)) {
+      lines.push(`- **${agent}:** ${desc}`);
+    }
+    lines.push('');
+  }
+
+  lines.push('---');
+  lines.push('');
+  lines.push(`*Updated: ${now} (synced from database)*`);
+  lines.push('');
+
+  return lines.join('\n');
+}
+
+/**
+ * Write identity to file system
+ */
+function syncIdentityToFile(agentId: string, content: string): string {
+  const pcpDir = join(homedir(), '.pcp', 'individuals', agentId);
+  const filePath = join(pcpDir, 'IDENTITY.md');
+
+  // Ensure directory exists
+  if (!existsSync(pcpDir)) {
+    mkdirSync(pcpDir, { recursive: true });
+  }
+
+  writeFileSync(filePath, content, 'utf-8');
+  logger.info(`Identity synced to file: ${filePath}`);
+
+  return filePath;
+}
+
+// =====================================================
 // HANDLERS
 // =====================================================
 
@@ -53,7 +144,7 @@ export async function handleSaveIdentity(
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
   const supabase = dataComposer.getClient();
 
-  const { agentId, name, role, description, values, relationships, capabilities, metadata } = params;
+  const { agentId, name, role, description, values, relationships, capabilities, metadata, syncToFile } = params;
 
   // Use upsert to handle both create and update
   const { data, error } = await supabase
@@ -84,6 +175,26 @@ export async function handleSaveIdentity(
 
   logger.info('Identity saved', { agentId, version: data.version });
 
+  // Optionally sync to file system
+  let filePath: string | undefined;
+  if (syncToFile) {
+    try {
+      const markdown = generateIdentityMarkdown({
+        agentId,
+        name,
+        role,
+        description,
+        values,
+        capabilities,
+        relationships,
+      });
+      filePath = syncIdentityToFile(agentId, markdown);
+    } catch (fileError) {
+      logger.error('Failed to sync identity to file', { error: fileError, agentId });
+      // Don't throw - DB save succeeded, file sync is optional
+    }
+  }
+
   return {
     content: [
       {
@@ -102,6 +213,7 @@ export async function handleSaveIdentity(
               createdAt: data.created_at,
               updatedAt: data.updated_at,
             },
+            ...(filePath && { syncedToFile: filePath }),
           },
           null,
           2
