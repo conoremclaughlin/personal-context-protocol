@@ -1,0 +1,363 @@
+/**
+ * Agent Inbox Handlers
+ *
+ * MCP tools for cross-agent messaging. Allows AI beings to send messages
+ * to each other asynchronously for coordination and task handoff.
+ */
+
+import { z } from 'zod';
+import type { DataComposer } from '../../data/composer';
+import { resolveUserOrThrow, userIdentifierBaseSchema } from '../../services/user-resolver';
+import { logger } from '../../utils/logger';
+import type { Json } from '../../data/supabase/types';
+
+// ============== Schemas ==============
+
+const sendToInboxSchema = userIdentifierBaseSchema.extend({
+  recipientAgentId: z.string().describe('Agent ID to send message to (e.g., "wren", "myra", "claude-code")'),
+  senderAgentId: z.string().optional().describe('Agent ID of sender (optional if from human)'),
+  subject: z.string().optional().describe('Message subject'),
+  content: z.string().describe('Message content'),
+  messageType: z
+    .enum(['message', 'task_request', 'session_resume', 'notification'])
+    .optional()
+    .default('message')
+    .describe('Type of message'),
+  priority: z
+    .enum(['low', 'normal', 'high', 'urgent'])
+    .optional()
+    .default('normal')
+    .describe('Message priority'),
+  relatedSessionId: z.string().uuid().optional().describe('Related session ID (for resume requests)'),
+  relatedArtifactUri: z.string().optional().describe('Related artifact URI'),
+  metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
+  expiresAt: z.string().datetime().optional().describe('When this message expires'),
+});
+
+const getInboxSchema = userIdentifierBaseSchema.extend({
+  agentId: z.string().describe('Agent ID to get inbox for'),
+  status: z
+    .enum(['unread', 'read', 'acknowledged', 'completed', 'all'])
+    .optional()
+    .default('unread')
+    .describe('Filter by status'),
+  priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Filter by priority'),
+  messageType: z.enum(['message', 'task_request', 'session_resume', 'notification']).optional(),
+  limit: z.number().min(1).max(100).optional().default(20).describe('Max messages'),
+});
+
+const updateInboxMessageSchema = userIdentifierBaseSchema.extend({
+  messageId: z.string().uuid().describe('Message ID to update'),
+  agentId: z.string().describe('Agent ID making the update (must be recipient)'),
+  status: z.enum(['read', 'acknowledged', 'completed']).describe('New status'),
+});
+
+const getAgentStatusSchema = userIdentifierBaseSchema.extend({
+  agentId: z.string().describe('Agent ID to check status for'),
+});
+
+// ============== Handlers ==============
+
+export async function handleSendToInbox(args: unknown, dataComposer: DataComposer) {
+  const supabase = dataComposer.getClient();
+  const parsed = sendToInboxSchema.parse(args);
+  const resolved = await resolveUserOrThrow(parsed, dataComposer);
+
+  const {
+    recipientAgentId,
+    senderAgentId,
+    subject,
+    content,
+    messageType = 'message',
+    priority = 'normal',
+    relatedSessionId,
+    relatedArtifactUri,
+    metadata = {},
+    expiresAt,
+  } = parsed;
+
+  const { data: message, error } = await supabase
+    .from('agent_inbox')
+    .insert({
+      recipient_user_id: resolved.user.id,
+      recipient_agent_id: recipientAgentId,
+      sender_user_id: senderAgentId ? null : resolved.user.id,
+      sender_agent_id: senderAgentId || null,
+      subject,
+      content,
+      message_type: messageType,
+      priority,
+      related_session_id: relatedSessionId || null,
+      related_artifact_uri: relatedArtifactUri || null,
+      metadata: metadata as Json,
+      expires_at: expiresAt || null,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    logger.error('Failed to send inbox message', { error, recipientAgentId });
+    throw new Error(`Failed to send message: ${error.message}`);
+  }
+
+  logger.info('Inbox message sent', {
+    messageId: message.id,
+    to: recipientAgentId,
+    from: senderAgentId || 'user',
+    type: messageType,
+    priority,
+  });
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          success: true,
+          message: `Message sent to ${recipientAgentId}`,
+          messageId: message.id,
+          recipientAgentId,
+          messageType,
+          priority,
+          createdAt: message.created_at,
+        }),
+      },
+    ],
+  };
+}
+
+export async function handleGetInbox(args: unknown, dataComposer: DataComposer) {
+  const supabase = dataComposer.getClient();
+  const parsed = getInboxSchema.parse(args);
+  const resolved = await resolveUserOrThrow(parsed, dataComposer);
+
+  const { agentId, status = 'unread', priority, messageType, limit = 20 } = parsed;
+
+  let query = supabase
+    .from('agent_inbox')
+    .select('*')
+    .eq('recipient_user_id', resolved.user.id)
+    .eq('recipient_agent_id', agentId)
+    .order('priority', { ascending: false }) // urgent first
+    .order('created_at', { ascending: false })
+    .limit(limit);
+
+  if (status !== 'all') {
+    query = query.eq('status', status);
+  }
+  if (priority) {
+    query = query.eq('priority', priority);
+  }
+  if (messageType) {
+    query = query.eq('message_type', messageType);
+  }
+
+  // Exclude expired messages
+  query = query.or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+
+  const { data: messages, error } = await query;
+
+  if (error) {
+    throw new Error(`Failed to get inbox: ${error.message}`);
+  }
+
+  // Count unread for context
+  const { count: unreadCount } = await supabase
+    .from('agent_inbox')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_user_id', resolved.user.id)
+    .eq('recipient_agent_id', agentId)
+    .eq('status', 'unread');
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          success: true,
+          agentId,
+          unreadCount: unreadCount || 0,
+          count: messages?.length || 0,
+          messages: (messages || []).map((m) => ({
+            id: m.id,
+            subject: m.subject,
+            content: m.content,
+            messageType: m.message_type,
+            priority: m.priority,
+            status: m.status,
+            senderAgentId: m.sender_agent_id,
+            relatedSessionId: m.related_session_id,
+            relatedArtifactUri: m.related_artifact_uri,
+            metadata: m.metadata,
+            createdAt: m.created_at,
+            readAt: m.read_at,
+          })),
+        }),
+      },
+    ],
+  };
+}
+
+export async function handleUpdateInboxMessage(args: unknown, dataComposer: DataComposer) {
+  const supabase = dataComposer.getClient();
+  const parsed = updateInboxMessageSchema.parse(args);
+  const resolved = await resolveUserOrThrow(parsed, dataComposer);
+
+  const { messageId, agentId, status } = parsed;
+
+  // Verify the message belongs to this agent
+  const { data: existing, error: fetchError } = await supabase
+    .from('agent_inbox')
+    .select('*')
+    .eq('id', messageId)
+    .eq('recipient_user_id', resolved.user.id)
+    .eq('recipient_agent_id', agentId)
+    .single();
+
+  if (fetchError) {
+    throw new Error(`Message not found or not accessible: ${messageId}`);
+  }
+
+  const updates: Record<string, unknown> = { status };
+
+  if (status === 'read' && !existing.read_at) {
+    updates.read_at = new Date().toISOString();
+  }
+  if (status === 'acknowledged') {
+    updates.acknowledged_at = new Date().toISOString();
+  }
+
+  const { data: updated, error: updateError } = await supabase
+    .from('agent_inbox')
+    .update(updates)
+    .eq('id', messageId)
+    .select()
+    .single();
+
+  if (updateError) {
+    throw new Error(`Failed to update message: ${updateError.message}`);
+  }
+
+  logger.info('Inbox message updated', { messageId, agentId, newStatus: status });
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          success: true,
+          message: 'Message updated',
+          messageId,
+          status: updated.status,
+          readAt: updated.read_at,
+          acknowledgedAt: updated.acknowledged_at,
+        }),
+      },
+    ],
+  };
+}
+
+export async function handleGetAgentStatus(args: unknown, dataComposer: DataComposer) {
+  const supabase = dataComposer.getClient();
+  const parsed = getAgentStatusSchema.parse(args);
+  const resolved = await resolveUserOrThrow(parsed, dataComposer);
+
+  const { agentId } = parsed;
+
+  // Get latest session for this agent
+  const { data: latestSession } = await supabase
+    .from('sessions')
+    .select('*')
+    .eq('user_id', resolved.user.id)
+    .eq('agent_id', agentId)
+    .order('started_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  // Get unread message count
+  const { count: unreadCount } = await supabase
+    .from('agent_inbox')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_user_id', resolved.user.id)
+    .eq('recipient_agent_id', agentId)
+    .eq('status', 'unread');
+
+  // Get urgent message count
+  const { count: urgentCount } = await supabase
+    .from('agent_inbox')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_user_id', resolved.user.id)
+    .eq('recipient_agent_id', agentId)
+    .eq('status', 'unread')
+    .eq('priority', 'urgent');
+
+  // Determine agent status based on session
+  let agentStatus = 'inactive';
+  if (latestSession) {
+    if (!latestSession.ended_at) {
+      agentStatus = 'active';
+    } else {
+      const endedAt = new Date(latestSession.ended_at);
+      const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      agentStatus = endedAt > hourAgo ? 'recently_active' : 'inactive';
+    }
+  }
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          success: true,
+          agentId,
+          status: agentStatus,
+          inbox: {
+            unreadCount: unreadCount || 0,
+            urgentCount: urgentCount || 0,
+          },
+          lastSession: latestSession
+            ? {
+                id: latestSession.id,
+                claudeSessionId: latestSession.claude_session_id,
+                startedAt: latestSession.started_at,
+                endedAt: latestSession.ended_at,
+                summary: latestSession.summary,
+                workingDir: latestSession.working_dir,
+              }
+            : null,
+        }),
+      },
+    ],
+  };
+}
+
+// ============== Tool Registration ==============
+
+export const inboxToolDefinitions = [
+  {
+    name: 'send_to_inbox',
+    description:
+      'Send a message to another agent\'s inbox. Use for cross-agent communication, task handoff, or session resume requests.',
+    schema: sendToInboxSchema,
+    handler: handleSendToInbox,
+  },
+  {
+    name: 'get_inbox',
+    description: 'Get messages from an agent\'s inbox. Returns unread messages by default.',
+    schema: getInboxSchema,
+    handler: handleGetInbox,
+  },
+  {
+    name: 'update_inbox_message',
+    description: 'Update message status (mark as read, acknowledged, or completed).',
+    schema: updateInboxMessageSchema,
+    handler: handleUpdateInboxMessage,
+  },
+  {
+    name: 'get_agent_status',
+    description:
+      'Get status of an agent: active/inactive, unread message count, last session info.',
+    schema: getAgentStatusSchema,
+    handler: handleGetAgentStatus,
+  },
+];
