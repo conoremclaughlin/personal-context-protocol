@@ -11,8 +11,10 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { createClient } from '@supabase/supabase-js';
 import { getAuthorizationService } from '../services/authorization';
+import { getOAuthService } from '../services/oauth';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
+import crypto from 'crypto';
 
 // WhatsApp listener reference (set via setWhatsAppListener)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -29,8 +31,15 @@ export function setWhatsAppListener(listener: any): void {
 /**
  * Admin auth middleware
  * Validates Supabase JWT and ensures user is a trusted admin/owner
+ * Skips authentication for OAuth callback routes (they use state tokens)
  */
 async function adminAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
+  // Skip auth for OAuth callbacks (they use state tokens for security)
+  if (req.path.match(/\/oauth\/[^/]+\/callback$/)) {
+    next();
+    return;
+  }
+
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -804,6 +813,241 @@ router.get('/individuals/:agentId/memories/:memoryId/history', async (req: Reque
   } catch (error) {
     logger.error('Failed to get memory history:', error);
     res.status(500).json({ error: 'Failed to get memory history' });
+  }
+});
+
+// =============================================================================
+// Connected Accounts (OAuth)
+// =============================================================================
+
+// In-memory store for OAuth state (in production, use Redis or similar)
+const oauthStateStore = new Map<string, { userId: string; provider: string; expiresAt: number }>();
+
+/**
+ * GET /api/admin/connected-accounts
+ * List all connected accounts for the authenticated user
+ */
+router.get('/connected-accounts', async (req: Request, res: Response) => {
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { user: { email: string } };
+
+    // Get the PCP user ID from the authenticated user's email
+    const { data: pcpUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', authReq.user.email)
+      .single();
+
+    if (!pcpUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const oauthService = getOAuthService();
+    const accounts = await oauthService.getConnectedAccounts(pcpUser.id);
+
+    // Get supported providers and their configuration status
+    const providers = oauthService.getSupportedProviders().map((provider) => ({
+      name: provider,
+      configured: oauthService.isProviderConfigured(provider),
+      connected: accounts.some((a) => a.provider === provider && a.status === 'active'),
+    }));
+
+    res.json({
+      accounts: accounts.map((a) => ({
+        id: a.id,
+        provider: a.provider,
+        email: a.email,
+        displayName: a.displayName,
+        avatarUrl: a.avatarUrl,
+        status: a.status,
+        lastError: a.lastError,
+        lastUsedAt: a.lastUsedAt,
+        expiresAt: a.expiresAt,
+        scopes: a.scopes,
+        createdAt: a.createdAt,
+      })),
+      providers,
+    });
+  } catch (error) {
+    logger.error('Failed to list connected accounts:', error);
+    res.status(500).json({ error: 'Failed to list connected accounts' });
+  }
+});
+
+/**
+ * GET /api/admin/oauth/:provider/authorize
+ * Start OAuth flow for a provider
+ */
+router.get('/oauth/:provider/authorize', async (req: Request, res: Response) => {
+  try {
+    const { provider } = req.params;
+    const oauthService = getOAuthService();
+
+    if (!oauthService.isProviderConfigured(provider)) {
+      res.status(400).json({ error: `OAuth not configured for ${provider}` });
+      return;
+    }
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { user: { email: string } };
+
+    // Get the PCP user ID
+    const { data: pcpUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', authReq.user.email)
+      .single();
+
+    if (!pcpUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    // Generate state token
+    const state = crypto.randomBytes(32).toString('hex');
+
+    // Store state with user info (expires in 10 minutes)
+    oauthStateStore.set(state, {
+      userId: pcpUser.id,
+      provider,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+
+    // Build redirect URI
+    const baseUrl = env.OAUTH_REDIRECT_BASE_URL || `http://localhost:${env.MCP_HTTP_PORT}`;
+    const redirectUri = `${baseUrl}/api/admin/oauth/${provider}/callback`;
+
+    const authUrl = oauthService.getAuthorizationUrl(provider, redirectUri, state);
+
+    res.json({ authUrl });
+  } catch (error) {
+    logger.error('Failed to start OAuth flow:', error);
+    res.status(500).json({ error: 'Failed to start OAuth flow' });
+  }
+});
+
+/**
+ * GET /api/admin/oauth/:provider/callback
+ * OAuth callback handler (no auth required - uses state token)
+ */
+router.get('/oauth/:provider/callback', async (req: Request, res: Response) => {
+  // Remove auth middleware for this route by handling it specially
+  const { provider } = req.params;
+  const { code, state, error: oauthError } = req.query;
+
+  // HTML response helper
+  const sendHtmlResponse = (success: boolean, message: string) => {
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+  <title>${success ? 'Connected' : 'Error'}</title>
+  <style>
+    body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #f5f5f5; }
+    .card { background: white; padding: 2rem; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+    .success { color: #16a34a; }
+    .error { color: #dc2626; }
+    p { color: #666; margin: 1rem 0; }
+    button { background: #3b82f6; color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 6px; cursor: pointer; font-size: 1rem; }
+    button:hover { background: #2563eb; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1 class="${success ? 'success' : 'error'}">${success ? 'Account Connected!' : 'Connection Failed'}</h1>
+    <p>${message}</p>
+    <button onclick="window.close()">Close Window</button>
+    <script>
+      // Notify parent window and close
+      if (window.opener) {
+        window.opener.postMessage({ type: 'oauth-callback', success: ${success}, provider: '${provider}' }, '*');
+      }
+    </script>
+  </div>
+</body>
+</html>`;
+    res.send(html);
+  };
+
+  try {
+    if (oauthError) {
+      sendHtmlResponse(false, `OAuth error: ${oauthError}`);
+      return;
+    }
+
+    if (!code || !state) {
+      sendHtmlResponse(false, 'Missing code or state parameter');
+      return;
+    }
+
+    // Validate state
+    const stateData = oauthStateStore.get(state as string);
+    if (!stateData) {
+      sendHtmlResponse(false, 'Invalid or expired state token');
+      return;
+    }
+
+    // Check expiry
+    if (Date.now() > stateData.expiresAt) {
+      oauthStateStore.delete(state as string);
+      sendHtmlResponse(false, 'OAuth session expired. Please try again.');
+      return;
+    }
+
+    // Clean up state
+    oauthStateStore.delete(state as string);
+
+    // Exchange code for tokens
+    const oauthService = getOAuthService();
+    const baseUrl = env.OAUTH_REDIRECT_BASE_URL || `http://localhost:${env.MCP_HTTP_PORT}`;
+    const redirectUri = `${baseUrl}/api/admin/oauth/${provider}/callback`;
+
+    const tokens = await oauthService.exchangeCode(provider, code as string, redirectUri);
+
+    // Get user info
+    const userInfo = await oauthService.getUserInfo(provider, tokens.accessToken);
+
+    // Save connected account
+    await oauthService.saveConnectedAccount(stateData.userId, provider, tokens, userInfo);
+
+    sendHtmlResponse(true, `Successfully connected ${userInfo.email || provider} account.`);
+  } catch (error) {
+    logger.error('OAuth callback error:', error);
+    sendHtmlResponse(false, error instanceof Error ? error.message : 'Failed to connect account');
+  }
+});
+
+/**
+ * DELETE /api/admin/connected-accounts/:id
+ * Disconnect an account
+ */
+router.delete('/connected-accounts/:id', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { user: { email: string } };
+
+    // Get the PCP user ID
+    const { data: pcpUser } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', authReq.user.email)
+      .single();
+
+    if (!pcpUser) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+
+    const oauthService = getOAuthService();
+    await oauthService.disconnectAccount(id, pcpUser.id);
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Failed to disconnect account:', error);
+    res.status(500).json({ error: 'Failed to disconnect account' });
   }
 });
 

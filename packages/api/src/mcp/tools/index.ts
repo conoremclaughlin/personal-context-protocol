@@ -114,6 +114,13 @@ import {
   getTimezoneSchema,
 } from './user-settings-handlers';
 
+import {
+  handleGetResumableSessions,
+  handleUpdateSessionStatus,
+  getResumableSessionsSchema,
+  updateSessionStatusSchema,
+} from './session-orchestration-handlers';
+
 // Re-export for external use
 export { setResponseCallback, addPendingMessage } from './response-handlers';
 export { setTelegramListener, registerChannelListener } from './chat-context-handlers';
@@ -1686,6 +1693,63 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         };
       } catch (error) {
         logger.error('Error in get_timezone:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // SESSION ORCHESTRATION TOOLS (agent-to-agent)
+  // =====================================================
+
+  server.registerTool(
+    'get_resumable_sessions',
+    {
+      description: `Get Claude Code sessions that can be resumed. Use this to find sessions from other agents (like Wren) that are waiting to be continued.
+
+Returns sessions with status='resumable' by default. Each session includes:
+- claudeSessionId: The ID to use with 'claude --resume'
+- resumeCommand: Ready-to-use command string
+- context: Brief description of what the session was working on
+- agentId: Which agent owns the session
+
+Example workflow for Myra:
+1. Call get_resumable_sessions(agentId: "wren")
+2. If sessions found, run: claude --resume <claudeSessionId> --message "Continue work, user confirmed X"`,
+      inputSchema: getResumableSessionsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetResumableSessions(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_resumable_sessions:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'update_session_status',
+    {
+      description: `Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.
+
+Call this before going idle so other agents can find and resume your session:
+- Set status to 'resumable' when waiting for external input
+- Set status to 'completed' when work is done
+- Include context describing current state`,
+      inputSchema: updateSessionStatusSchema,
+    },
+    async (args) => {
+      try {
+        return await handleUpdateSessionStatus(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in update_session_status:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,

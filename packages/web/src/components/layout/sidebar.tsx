@@ -10,6 +10,8 @@ import {
   LogOut,
   Home,
   Bot,
+  Bell,
+  Link2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
@@ -22,6 +24,8 @@ const navigation = [
   { name: 'Groups', href: '/groups', icon: UsersRound },
   { name: 'Challenge Codes', href: '/challenge-codes', icon: Key },
   { name: 'Individuals', href: '/individuals', icon: Bot },
+  { name: 'Reminders', href: '/reminders', icon: Bell },
+  { name: 'Connected Accounts', href: '/connected-accounts', icon: Link2 },
 ];
 
 export function Sidebar() {

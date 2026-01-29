@@ -758,7 +758,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
   }
 
   // Fetch all context in parallel
-  const [contexts, projects, focus, activeSession, recentMemories] = await Promise.all([
+  const [contexts, projects, focus, activeSession, recentMemories, dbIdentity] = await Promise.all([
     // Identity Core: all context summaries
     dataComposer.repositories.context.findAllByUser(user.id),
     // Active projects
@@ -776,6 +776,16 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
           includeShared: true,
         })
       : Promise.resolve([]),
+    // Database identity (for cloud agents, includes metadata, heartbeat, soul)
+    agentId
+      ? dataComposer.getClient()
+          .from('agent_identities')
+          .select('*')
+          .eq('user_id', user.id)
+          .eq('agent_id', agentId)
+          .single()
+          .then(({ data }) => data)
+      : Promise.resolve(null),
   ]);
 
   // Organize contexts by type
@@ -787,6 +797,32 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
 
   const projectContexts = contexts.filter((c) => c.context_type === 'project');
 
+  // Compute reflection status from identity metadata
+  const identityMetadata = dbIdentity?.metadata as Record<string, unknown> | null;
+  const lastReflectedAt = identityMetadata?.lastReflectedAt as string | null;
+  let reflectionStatus: { lastReflectedAt: string | null; daysSince: number | null; suggestion: string | null } | null = null;
+
+  if (agentId) {
+    let daysSince: number | null = null;
+    let suggestion: string | null = null;
+
+    if (lastReflectedAt) {
+      const lastDate = new Date(lastReflectedAt);
+      const now = new Date();
+      daysSince = Math.floor((now.getTime() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+
+      if (daysSince >= 14) {
+        suggestion = `It's been ${daysSince} days since your last reflection. Consider reviewing recent memories and updating your SOUL.md.`;
+      } else if (daysSince >= 7) {
+        suggestion = `It's been ${daysSince} days since your last reflection. You might want to review what's happened since then.`;
+      }
+    } else {
+      suggestion = 'No reflections recorded yet. When you have a quiet moment, consider reviewing your memories and capturing what matters in your SOUL.md.';
+    }
+
+    reflectionStatus = { lastReflectedAt, daysSince, suggestion };
+  }
+
   logger.info(`Bootstrap loaded for user ${user.id}`, {
     agentId: agentId || 'none',
     contextCount: contexts.length,
@@ -794,6 +830,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     memoryCount: recentMemories.length,
     hasActiveSession: !!activeSession,
     hasIdentityFiles: !!identityFiles,
+    hasDbIdentity: !!dbIdentity,
   });
 
   return {
@@ -863,6 +900,26 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
               agentId: m.agentId,
               createdAt: m.createdAt.toISOString(),
             })),
+
+            // Database identity (for cloud agents - includes heartbeat, soul, metadata)
+            dbIdentity: dbIdentity
+              ? {
+                  agentId: dbIdentity.agent_id,
+                  name: dbIdentity.name,
+                  role: dbIdentity.role,
+                  description: dbIdentity.description,
+                  values: dbIdentity.values,
+                  capabilities: dbIdentity.capabilities,
+                  relationships: dbIdentity.relationships,
+                  heartbeat: dbIdentity.heartbeat,
+                  soul: dbIdentity.soul,
+                  metadata: dbIdentity.metadata,
+                  version: dbIdentity.version,
+                }
+              : null,
+
+            // Reflection status - prompt for periodic self-reflection
+            reflectionStatus,
           },
           null,
           2

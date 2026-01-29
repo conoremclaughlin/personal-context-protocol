@@ -2,7 +2,7 @@
  * Memory and Session types for long-term memory storage
  */
 
-export type MemorySource = 'conversation' | 'observation' | 'user_stated' | 'inferred' | 'session';
+export type MemorySource = 'conversation' | 'observation' | 'user_stated' | 'inferred' | 'session' | 'reflection';
 export type Salience = 'low' | 'medium' | 'high' | 'critical';
 
 export interface Memory {

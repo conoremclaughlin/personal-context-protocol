@@ -18,6 +18,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
+import ReactMarkdown from 'react-markdown';
 import clsx from 'clsx';
 
 interface TimelineEntry {
@@ -150,7 +151,9 @@ function TimelineCard({ entry }: { entry: TimelineEntry }) {
 
           {/* Content */}
           <div className={clsx('rounded-md p-3 mt-2', config.bgColor)}>
-            <p className="text-sm text-gray-800 whitespace-pre-wrap">{displayContent}</p>
+            <div className="prose prose-sm max-w-none text-gray-800 prose-headings:text-sm prose-headings:font-semibold prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-li:marker:text-gray-800">
+              <ReactMarkdown>{displayContent}</ReactMarkdown>
+            </div>
             {isLongContent && (
               <button
                 onClick={() => setExpanded(!expanded)}
