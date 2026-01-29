@@ -59,6 +59,11 @@ const envSchema = z.object({
 
   // Agent Configuration
   DEFAULT_MODEL: z.string().default('sonnet'),
+
+  // OAuth - Google
+  GOOGLE_CLIENT_ID: optionalString,
+  GOOGLE_CLIENT_SECRET: optionalString,
+  OAUTH_REDIRECT_BASE_URL: optionalUrl, // Base URL for OAuth callbacks (e.g., http://localhost:3000)
 });
 
 // Parse and validate environment variables

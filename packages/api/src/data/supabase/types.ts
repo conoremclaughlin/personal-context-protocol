@@ -23,11 +23,13 @@ export type Database = {
           capabilities: Json | null
           created_at: string | null
           description: string | null
+          heartbeat: string | null
           id: string
           metadata: Json | null
           name: string
           relationships: Json | null
           role: string
+          soul: string | null
           updated_at: string | null
           user_id: string
           values: Json | null
@@ -38,11 +40,13 @@ export type Database = {
           capabilities?: Json | null
           created_at?: string | null
           description?: string | null
+          heartbeat?: string | null
           id?: string
           metadata?: Json | null
           name: string
           relationships?: Json | null
           role: string
+          soul?: string | null
           updated_at?: string | null
           user_id: string
           values?: Json | null
@@ -53,11 +57,13 @@ export type Database = {
           capabilities?: Json | null
           created_at?: string | null
           description?: string | null
+          heartbeat?: string | null
           id?: string
           metadata?: Json | null
           name?: string
           relationships?: Json | null
           role?: string
+          soul?: string | null
           updated_at?: string | null
           user_id?: string
           values?: Json | null
@@ -313,6 +319,80 @@ export type Database = {
           {
             foreignKeyName: "authorized_groups_revoked_by_fkey"
             columns: ["revoked_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connected_accounts: {
+        Row: {
+          access_token: string
+          avatar_url: string | null
+          created_at: string | null
+          display_name: string | null
+          email: string | null
+          expires_at: string | null
+          id: string
+          last_error: string | null
+          last_used_at: string | null
+          metadata: Json | null
+          provider: string
+          provider_account_id: string
+          refresh_token: string | null
+          refresh_token_expires_at: string | null
+          scopes: string[] | null
+          status: string | null
+          token_type: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          access_token: string
+          avatar_url?: string | null
+          created_at?: string | null
+          display_name?: string | null
+          email?: string | null
+          expires_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_used_at?: string | null
+          metadata?: Json | null
+          provider: string
+          provider_account_id: string
+          refresh_token?: string | null
+          refresh_token_expires_at?: string | null
+          scopes?: string[] | null
+          status?: string | null
+          token_type?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          access_token?: string
+          avatar_url?: string | null
+          created_at?: string | null
+          display_name?: string | null
+          email?: string | null
+          expires_at?: string | null
+          id?: string
+          last_error?: string | null
+          last_used_at?: string | null
+          metadata?: Json | null
+          provider?: string
+          provider_account_id?: string
+          refresh_token?: string | null
+          refresh_token_expires_at?: string | null
+          scopes?: string[] | null
+          status?: string | null
+          token_type?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connected_accounts_user_id_fkey"
+            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -853,6 +933,24 @@ export type Database = {
           },
         ]
       }
+      pcp_config: {
+        Row: {
+          key: string
+          updated_at: string | null
+          value: string
+        }
+        Insert: {
+          key: string
+          updated_at?: string | null
+          value: string
+        }
+        Update: {
+          key?: string
+          updated_at?: string | null
+          value?: string
+        }
+        Relationships: []
+      }
       permission_definitions: {
         Row: {
           category: string
@@ -1248,30 +1346,42 @@ export type Database = {
       sessions: {
         Row: {
           agent_id: string | null
+          claude_session_id: string | null
+          context: string | null
           ended_at: string | null
           id: string
           metadata: Json | null
           started_at: string | null
+          status: string | null
           summary: string | null
           user_id: string
+          working_dir: string | null
         }
         Insert: {
           agent_id?: string | null
+          claude_session_id?: string | null
+          context?: string | null
           ended_at?: string | null
           id?: string
           metadata?: Json | null
           started_at?: string | null
+          status?: string | null
           summary?: string | null
           user_id: string
+          working_dir?: string | null
         }
         Update: {
           agent_id?: string | null
+          claude_session_id?: string | null
+          context?: string | null
           ended_at?: string | null
           id?: string
           metadata?: Json | null
           started_at?: string | null
+          status?: string | null
           summary?: string | null
           user_id?: string
+          working_dir?: string | null
         }
         Relationships: [
           {
@@ -1448,6 +1558,7 @@ export type Database = {
           preferences: Json | null
           telegram_id: number | null
           telegram_username: string | null
+          timezone: string | null
           updated_at: string | null
           username: string | null
           whatsapp_id: string | null
@@ -1463,6 +1574,7 @@ export type Database = {
           preferences?: Json | null
           telegram_id?: number | null
           telegram_username?: string | null
+          timezone?: string | null
           updated_at?: string | null
           username?: string | null
           whatsapp_id?: string | null
@@ -1478,6 +1590,7 @@ export type Database = {
           preferences?: Json | null
           telegram_id?: number | null
           telegram_username?: string | null
+          timezone?: string | null
           updated_at?: string | null
           username?: string | null
           whatsapp_id?: string | null
@@ -1489,13 +1602,6 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      calculate_next_run: {
-        Args: {
-          cron_expr: string
-          from_time?: string
-        }
-        Returns: string
-      }
       match_links: {
         Args: {
           match_count?: number
@@ -1544,6 +1650,7 @@ export type Database = {
       }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      trigger_heartbeat: { Args: never; Returns: undefined }
     }
     Enums: {
       trust_level: "owner" | "admin" | "member"
