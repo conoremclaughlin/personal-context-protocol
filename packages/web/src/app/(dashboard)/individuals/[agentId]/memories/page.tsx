@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
   ArrowLeft,
-  RefreshCw,
+  Loader2,
   Brain,
   PenLine,
   Trash2,
@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import clsx from 'clsx';
 
 interface TimelineEntry {
@@ -152,7 +153,7 @@ function TimelineCard({ entry }: { entry: TimelineEntry }) {
           {/* Content */}
           <div className={clsx('rounded-md p-3 mt-2', config.bgColor)}>
             <div className="prose prose-sm max-w-none text-gray-800 prose-headings:text-sm prose-headings:font-semibold prose-headings:mt-2 prose-headings:mb-1 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-li:my-0 prose-li:marker:text-gray-800">
-              <ReactMarkdown>{displayContent}</ReactMarkdown>
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
             </div>
             {isLongContent && (
               <button
@@ -214,7 +215,7 @@ export default function MemoryTimelinePage() {
   );
 
   // Fetch timeline
-  const { data, isLoading, error, refetch } = useApiQuery<TimelineResponse>(
+  const { data, isLoading, error } = useApiQuery<TimelineResponse>(
     ['individuals', agentId, 'memories', 'timeline'],
     `/api/admin/individuals/${agentId}/memories/timeline?limit=200`
   );
@@ -256,7 +257,7 @@ export default function MemoryTimelinePage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center py-12">
-        <RefreshCw className="h-6 w-6 animate-spin text-gray-400" />
+        <Loader2 className="h-6 w-6 animate-spin text-gray-400" />
         <span className="ml-2 text-gray-500">Loading memory timeline...</span>
       </div>
     );
@@ -293,10 +294,6 @@ export default function MemoryTimelinePage() {
             </p>
           </div>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {/* Stats */}

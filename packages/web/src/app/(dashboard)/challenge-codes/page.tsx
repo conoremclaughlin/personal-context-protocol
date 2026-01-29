@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Plus, RefreshCw, Copy, Check } from 'lucide-react';
+import { Plus, Copy, Check } from 'lucide-react';
 import { useApiQuery, useApiPost, useQueryClient } from '@/lib/api';
 
 interface ChallengeCode {
@@ -26,7 +26,7 @@ export default function ChallengeCodesPage() {
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
 
   // Fetch codes
-  const { data, isLoading, error, refetch } = useApiQuery<CodesResponse>(
+  const { data, isLoading, error } = useApiQuery<CodesResponse>(
     ['challenge-codes'],
     '/api/admin/challenge-codes'
   );
@@ -81,20 +81,14 @@ export default function ChallengeCodesPage() {
             Generate codes to authorize new groups. Share the code with a group admin.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => refetch()} variant="outline" size="sm">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-          <Button
-            onClick={handleGenerateCode}
-            size="sm"
-            disabled={generateMutation.isPending || activeCodes.length >= 5}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            {generateMutation.isPending ? 'Generating...' : 'Generate Code'}
-          </Button>
-        </div>
+        <Button
+          onClick={handleGenerateCode}
+          size="sm"
+          disabled={generateMutation.isPending || activeCodes.length >= 5}
+        >
+          <Plus className="mr-2 h-4 w-4" />
+          {generateMutation.isPending ? 'Generating...' : 'Generate Code'}
+        </Button>
       </div>
 
       {errorMessage && (

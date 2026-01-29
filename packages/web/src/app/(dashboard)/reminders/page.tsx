@@ -1,9 +1,8 @@
 'use client';
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Bell, Clock, CheckCircle, XCircle, PauseCircle } from 'lucide-react';
+import { Bell, Clock, CheckCircle, XCircle, PauseCircle } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
 
@@ -112,7 +111,7 @@ function formatRelativeTime(date: string): string {
 }
 
 export default function RemindersPage() {
-  const { data, isLoading, error, refetch } = useApiQuery<RemindersResponse>(
+  const { data, isLoading, error } = useApiQuery<RemindersResponse>(
     ['reminders'],
     '/api/admin/reminders'
   );
@@ -136,10 +135,6 @@ export default function RemindersPage() {
             View scheduled reminders across all users.
           </p>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {error && (

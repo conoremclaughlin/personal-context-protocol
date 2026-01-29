@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Trash2, RefreshCw } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 import { useApiQuery, useApiPost, useApiDelete, useQueryClient } from '@/lib/api';
 
 interface TrustedUser {
@@ -36,7 +36,7 @@ export default function TrustedUsersPage() {
   });
 
   // Fetch users with React Query
-  const { data, isLoading, error, refetch } = useApiQuery<TrustedUsersResponse>(
+  const { data, isLoading, error } = useApiQuery<TrustedUsersResponse>(
     ['trusted-users'],
     '/api/admin/trusted-users'
   );
@@ -96,16 +96,10 @@ export default function TrustedUsersPage() {
             Manage users who can interact with Myra in DMs and generate group codes.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={() => refetch()} variant="outline" size="sm">
-            <RefreshCw className="mr-2 h-4 w-4" />
-            Refresh
-          </Button>
-          <Button onClick={() => setShowAddForm(true)} size="sm">
-            <Plus className="mr-2 h-4 w-4" />
-            Add User
-          </Button>
-        </div>
+        <Button onClick={() => setShowAddForm(true)} size="sm">
+          <Plus className="mr-2 h-4 w-4" />
+          Add User
+        </Button>
       </div>
 
       {errorMessage && (

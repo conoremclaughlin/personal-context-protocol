@@ -4,8 +4,10 @@ import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, History, Brain } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { History, Brain, Sparkles, FileText } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useApiQuery } from '@/lib/api';
 
 interface Identity {
@@ -18,6 +20,10 @@ interface Identity {
   relationships?: Record<string, string>;
   capabilities?: string[];
   metadata?: Record<string, unknown>;
+  heartbeat?: string;
+  soul?: string;
+  hasSoul: boolean;
+  hasHeartbeat: boolean;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -84,7 +90,7 @@ function generateIdentityMarkdown(identity: Identity): string {
 }
 
 function IdentityCard({ identity }: { identity: Identity }) {
-  const markdown = generateIdentityMarkdown(identity);
+  const identityMarkdown = generateIdentityMarkdown(identity);
 
   return (
     <Card className="mb-6">
@@ -96,6 +102,12 @@ function IdentityCard({ identity }: { identity: Identity }) {
               <Badge variant="outline" className="font-mono text-xs">
                 {identity.agentId}
               </Badge>
+              {identity.hasSoul && (
+                <Badge variant="secondary" className="text-xs">
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  Soul
+                </Badge>
+              )}
             </CardTitle>
             <CardDescription className="mt-1">{identity.role}</CardDescription>
           </div>
@@ -117,9 +129,34 @@ function IdentityCard({ identity }: { identity: Identity }) {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
-          <ReactMarkdown>{markdown}</ReactMarkdown>
-        </div>
+        {identity.hasSoul ? (
+          <Tabs defaultValue="identity" className="w-full">
+            <TabsList className="mb-4">
+              <TabsTrigger value="identity" className="flex items-center gap-1">
+                <FileText className="h-4 w-4" />
+                Identity
+              </TabsTrigger>
+              <TabsTrigger value="soul" className="flex items-center gap-1">
+                <Sparkles className="h-4 w-4" />
+                Soul
+              </TabsTrigger>
+            </TabsList>
+            <TabsContent value="identity">
+              <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{identityMarkdown}</ReactMarkdown>
+              </div>
+            </TabsContent>
+            <TabsContent value="soul">
+              <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{identity.soul || '*No soul content yet.*'}</ReactMarkdown>
+              </div>
+            </TabsContent>
+          </Tabs>
+        ) : (
+          <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{identityMarkdown}</ReactMarkdown>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -127,7 +164,7 @@ function IdentityCard({ identity }: { identity: Identity }) {
 
 export default function IndividualsPage() {
   // Fetch individuals
-  const { data, isLoading, error, refetch } = useApiQuery<IndividualsResponse>(
+  const { data, isLoading, error } = useApiQuery<IndividualsResponse>(
     ['individuals'],
     '/api/admin/individuals'
   );
@@ -143,10 +180,6 @@ export default function IndividualsPage() {
             AI beings with identity files - Wren, Myra, Benson, and others.
           </p>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {error && (

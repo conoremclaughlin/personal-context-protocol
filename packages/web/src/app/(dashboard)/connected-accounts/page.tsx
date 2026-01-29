@@ -1,10 +1,10 @@
 'use client';
 
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  RefreshCw,
   Link2,
   Link2Off,
   Mail,
@@ -12,6 +12,9 @@ import {
   AlertCircle,
   CheckCircle,
   Clock,
+  RefreshCw,
+  MessageSquare,
+  ChevronRight,
 } from 'lucide-react';
 import { useApiQuery, useApiDelete, apiGet } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -174,10 +177,6 @@ export default function ConnectedAccountsPage() {
             Connect third-party accounts for enhanced integrations (email, calendar, etc.)
           </p>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {error && (
@@ -185,6 +184,26 @@ export default function ConnectedAccountsPage() {
           {error.message}
         </div>
       )}
+
+      {/* WhatsApp Connection */}
+      <Link href="/connected-accounts/whatsapp" className="block mt-6">
+        <Card className="hover:border-green-300 hover:shadow-sm transition-all cursor-pointer">
+          <CardContent className="p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="p-3 rounded-lg bg-green-100 text-green-600">
+                  <MessageSquare className="h-6 w-6" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-gray-900">WhatsApp</h3>
+                  <p className="text-sm text-gray-500">Connect via QR code to enable WhatsApp messaging</p>
+                </div>
+              </div>
+              <ChevronRight className="h-5 w-5 text-gray-400" />
+            </div>
+          </CardContent>
+        </Card>
+      </Link>
 
       {/* Available Providers */}
       <Card className="mt-6">

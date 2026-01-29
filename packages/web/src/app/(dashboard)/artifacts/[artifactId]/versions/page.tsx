@@ -7,29 +7,22 @@ import Link from 'next/link';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { ArrowLeft, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Loader2, BookOpen, Lightbulb, FileCheck, FileText, StickyNote } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
 
 // Dynamic import for TipTap diff viewer (client-only, heavy deps)
-const IdentityVersionDiff = dynamic(
-  () => import('@/stories/diff-versions/identity-version-diff'),
+const ArtifactVersionDiff = dynamic(
+  () => import('@/stories/diff-versions/artifact-version-diff'),
   { ssr: false, loading: () => <p className="text-gray-500 p-4">Loading diff viewer...</p> }
 );
 
-interface Identity {
+interface Artifact {
   id: string;
-  agentId: string;
-  name: string;
-  role: string;
-  description?: string;
-  values?: string[];
-  relationships?: Record<string, string>;
-  capabilities?: string[];
-  heartbeat?: string;
-  soul?: string;
-  hasSoul: boolean;
-  hasHeartbeat: boolean;
+  uri: string;
+  title: string;
+  content: string;
+  artifactType: 'spec' | 'design' | 'decision' | 'document' | 'note';
   version: number;
   updatedAt: string;
 }
@@ -37,79 +30,64 @@ interface Identity {
 interface HistoryEntry {
   id: string;
   version: number;
-  name: string;
-  role: string;
-  description?: string;
-  values?: string[];
-  relationships?: Record<string, string>;
-  capabilities?: string[];
-  heartbeat?: string;
-  soul?: string;
-  hasSoul: boolean;
-  hasHeartbeat: boolean;
+  title: string;
+  content: string;
+  changedByAgentId?: string;
+  changedByUserId?: string;
   changeType: string;
-  archivedAt: string;
+  changeSummary?: string;
+  createdAt: string;
 }
 
-interface IndividualsResponse {
-  individuals: Identity[];
+interface ArtifactResponse {
+  artifact: Artifact;
 }
 
 interface HistoryResponse {
+  artifactId: string;
   history: HistoryEntry[];
 }
 
-export default function VersionExplorerPage() {
+const typeConfig = {
+  spec: { icon: BookOpen, label: 'Spec', color: 'text-purple-600' },
+  design: { icon: Lightbulb, label: 'Design', color: 'text-blue-600' },
+  decision: { icon: FileCheck, label: 'Decision', color: 'text-green-600' },
+  document: { icon: FileText, label: 'Document', color: 'text-gray-600' },
+  note: { icon: StickyNote, label: 'Note', color: 'text-yellow-600' },
+};
+
+export default function ArtifactVersionsPage() {
   const params = useParams();
-  const agentId = params.agentId as string;
+  const artifactId = params.artifactId as string;
 
   const [selectedVersionIndex, setSelectedVersionIndex] = React.useState(0);
 
-  // Fetch identity
+  // Fetch artifact for title/metadata
   const {
-    data: individualsData,
-    isLoading: individualsLoading,
-    error: individualsError,
-  } = useApiQuery<IndividualsResponse>(['individuals'], '/api/admin/individuals');
+    data: artifactData,
+    isLoading: artifactLoading,
+    error: artifactError,
+  } = useApiQuery<ArtifactResponse>(
+    ['artifacts', artifactId],
+    `/api/admin/artifacts/${artifactId}`
+  );
 
-  // Fetch history
+  // Fetch history - this contains ALL versions including current
   const {
     data: historyData,
     isLoading: historyLoading,
     error: historyError,
   } = useApiQuery<HistoryResponse>(
-    ['individuals', agentId, 'history'],
-    `/api/admin/individuals/${agentId}/history`
+    ['artifacts', artifactId, 'history'],
+    `/api/admin/artifacts/${artifactId}/history`
   );
 
-  const identity = individualsData?.individuals.find((i) => i.agentId === agentId) ?? null;
-  const history = historyData?.history ?? [];
+  const artifact = artifactData?.artifact ?? null;
+  // History is already sorted by version descending (newest first)
+  const allVersions = historyData?.history ?? [];
 
-  const isLoading = individualsLoading || historyLoading;
-  const error = individualsError || historyError;
-
-  // Build all versions array: current + history (newest to oldest)
-  const allVersions: HistoryEntry[] = identity
-    ? [
-        {
-          id: identity.id,
-          version: identity.version,
-          name: identity.name,
-          role: identity.role,
-          description: identity.description,
-          values: identity.values,
-          relationships: identity.relationships,
-          capabilities: identity.capabilities,
-          heartbeat: identity.heartbeat,
-          soul: identity.soul,
-          hasSoul: identity.hasSoul,
-          hasHeartbeat: identity.hasHeartbeat,
-          changeType: 'current',
-          archivedAt: identity.updatedAt,
-        },
-        ...history,
-      ]
-    : [];
+  const isLoading = artifactLoading || historyLoading;
+  const error = artifactError || historyError;
 
   const selectedVersion = allVersions[selectedVersionIndex];
   const comparisonVersion = allVersions[selectedVersionIndex + 1];
@@ -127,23 +105,26 @@ export default function VersionExplorerPage() {
     return (
       <div className="rounded-md bg-red-50 p-4 text-red-800">
         {error.message}
-        <Link href="/individuals" className="ml-2 underline">
-          Back to Individuals
+        <Link href="/artifacts" className="ml-2 underline">
+          Back to Artifacts
         </Link>
       </div>
     );
   }
 
-  if (!identity) {
+  if (!artifact) {
     return (
       <div className="rounded-md bg-yellow-50 p-4 text-yellow-800">
-        Identity not found: {agentId}
-        <Link href="/individuals" className="ml-2 underline">
-          Back to Individuals
+        Artifact not found
+        <Link href="/artifacts" className="ml-2 underline">
+          Back to Artifacts
         </Link>
       </div>
     );
   }
+
+  const config = typeConfig[artifact.artifactType] || typeConfig.document;
+  const TypeIcon = config.icon;
 
   return (
     <div>
@@ -151,16 +132,19 @@ export default function VersionExplorerPage() {
       <div className="mb-6 flex items-center justify-between">
         <div className="flex items-center gap-4">
           <Button variant="ghost" size="sm" asChild>
-            <Link href="/individuals">
+            <Link href={`/artifacts/${artifactId}`}>
               <ArrowLeft className="mr-1 h-4 w-4" />
               Back
             </Link>
           </Button>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              {identity.name} Version History
-            </h1>
-            <p className="text-gray-600">
+            <div className="flex items-center gap-2">
+              <TypeIcon className={clsx('h-5 w-5', config.color)} />
+              <h1 className="text-2xl font-bold text-gray-900">
+                {artifact.title} - Version History
+              </h1>
+            </div>
+            <p className="text-gray-600 mt-1">
               {allVersions.length} version{allVersions.length !== 1 ? 's' : ''} available
             </p>
           </div>
@@ -181,7 +165,7 @@ export default function VersionExplorerPage() {
                     <span> vs </span>
                     <span className="font-semibold">v{comparisonVersion.version}</span>
                   </div>
-                  <IdentityVersionDiff
+                  <ArtifactVersionDiff
                     currentVersion={selectedVersion}
                     previousVersion={comparisonVersion}
                   />
@@ -206,7 +190,7 @@ export default function VersionExplorerPage() {
                   const isFirst = i === 0;
                   const isLast = i === allVersions.length - 1;
                   const isActive = selectedVersionIndex === i;
-                  const isCurrent = v.changeType === 'current';
+                  const isCurrent = i === 0; // First in history is current version
 
                   return (
                     <li
@@ -228,9 +212,7 @@ export default function VersionExplorerPage() {
                             'top-0 bottom-1/2': isLast,
                             'top-0 bottom-0': !isFirst && !isLast,
                           },
-                          isActive
-                            ? 'bg-blue-500'
-                            : 'bg-gray-300'
+                          isActive ? 'bg-blue-500' : 'bg-gray-300'
                         )}
                       />
                       {/* Timeline dot */}
@@ -243,7 +225,7 @@ export default function VersionExplorerPage() {
                         )}
                       />
 
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-start justify-between">
                         <div>
                           <div className="flex items-center font-semibold">
                             <span>v{v.version}</span>
@@ -252,14 +234,12 @@ export default function VersionExplorerPage() {
                                 Current
                               </Badge>
                             )}
-                            {v.hasSoul && (
-                              <span title="Has Soul">
-                                <Sparkles className="ml-2 h-3 w-3 text-amber-500" />
-                              </span>
-                            )}
                           </div>
-                          <div className="text-sm text-gray-500">
-                            {new Date(v.archivedAt).toLocaleDateString('en-US', {
+                          {v.changeSummary && (
+                            <p className="text-sm text-gray-600 mt-1">{v.changeSummary}</p>
+                          )}
+                          <div className="text-sm text-gray-500 mt-1">
+                            {new Date(v.createdAt).toLocaleDateString('en-US', {
                               month: 'short',
                               day: 'numeric',
                               year: 'numeric',
@@ -267,6 +247,11 @@ export default function VersionExplorerPage() {
                               minute: '2-digit',
                             })}
                           </div>
+                          {v.changedByAgentId && (
+                            <div className="text-xs text-gray-400 mt-1">
+                              by {v.changedByAgentId}
+                            </div>
+                          )}
                         </div>
                         {isActive && !isLast && (
                           <Badge variant="outline" className="text-xs">

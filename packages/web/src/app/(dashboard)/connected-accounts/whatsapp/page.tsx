@@ -1,10 +1,11 @@
 'use client';
 
 import { useEffect, useState, useRef } from 'react';
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, Wifi, WifiOff, QrCode } from 'lucide-react';
+import { ArrowLeft, Wifi, WifiOff, QrCode, Loader2 } from 'lucide-react';
 
 interface WhatsAppStatus {
   connected: boolean;
@@ -120,17 +121,19 @@ export default function WhatsAppPage() {
 
   return (
     <div>
-      <div className="flex items-center justify-between">
+      <div className="flex items-center gap-4">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href="/connected-accounts">
+            <ArrowLeft className="mr-1 h-4 w-4" />
+            Back
+          </Link>
+        </Button>
         <div>
           <h1 className="text-3xl font-bold text-gray-900">WhatsApp</h1>
           <p className="mt-2 text-gray-600">
             Manage your WhatsApp connection and view QR code for linking.
           </p>
         </div>
-        <Button onClick={fetchStatus} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {error && (
@@ -138,13 +141,6 @@ export default function WhatsAppPage() {
           {error}
         </div>
       )}
-
-      {/* Debug panel - remove after fixing */}
-      <div className="mt-4 rounded-md bg-yellow-50 p-4 text-yellow-800 text-sm font-mono">
-        <div>Debug: status={JSON.stringify(status)}</div>
-        <div>qrCode={qrCode ? `[SVG, ${qrCode.length} chars]` : 'null'}</div>
-        <div>isLoading={String(isLoading)}</div>
-      </div>
 
       <div className="mt-8 grid gap-6 md:grid-cols-2">
         {/* Connection Status */}
@@ -225,7 +221,7 @@ export default function WhatsAppPage() {
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center py-8 text-center">
-                <RefreshCw className="h-8 w-8 text-gray-400 animate-spin mb-4" />
+                <Loader2 className="h-8 w-8 text-gray-400 animate-spin mb-4" />
                 <p className="text-gray-600">Waiting for QR code...</p>
                 <p className="text-sm text-gray-500 mt-2">
                   Make sure the API server is running with ENABLE_WHATSAPP=true

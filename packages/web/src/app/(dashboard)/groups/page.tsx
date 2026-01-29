@@ -3,7 +3,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { RefreshCw, XCircle } from 'lucide-react';
+import { XCircle } from 'lucide-react';
 import { useApiQuery, useApiPostDynamic, useQueryClient } from '@/lib/api';
 
 interface AuthorizedGroup {
@@ -29,7 +29,7 @@ export default function GroupsPage() {
   const queryClient = useQueryClient();
 
   // Fetch groups
-  const { data, isLoading, error, refetch } = useApiQuery<GroupsResponse>(
+  const { data, isLoading, error } = useApiQuery<GroupsResponse>(
     ['groups'],
     '/api/admin/groups'
   );
@@ -69,10 +69,6 @@ export default function GroupsPage() {
             View and manage groups where Myra is active.
           </p>
         </div>
-        <Button onClick={() => refetch()} variant="outline" size="sm">
-          <RefreshCw className="mr-2 h-4 w-4" />
-          Refresh
-        </Button>
       </div>
 
       {errorMessage && (
