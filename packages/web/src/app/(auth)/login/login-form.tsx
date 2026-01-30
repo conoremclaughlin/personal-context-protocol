@@ -46,6 +46,11 @@ export default function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
+  // MCP OAuth redirect params
+  const mcpRedirect = searchParams.get('redirect');
+  const mcpPendingId = searchParams.get('pending_id');
+  const isMcpAuth = !!(mcpRedirect && mcpPendingId);
+
   // Check for error in URL params on mount
   useEffect(() => {
     const error = searchParams.get('error');
@@ -56,17 +61,41 @@ export default function LoginForm() {
       if (decodedError.toLowerCase().includes('rate')) {
         setAuthMode('password');
       }
-      // Clear the error from URL without reload
-      window.history.replaceState({}, '', '/login');
+      // Clear the error from URL without reload (preserve MCP params)
+      const newUrl = isMcpAuth
+        ? `/login?redirect=${encodeURIComponent(mcpRedirect!)}&pending_id=${mcpPendingId}`
+        : '/login';
+      window.history.replaceState({}, '', newUrl);
     }
-  }, [searchParams]);
+  }, [searchParams, isMcpAuth, mcpRedirect, mcpPendingId]);
+
+  // Redirect to MCP callback with access token
+  const redirectToMcp = async () => {
+    if (!isMcpAuth) return;
+
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+
+    if (session?.access_token) {
+      const callbackUrl = new URL(mcpRedirect!);
+      callbackUrl.searchParams.set('pending_id', mcpPendingId!);
+      callbackUrl.searchParams.set('access_token', session.access_token);
+      window.location.href = callbackUrl.toString();
+    }
+  };
 
   const handleMagicLink = async () => {
     const supabase = createClient();
+
+    // For MCP auth, include the redirect info in the callback URL
+    const callbackUrl = isMcpAuth
+      ? `${window.location.origin}/auth/callback?mcp_redirect=${encodeURIComponent(mcpRedirect!)}&mcp_pending_id=${mcpPendingId}`
+      : `${window.location.origin}/auth/callback`;
+
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: {
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
+        emailRedirectTo: callbackUrl,
       },
     });
 
@@ -99,9 +128,15 @@ export default function LoginForm() {
     if (error) {
       setMessage({ type: 'error', text: getErrorMessage(error.message) });
     } else {
-      // Successful login - redirect to dashboard
-      router.push('/');
-      router.refresh();
+      // Successful login
+      if (isMcpAuth) {
+        // Redirect to MCP callback with access token
+        await redirectToMcp();
+      } else {
+        // Normal dashboard redirect
+        router.push('/');
+        router.refresh();
+      }
     }
   };
 
@@ -129,8 +164,15 @@ export default function LoginForm() {
         <CardHeader className="text-center">
           <CardTitle className="text-2xl">PCP Admin</CardTitle>
           <CardDescription>
-            Sign in to access the admin dashboard.
+            {isMcpAuth
+              ? 'Sign in to connect Claude Code to PCP.'
+              : 'Sign in to access the admin dashboard.'}
           </CardDescription>
+          {isMcpAuth && (
+            <div className="mt-2 text-xs text-blue-600 bg-blue-50 rounded-md px-3 py-2">
+              🔗 Authenticating for Claude Code MCP connection
+            </div>
+          )}
         </CardHeader>
         <CardContent>
           {/* Auth mode toggle */}

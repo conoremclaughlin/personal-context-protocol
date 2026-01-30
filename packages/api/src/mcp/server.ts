@@ -3,7 +3,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
 import express from 'express';
 import cors from 'cors';
+import crypto from 'crypto';
 import type { Server } from 'http';
+import { createClient } from '@supabase/supabase-js';
 import { MCP_SERVER_NAME, MCP_SERVER_VERSION } from '../config/constants';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
@@ -13,6 +15,7 @@ import { loadMiniApps, registerMiniAppTools, getMiniAppsInfo } from '../mini-app
 import adminRouter, { setWhatsAppListener } from '../routes/admin';
 import agentTriggerRouter, { getAgentGateway } from '../routes/agent-trigger';
 import { ChannelGateway, createChannelGateway, type ChannelGatewayConfig, type IncomingMessageHandler } from '../channels/gateway';
+import { setSessionContext } from '../utils/request-context';
 
 export { setWhatsAppListener, getAgentGateway };
 
@@ -107,12 +110,66 @@ export class MCPServer {
     const port = env.MCP_HTTP_PORT;
     const app = express();
 
-    // Enable CORS for Claude Code and other MCP clients
-    app.use(cors());
+    // ============================================================================
+    // Supabase JWT validation helper
+    // Uses the same auth as /api/admin endpoints - one JWT for everything
+    // ============================================================================
+    const validateSupabaseToken = async (authHeader: string | undefined): Promise<{ userId: string; email: string } | null> => {
+      if (!authHeader?.startsWith('Bearer ')) return null;
+      const token = authHeader.substring(7);
+
+      try {
+        const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+        const { data: { user }, error } = await supabase.auth.getUser(token);
+
+        if (error || !user) {
+          logger.debug('Supabase token validation failed', { error: error?.message });
+          return null;
+        }
+
+        // Look up PCP user by email
+        const { data: pcpUser } = await supabase
+          .from('users')
+          .select('id, email')
+          .eq('email', user.email)
+          .single();
+
+        if (!pcpUser) {
+          logger.warn('Supabase user not found in PCP', { email: user.email });
+          return null;
+        }
+
+        return { userId: pcpUser.id, email: pcpUser.email };
+      } catch (error) {
+        logger.error('Error validating Supabase token', { error });
+        return null;
+      }
+    };
+
+    // Enable CORS for web portal, MCP clients, and Myra
+    app.use(cors({
+      origin: ['http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003'],
+      credentials: true,
+    }));
 
     // SSE endpoint for MCP communication
-    app.get('/sse', async (_req, res) => {
+    app.get('/sse', async (req, res) => {
       logger.info('SSE connection request received');
+
+      // Validate Supabase JWT and set session context
+      const userData = await validateSupabaseToken(req.headers.authorization);
+      if (userData) {
+        setSessionContext({
+          userId: userData.userId,
+          email: userData.email,
+        });
+        logger.info('SSE connection authenticated', {
+          userId: userData.userId,
+          email: userData.email,
+        });
+      } else {
+        logger.warn('SSE connection without valid Supabase token');
+      }
 
       this.sseTransport = new SSEServerTransport('/message', res);
 
@@ -154,11 +211,29 @@ export class MCPServer {
     // ============================================================================
     // OAuth 2.0 endpoints for MCP authentication
     // Implements: Dynamic Client Registration, Authorization Code + PKCE flow
+    // Uses Supabase Auth - returns Supabase JWT which is validated at /sse
     // ============================================================================
 
     // Store for OAuth state (in production, use Redis or similar)
-    const oauthCodes = new Map<string, { clientId: string; codeChallenge: string; redirectUri: string; expiresAt: number }>();
-    const oauthTokens = new Map<string, { clientId: string; scope: string; expiresAt: number }>();
+    interface PendingAuth {
+      clientId: string;
+      codeChallenge: string;
+      redirectUri: string;
+      state: string;
+      expiresAt: number;
+    }
+    interface AuthCode {
+      clientId: string;
+      codeChallenge: string;
+      redirectUri: string;
+      supabaseToken: string;  // The actual Supabase JWT to return
+      userId: string;         // For logging
+      userEmail: string;      // For logging
+      expiresAt: number;
+    }
+
+    const pendingAuths = new Map<string, PendingAuth>();
+    const oauthCodes = new Map<string, AuthCode>();
 
     // POST /register - OAuth 2.0 Dynamic Client Registration (RFC 7591)
     app.post('/register', express.json(), (req, res) => {
@@ -179,15 +254,14 @@ export class MCPServer {
     });
 
     // GET /authorize - OAuth 2.0 Authorization Endpoint
-    // For local dev, auto-approve and redirect with authorization code
+    // Redirects to web portal login page (localhost:3002)
     app.get('/authorize', (req, res) => {
-      const { client_id, redirect_uri, state, code_challenge, code_challenge_method, response_type } = req.query;
+      const { client_id, redirect_uri, state, code_challenge, response_type } = req.query;
 
       logger.info('MCP /authorize called', {
         client_id,
         redirect_uri,
         state,
-        code_challenge_method,
         response_type,
       });
 
@@ -196,32 +270,120 @@ export class MCPServer {
         return;
       }
 
-      // Generate authorization code
-      const code = `pcp-code-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      // Generate a pending auth ID to track this request
+      const pendingId = `pending-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
-      // Store code with PKCE challenge for verification
-      oauthCodes.set(code, {
+      // Store the pending auth request
+      pendingAuths.set(pendingId, {
         clientId: client_id as string,
         codeChallenge: code_challenge as string,
         redirectUri: redirect_uri as string,
+        state: state as string,
         expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
       });
 
-      // Auto-approve for local development - redirect back with code
-      const redirectUrl = new URL(redirect_uri as string);
-      redirectUrl.searchParams.set('code', code);
-      if (state) {
-        redirectUrl.searchParams.set('state', state as string);
+      // Redirect to web portal login with callback to MCP
+      const webPortalUrl = process.env.WEB_PORTAL_URL || 'http://localhost:3002';
+      const mcpCallback = `http://localhost:${port}/mcp/auth/callback`;
+
+      const loginUrl = new URL(`${webPortalUrl}/login`);
+      loginUrl.searchParams.set('redirect', mcpCallback);
+      loginUrl.searchParams.set('pending_id', pendingId);
+
+      logger.info('MCP /authorize redirecting to web portal', { pendingId, loginUrl: loginUrl.toString() });
+      res.redirect(loginUrl.toString());
+    });
+
+    // GET /mcp/auth/callback - Handle callback from web portal after login
+    // Web portal should redirect here with access_token after successful login
+    app.get('/mcp/auth/callback', async (req, res) => {
+      const pendingId = req.query.pending_id as string;
+      const accessToken = req.query.access_token as string;
+
+      logger.info('MCP /mcp/auth/callback called', { pendingId, hasToken: !!accessToken });
+
+      // Look up pending auth request
+      const pending = pendingAuths.get(pendingId);
+      if (!pending) {
+        res.status(400).send('Invalid or expired authorization request. Please try again.');
+        return;
       }
 
-      logger.info('MCP /authorize redirecting', { redirectUrl: redirectUrl.toString() });
-      res.redirect(redirectUrl.toString());
+      // Check expiration
+      if (Date.now() > pending.expiresAt) {
+        pendingAuths.delete(pendingId);
+        res.status(400).send('Authorization request expired. Please try again.');
+        return;
+      }
+
+      if (!accessToken) {
+        res.status(400).send('Missing access token. Please try logging in again.');
+        return;
+      }
+
+      try {
+        // Verify the Supabase token and get user
+        const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+        const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
+
+        if (authError || !user) {
+          logger.error('Supabase auth verification failed', { error: authError });
+          res.status(401).send('Authentication failed. Please try again.');
+          return;
+        }
+
+        // Look up PCP user by email
+        const { data: pcpUser, error: userError } = await supabase
+          .from('users')
+          .select('id, email')
+          .eq('email', user.email)
+          .single();
+
+        if (userError || !pcpUser) {
+          logger.error('PCP user not found', { email: user.email, error: userError });
+          res.status(403).send('User not found in PCP system. Please contact support.');
+          return;
+        }
+
+        // Generate authorization code that stores the Supabase token
+        const code = `pcp-code-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+        oauthCodes.set(code, {
+          clientId: pending.clientId,
+          codeChallenge: pending.codeChallenge,
+          redirectUri: pending.redirectUri,
+          supabaseToken: accessToken,
+          userId: pcpUser.id,
+          userEmail: pcpUser.email,
+          expiresAt: Date.now() + 10 * 60 * 1000,
+        });
+
+        // Clean up pending auth
+        pendingAuths.delete(pendingId);
+
+        // Redirect back to Claude Code's callback
+        const redirectUrl = new URL(pending.redirectUri);
+        redirectUrl.searchParams.set('code', code);
+        if (pending.state) {
+          redirectUrl.searchParams.set('state', pending.state);
+        }
+
+        logger.info('MCP auth complete, redirecting to client', {
+          userId: pcpUser.id,
+          email: pcpUser.email,
+        });
+
+        res.redirect(redirectUrl.toString());
+      } catch (error) {
+        logger.error('Error completing MCP auth', { error });
+        res.status(500).send('Authentication error. Please try again.');
+      }
     });
 
     // POST /token - OAuth 2.0 Token Endpoint
     // Exchange authorization code for access token (with PKCE verification)
     app.post('/token', express.urlencoded({ extended: true }), (req, res) => {
-      const { grant_type, code, redirect_uri, code_verifier, client_id } = req.body;
+      const { grant_type, code, code_verifier, client_id } = req.body;
 
       logger.info('MCP /token called', { grant_type, client_id, hasCode: !!code, hasVerifier: !!code_verifier });
 
@@ -246,7 +408,6 @@ export class MCPServer {
 
       // Verify PKCE code_verifier against stored code_challenge (S256)
       if (codeData.codeChallenge && code_verifier) {
-        const crypto = require('crypto');
         const computedChallenge = crypto
           .createHash('sha256')
           .update(code_verifier)
@@ -262,21 +423,17 @@ export class MCPServer {
       // Delete used code
       oauthCodes.delete(code);
 
-      // Generate access token
-      const accessToken = `pcp-token-${Date.now()}-${Math.random().toString(36).substring(7)}`;
-      const expiresIn = 3600; // 1 hour
+      // Return the Supabase JWT directly - it will be validated at /sse
+      // Supabase tokens are typically valid for 1 hour, but can be refreshed
+      const expiresIn = 3600; // 1 hour (Supabase default)
 
-      // Store token
-      oauthTokens.set(accessToken, {
-        clientId: client_id || codeData.clientId,
-        scope: 'mcp:tools',
-        expiresAt: Date.now() + expiresIn * 1000,
+      logger.info('MCP /token returning Supabase JWT', {
+        userId: codeData.userId,
+        email: codeData.userEmail,
       });
 
-      logger.info('MCP /token issued access token', { clientId: client_id || codeData.clientId });
-
       res.json({
-        access_token: accessToken,
+        access_token: codeData.supabaseToken,  // Return the actual Supabase JWT
         token_type: 'Bearer',
         expires_in: expiresIn,
         scope: 'mcp:tools',
