@@ -97,9 +97,6 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
           workingDirectory,
           model,
           systemPrompt,
-          // Disable auto-response since MCP tools (send_response) handle response routing
-          // This prevents duplicate messages when agent explicitly calls send_response
-          disableAutoResponse: true,
         },
         'direct-api': {
           model: 'claude-sonnet-4-20250514',

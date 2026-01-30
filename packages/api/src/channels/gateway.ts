@@ -36,6 +36,8 @@ export interface ChannelGatewayConfig {
   printWhatsAppQr?: boolean;
   /** Callback when WhatsApp QR code is available */
   onWhatsAppQr?: (qr: string) => void;
+  /** Message buffer delay in ms (default: 2000). Set to 0 to disable buffering. */
+  messageBufferDelayMs?: number;
 }
 
 export type IncomingMessageHandler = (
@@ -56,12 +58,43 @@ export type IncomingMessageHandler = (
 const activeTypingIntervals = new Map<string, NodeJS.Timeout>();
 const TYPING_INTERVAL_MS = 4000;
 
+// Message buffering configuration
+const DEFAULT_BUFFER_DELAY_MS = 2000; // Wait 2 seconds for additional messages
+
+interface BufferedMessage {
+  content: string;
+  timestamp: Date;
+  media?: Array<{ type: 'image' | 'video' | 'audio' | 'document'; path?: string; url?: string }>;
+}
+
+interface MessageBuffer {
+  channel: 'telegram' | 'whatsapp';
+  conversationId: string;
+  sender: { id: string; name?: string };
+  messages: BufferedMessage[];
+  timer: NodeJS.Timeout;
+  metadata?: {
+    userId?: string;
+    replyToMessageId?: string;
+    chatType?: 'direct' | 'group' | 'channel';
+    mentions?: { users: string[]; botMentioned: boolean };
+  };
+}
+
 export class ChannelGateway extends EventEmitter {
   private telegramListener: TelegramListener | null = null;
   private whatsappListener: WhatsAppListener | null = null;
   private config: ChannelGatewayConfig;
   private messageHandler: IncomingMessageHandler | null = null;
   private started = false;
+
+  // Message buffering
+  private messageBuffers: Map<string, MessageBuffer> = new Map();
+  private bufferDelayMs: number;
+
+  // Processing lock - prevents spawning multiple Claude Code processes for same conversation
+  private processingConversations: Set<string> = new Set();
+  private pendingBuffers: Map<string, MessageBuffer> = new Map();
 
   constructor(config: ChannelGatewayConfig = {}) {
     super();
@@ -71,8 +104,10 @@ export class ChannelGateway extends EventEmitter {
       enableWhatsApp: config.enableWhatsApp ?? (process.env.ENABLE_WHATSAPP === 'true'),
       whatsappAccountId: config.whatsappAccountId ?? 'default',
       printWhatsAppQr: config.printWhatsAppQr ?? true,
+      messageBufferDelayMs: config.messageBufferDelayMs ?? DEFAULT_BUFFER_DELAY_MS,
       ...config,
     };
+    this.bufferDelayMs = this.config.messageBufferDelayMs ?? DEFAULT_BUFFER_DELAY_MS;
   }
 
   /**
@@ -132,6 +167,13 @@ export class ChannelGateway extends EventEmitter {
       activeTypingIntervals.delete(conversationId);
     }
 
+    // Clear all message buffers (flush them first)
+    for (const [key, buffer] of this.messageBuffers) {
+      clearTimeout(buffer.timer);
+      await this.flushBuffer(key);
+    }
+    this.messageBuffers.clear();
+
     // Stop listeners
     if (this.telegramListener) {
       await this.telegramListener.stop();
@@ -145,6 +187,206 @@ export class ChannelGateway extends EventEmitter {
 
     this.started = false;
     logger.info('ChannelGateway stopped');
+  }
+
+  // ============================================================================
+  // Message Buffering
+  // ============================================================================
+
+  /**
+   * Generate a buffer key for a conversation
+   */
+  private getBufferKey(channel: 'telegram' | 'whatsapp', conversationId: string): string {
+    return `${channel}:${conversationId}`;
+  }
+
+  /**
+   * Buffer an incoming message, batching rapid messages together
+   */
+  private bufferMessage(
+    channel: 'telegram' | 'whatsapp',
+    conversationId: string,
+    sender: { id: string; name?: string },
+    content: string,
+    metadata?: {
+      userId?: string;
+      replyToMessageId?: string;
+      media?: Array<{ type: 'image' | 'video' | 'audio' | 'document'; path?: string; url?: string }>;
+      chatType?: 'direct' | 'group' | 'channel';
+      mentions?: { users: string[]; botMentioned: boolean };
+    }
+  ): void {
+    // If buffering is disabled, forward immediately
+    if (this.bufferDelayMs <= 0) {
+      this.forwardToHandler(channel, conversationId, sender, content, metadata);
+      return;
+    }
+
+    const key = this.getBufferKey(channel, conversationId);
+    const existingBuffer = this.messageBuffers.get(key);
+
+    if (existingBuffer) {
+      // Add to existing buffer and reset timer
+      clearTimeout(existingBuffer.timer);
+      existingBuffer.messages.push({
+        content,
+        timestamp: new Date(),
+        media: metadata?.media,
+      });
+
+      // Keep first metadata for replyToMessageId, but merge mentions
+      if (metadata?.mentions?.botMentioned) {
+        existingBuffer.metadata = {
+          ...existingBuffer.metadata,
+          mentions: metadata.mentions,
+        };
+      }
+
+      // Reset timer
+      existingBuffer.timer = setTimeout(() => {
+        this.flushBuffer(key);
+      }, this.bufferDelayMs);
+
+      logger.debug(`Message buffered for ${key}, total: ${existingBuffer.messages.length}`);
+    } else {
+      // Create new buffer
+      logger.info(`Creating message buffer for ${key}, will flush in ${this.bufferDelayMs}ms`);
+      const timer = setTimeout(() => {
+        logger.info(`Buffer timer fired for ${key}`);
+        this.flushBuffer(key).catch(err => {
+          logger.error(`Error flushing buffer for ${key}:`, err);
+        });
+      }, this.bufferDelayMs);
+
+      this.messageBuffers.set(key, {
+        channel,
+        conversationId,
+        sender,
+        messages: [{
+          content,
+          timestamp: new Date(),
+          media: metadata?.media,
+        }],
+        timer,
+        metadata: {
+          userId: metadata?.userId,
+          replyToMessageId: metadata?.replyToMessageId,
+          chatType: metadata?.chatType,
+          mentions: metadata?.mentions,
+        },
+      });
+
+      logger.info(`New message buffer created for ${key}`);
+    }
+  }
+
+  /**
+   * Flush a message buffer, combining all messages and forwarding to handler.
+   * If the conversation is already being processed, queue messages for later.
+   */
+  private async flushBuffer(key: string): Promise<void> {
+    logger.info(`Flushing buffer for ${key}`);
+    const buffer = this.messageBuffers.get(key);
+    if (!buffer) {
+      logger.warn(`No buffer found for ${key}`);
+      return;
+    }
+
+    this.messageBuffers.delete(key);
+
+    // Check if this conversation is already being processed
+    if (this.processingConversations.has(key)) {
+      // Queue these messages to be processed after current response completes
+      const existingPending = this.pendingBuffers.get(key);
+      if (existingPending) {
+        // Merge into existing pending buffer
+        existingPending.messages.push(...buffer.messages);
+        logger.info(`Added ${buffer.messages.length} messages to pending buffer for ${key}`, {
+          totalPending: existingPending.messages.length,
+        });
+      } else {
+        // Create new pending buffer
+        this.pendingBuffers.set(key, buffer);
+        logger.info(`Queued ${buffer.messages.length} messages for ${key} (conversation already processing)`);
+      }
+      return;
+    }
+
+    // Mark conversation as processing
+    this.processingConversations.add(key);
+
+    // Combine all message contents
+    const combinedContent = buffer.messages
+      .map(m => m.content)
+      .join('\n\n');
+
+    // Combine all media
+    const allMedia = buffer.messages
+      .flatMap(m => m.media || []);
+
+    logger.info(`Flushing message buffer for ${key}`, {
+      messageCount: buffer.messages.length,
+      contentLength: combinedContent.length,
+    });
+
+    // Forward the combined message
+    await this.forwardToHandler(
+      buffer.channel,
+      buffer.conversationId,
+      buffer.sender,
+      combinedContent,
+      {
+        ...buffer.metadata,
+        media: allMedia.length > 0 ? allMedia : undefined,
+      }
+    );
+  }
+
+  /**
+   * Forward a message to the handler (after buffering)
+   */
+  private async forwardToHandler(
+    channel: 'telegram' | 'whatsapp',
+    conversationId: string,
+    sender: { id: string; name?: string },
+    content: string,
+    metadata?: {
+      userId?: string;
+      replyToMessageId?: string;
+      media?: Array<{ type: 'image' | 'video' | 'audio' | 'document'; path?: string; url?: string }>;
+      chatType?: 'direct' | 'group' | 'channel';
+      mentions?: { users: string[]; botMentioned: boolean };
+    }
+  ): Promise<void> {
+    logger.info(`Forwarding message to handler: ${channel}:${conversationId}`);
+    if (!this.messageHandler) {
+      logger.warn('No message handler set, dropping message');
+      return;
+    }
+
+    try {
+      await this.messageHandler(channel, conversationId, sender, content, metadata);
+    } catch (error) {
+      logger.error(`Error forwarding message to handler:`, error);
+      this.stopTypingIndicator(conversationId);
+
+      // Send error response based on channel
+      try {
+        if (channel === 'telegram' && this.telegramListener) {
+          await this.telegramListener.sendMessage(
+            conversationId,
+            'Sorry, I encountered an error processing your message. Please try again.'
+          );
+        } else if (channel === 'whatsapp' && this.whatsappListener) {
+          await this.whatsappListener.sendMessage(
+            conversationId,
+            'Sorry, I encountered an error processing your message. Please try again.'
+          );
+        }
+      } catch (sendError) {
+        logger.error('Failed to send error message:', sendError);
+      }
+    }
   }
 
   /**
@@ -190,6 +432,58 @@ export class ChannelGateway extends EventEmitter {
     }
 
     logger.info(`Response sent via gateway to ${channel}:${conversationId}`);
+
+    // Check for pending messages that arrived while processing
+    await this.processPendingMessages(channel as 'telegram' | 'whatsapp', conversationId);
+  }
+
+  /**
+   * Process any messages that were queued while the conversation was being processed.
+   * This ensures messages that arrived during Claude Code processing are handled as a batch.
+   */
+  private async processPendingMessages(
+    channel: 'telegram' | 'whatsapp',
+    conversationId: string
+  ): Promise<void> {
+    const key = this.getBufferKey(channel, conversationId);
+    const pendingBuffer = this.pendingBuffers.get(key);
+
+    if (pendingBuffer) {
+      // Remove from pending and process
+      this.pendingBuffers.delete(key);
+
+      // Combine all pending message contents
+      const combinedContent = pendingBuffer.messages
+        .map(m => m.content)
+        .join('\n\n');
+
+      const allMedia = pendingBuffer.messages
+        .flatMap(m => m.media || []);
+
+      logger.info(`Processing ${pendingBuffer.messages.length} pending messages for ${key}`, {
+        messageCount: pendingBuffer.messages.length,
+        contentLength: combinedContent.length,
+      });
+
+      // Start typing indicator for the new batch
+      this.startTypingIndicator(conversationId, channel);
+
+      // Forward to handler (conversation is still marked as processing)
+      await this.forwardToHandler(
+        channel,
+        conversationId,
+        pendingBuffer.sender,
+        combinedContent,
+        {
+          ...pendingBuffer.metadata,
+          media: allMedia.length > 0 ? allMedia : undefined,
+        }
+      );
+    } else {
+      // No pending messages - release the processing lock
+      this.processingConversations.delete(key);
+      logger.debug(`Released processing lock for ${key}`);
+    }
   }
 
   /**
@@ -257,36 +551,19 @@ export class ChannelGateway extends EventEmitter {
       // Start typing indicator
       this.startTypingIndicator(conversationId, 'telegram');
 
-      // Forward to message handler
-      if (this.messageHandler) {
-        try {
-          await this.messageHandler(
-            'telegram',
-            conversationId,
-            { id: senderId, name: message.sender.name || message.sender.username },
-            message.body,
-            {
-              replyToMessageId: message.replyTo?.id,
-              media: message.media,
-              chatType: message.chatType,
-              mentions: message.mentions,
-            }
-          );
-        } catch (error) {
-          logger.error('Error handling Telegram message:', error);
-          this.stopTypingIndicator(conversationId);
-
-          // Send error response
-          try {
-            await this.telegramListener!.sendMessage(
-              conversationId,
-              'Sorry, I encountered an error processing your message. Please try again.'
-            );
-          } catch (sendError) {
-            logger.error('Failed to send error message:', sendError);
-          }
+      // Buffer the message (will be forwarded after delay or combined with subsequent messages)
+      this.bufferMessage(
+        'telegram',
+        conversationId,
+        { id: senderId, name: message.sender.name || message.sender.username },
+        message.body,
+        {
+          replyToMessageId: message.replyTo?.id,
+          media: message.media,
+          chatType: message.chatType,
+          mentions: message.mentions,
         }
-      }
+      );
     });
 
     // Forward events
@@ -331,33 +608,17 @@ export class ChannelGateway extends EventEmitter {
       // Start typing indicator
       this.startTypingIndicator(conversationId, 'whatsapp');
 
-      // Forward to message handler
-      if (this.messageHandler) {
-        try {
-          await this.messageHandler(
-            'whatsapp',
-            conversationId,
-            { id: senderId, name: message.sender.name },
-            message.body,
-            {
-              chatType: message.chatType,
-              mentions: message.mentions,
-            }
-          );
-        } catch (error) {
-          logger.error('Error handling WhatsApp message:', error);
-          this.stopTypingIndicator(conversationId);
-
-          try {
-            await this.whatsappListener!.sendMessage(
-              conversationId,
-              'Sorry, I encountered an error processing your message. Please try again.'
-            );
-          } catch (sendError) {
-            logger.error('Failed to send WhatsApp error message:', sendError);
-          }
+      // Buffer the message (will be forwarded after delay or combined with subsequent messages)
+      this.bufferMessage(
+        'whatsapp',
+        conversationId,
+        { id: senderId, name: message.sender.name },
+        message.body,
+        {
+          chatType: message.chatType,
+          mentions: message.mentions,
         }
-      }
+      );
     });
 
     // Forward events

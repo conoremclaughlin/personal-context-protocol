@@ -3509,6 +3509,23 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@personal-context/workspaces@workspace:packages/workspaces":
+  version: 0.0.0-use.local
+  resolution: "@personal-context/workspaces@workspace:packages/workspaces"
+  dependencies:
+    "@types/node": "npm:^20.10.0"
+    chalk: "npm:^5.3.0"
+    commander: "npm:^12.1.0"
+    ora: "npm:^8.0.1"
+    tsx: "npm:^4.7.0"
+    typescript: "npm:^5.3.0"
+    vitest: "npm:^4.0.18"
+  bin:
+    pcp-ws: dist/cli.js
+    ws: dist/cli.js
+  languageName: unknown
+  linkType: soft
+
 "@pinojs/redact@npm:^0.4.0":
   version: 0.4.0
   resolution: "@pinojs/redact@npm:0.4.0"
@@ -5884,7 +5901,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:^20.10.6":
+"@types/node@npm:^20.10.0, @types/node@npm:^20.10.6":
   version: 20.19.30
   resolution: "@types/node@npm:20.19.30"
   dependencies:
@@ -7851,6 +7868,13 @@ __metadata:
   version: 10.0.1
   resolution: "commander@npm:10.0.1"
   checksum: 8799faa84a30da985802e661cc9856adfaee324d4b138413013ef7f087e8d7924b144c30a1f1405475f0909f467665cd9e1ce13270a2f41b141dab0b7a58f3fb
+  languageName: node
+  linkType: hard
+
+"commander@npm:^12.1.0":
+  version: 12.1.0
+  resolution: "commander@npm:12.1.0"
+  checksum: cdaeb672d979816853a4eed7f1310a9319e8b976172485c2a6b437ed0db0a389a44cfb222bfbde772781efa9f215bdd1b936f80d6b249485b465c6cb906e1f93
   languageName: node
   linkType: hard
 
@@ -13372,7 +13396,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ora@npm:^8.2.0":
+"ora@npm:^8.0.1, ora@npm:^8.2.0":
   version: 8.2.0
   resolution: "ora@npm:8.2.0"
   dependencies:
@@ -16778,7 +16802,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@npm:^5.3.3, typescript@npm:^5.9.3":
+"typescript@npm:^5.3.0, typescript@npm:^5.3.3, typescript@npm:^5.9.3":
   version: 5.9.3
   resolution: "typescript@npm:5.9.3"
   bin:
@@ -16788,7 +16812,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"typescript@patch:typescript@npm%3A^5.3.3#optional!builtin<compat/typescript>, typescript@patch:typescript@npm%3A^5.9.3#optional!builtin<compat/typescript>":
+"typescript@patch:typescript@npm%3A^5.3.0#optional!builtin<compat/typescript>, typescript@patch:typescript@npm%3A^5.3.3#optional!builtin<compat/typescript>, typescript@patch:typescript@npm%3A^5.9.3#optional!builtin<compat/typescript>":
   version: 5.9.3
   resolution: "typescript@patch:typescript@npm%3A5.9.3#optional!builtin<compat/typescript>::version=5.9.3&hash=e012d7"
   bin:

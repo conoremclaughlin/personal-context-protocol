@@ -1,0 +1,37 @@
+{
+  "name": "@personal-context/workspaces",
+  "version": "0.1.0",
+  "description": "Workspace orchestration for parallel development with synthetic and biological teams",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pcp-ws": "dist/cli.js",
+    "ws": "dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "cli": "tsx src/cli.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.18"
+  },
+  "keywords": [
+    "pcp",
+    "workspaces",
+    "worktree",
+    "parallel-development",
+    "multi-agent"
+  ]
+}

@@ -44,6 +44,8 @@ export interface ClaudeCodeConfig extends BackendConfig {
   model?: string;
   systemPrompt?: string;
   timeout?: number;
+  /** Disable auto-response emission. Set true when agent has MCP tools like send_response. */
+  disableAutoResponse?: boolean;
 }
 
 const DEFAULT_CONFIG: Partial<ClaudeCodeConfig> = {
@@ -138,7 +140,7 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       // Add -p flag for print mode (required for stream-json)
       args.unshift('-p');
 
-      logger.debug(`Spawning Claude Code: claude ${args.join(' ').substring(0, 200)}...`);
+      logger.info(`Spawning Claude Code with args: ${args.join(' ')}`);
 
       const proc = spawn('claude', args, {
         cwd: this.config.workingDirectory,
@@ -149,6 +151,7 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       this.process = proc;
       let responseContent = '';
       let outputBuffer = '';
+      let responseEmitted = false; // Guard against multiple response emissions
 
       proc.stdout?.on('data', (data: Buffer) => {
         const chunk = data.toString();
@@ -190,9 +193,13 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
                 usage: parsed.usage,
               });
 
-              // If we have a pending message, emit the response for routing
-              if (this.pendingMessage && (parsed.result || responseContent)) {
+              // If we have a pending message AND auto-response is enabled, emit the response ONCE
+              // Note: When MCP tools (like send_response) are available, disable this to avoid duplicates
+              // Guard: Only emit response once per message to prevent duplicates from multiple 'result' events
+              if (!responseEmitted && !this.config.disableAutoResponse && this.pendingMessage && (parsed.result || responseContent)) {
+                responseEmitted = true;
                 const finalContent = parsed.result || responseContent;
+                logger.info(`Emitting auto-response for ${this.pendingMessage.channel}:${this.pendingMessage.conversationId}`);
                 this.emit('response', {
                   channel: this.pendingMessage.channel,
                   conversationId: this.pendingMessage.conversationId,
@@ -207,7 +214,13 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       });
 
       proc.stderr?.on('data', (data: Buffer) => {
-        logger.debug('Claude Code stderr:', data.toString());
+        const stderrMsg = data.toString();
+        // Log errors at info level so they're visible
+        if (stderrMsg.includes('error') || stderrMsg.includes('Error') || stderrMsg.includes('failed')) {
+          logger.info('Claude Code stderr (error):', stderrMsg);
+        } else {
+          logger.debug('Claude Code stderr:', stderrMsg);
+        }
       });
 
       // Set timeout
