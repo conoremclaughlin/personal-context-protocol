@@ -151,23 +151,134 @@ export class MCPServer {
       });
     });
 
-    // Register endpoint for MCP OAuth Dynamic Client Registration
-    // Claude Code expects OAuth 2.0 DCR response format
+    // ============================================================================
+    // OAuth 2.0 endpoints for MCP authentication
+    // Implements: Dynamic Client Registration, Authorization Code + PKCE flow
+    // ============================================================================
+
+    // Store for OAuth state (in production, use Redis or similar)
+    const oauthCodes = new Map<string, { clientId: string; codeChallenge: string; redirectUri: string; expiresAt: number }>();
+    const oauthTokens = new Map<string, { clientId: string; scope: string; expiresAt: number }>();
+
+    // POST /register - OAuth 2.0 Dynamic Client Registration (RFC 7591)
     app.post('/register', express.json(), (req, res) => {
       logger.info('MCP /register called', { body: req.body });
 
-      // Generate a client ID (or use one from the request)
       const clientId = req.body.client_id || `pcp-client-${Date.now()}`;
 
-      // Return OAuth 2.0 Dynamic Client Registration response
       res.json({
         client_id: clientId,
-        client_secret: 'pcp-local-secret', // For local development
+        client_secret: 'pcp-local-secret',
         redirect_uris: req.body.redirect_uris || ['http://localhost:3001/callback'],
         token_endpoint_auth_method: 'client_secret_post',
         grant_types: ['authorization_code', 'refresh_token'],
         response_types: ['code'],
         client_name: req.body.client_name || 'Claude Code MCP Client',
+        scope: 'mcp:tools',
+      });
+    });
+
+    // GET /authorize - OAuth 2.0 Authorization Endpoint
+    // For local dev, auto-approve and redirect with authorization code
+    app.get('/authorize', (req, res) => {
+      const { client_id, redirect_uri, state, code_challenge, code_challenge_method, response_type } = req.query;
+
+      logger.info('MCP /authorize called', {
+        client_id,
+        redirect_uri,
+        state,
+        code_challenge_method,
+        response_type,
+      });
+
+      if (response_type !== 'code') {
+        res.status(400).json({ error: 'unsupported_response_type' });
+        return;
+      }
+
+      // Generate authorization code
+      const code = `pcp-code-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+
+      // Store code with PKCE challenge for verification
+      oauthCodes.set(code, {
+        clientId: client_id as string,
+        codeChallenge: code_challenge as string,
+        redirectUri: redirect_uri as string,
+        expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
+      });
+
+      // Auto-approve for local development - redirect back with code
+      const redirectUrl = new URL(redirect_uri as string);
+      redirectUrl.searchParams.set('code', code);
+      if (state) {
+        redirectUrl.searchParams.set('state', state as string);
+      }
+
+      logger.info('MCP /authorize redirecting', { redirectUrl: redirectUrl.toString() });
+      res.redirect(redirectUrl.toString());
+    });
+
+    // POST /token - OAuth 2.0 Token Endpoint
+    // Exchange authorization code for access token (with PKCE verification)
+    app.post('/token', express.urlencoded({ extended: true }), (req, res) => {
+      const { grant_type, code, redirect_uri, code_verifier, client_id } = req.body;
+
+      logger.info('MCP /token called', { grant_type, client_id, hasCode: !!code, hasVerifier: !!code_verifier });
+
+      if (grant_type !== 'authorization_code') {
+        res.status(400).json({ error: 'unsupported_grant_type' });
+        return;
+      }
+
+      // Look up the authorization code
+      const codeData = oauthCodes.get(code);
+      if (!codeData) {
+        res.status(400).json({ error: 'invalid_grant', error_description: 'Authorization code not found' });
+        return;
+      }
+
+      // Check expiration
+      if (Date.now() > codeData.expiresAt) {
+        oauthCodes.delete(code);
+        res.status(400).json({ error: 'invalid_grant', error_description: 'Authorization code expired' });
+        return;
+      }
+
+      // Verify PKCE code_verifier against stored code_challenge (S256)
+      if (codeData.codeChallenge && code_verifier) {
+        const crypto = require('crypto');
+        const computedChallenge = crypto
+          .createHash('sha256')
+          .update(code_verifier)
+          .digest('base64url');
+
+        if (computedChallenge !== codeData.codeChallenge) {
+          logger.warn('PKCE verification failed', { expected: codeData.codeChallenge, computed: computedChallenge });
+          res.status(400).json({ error: 'invalid_grant', error_description: 'PKCE verification failed' });
+          return;
+        }
+      }
+
+      // Delete used code
+      oauthCodes.delete(code);
+
+      // Generate access token
+      const accessToken = `pcp-token-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      const expiresIn = 3600; // 1 hour
+
+      // Store token
+      oauthTokens.set(accessToken, {
+        clientId: client_id || codeData.clientId,
+        scope: 'mcp:tools',
+        expiresAt: Date.now() + expiresIn * 1000,
+      });
+
+      logger.info('MCP /token issued access token', { clientId: client_id || codeData.clientId });
+
+      res.json({
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: expiresIn,
         scope: 'mcp:tools',
       });
     });
