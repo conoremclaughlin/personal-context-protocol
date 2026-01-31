@@ -774,8 +774,8 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     };
   }
 
-  // Fetch all context in parallel
-  const [contexts, projects, focus, activeSession, recentMemories, dbIdentity] = await Promise.all([
+  // Fetch all context in parallel (including timezone)
+  const [contexts, projects, focus, activeSession, recentMemories, dbIdentity, userTimezone] = await Promise.all([
     // Identity Core: all context summaries
     dataComposer.repositories.context.findAllByUser(user.id),
     // Active projects
@@ -803,6 +803,13 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
           .single()
           .then(({ data }) => data)
       : Promise.resolve(null),
+    // User timezone for timestamp conversion
+    dataComposer.getClient()
+      .from('users')
+      .select('timezone')
+      .eq('id', user.id)
+      .single()
+      .then(({ data }) => data?.timezone || 'UTC'),
   ]);
 
   // Organize contexts by type
@@ -879,6 +886,8 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
             user: {
               id: user.id,
               resolvedBy,
+              // User's timezone - ALWAYS convert UTC timestamps to this timezone when displaying to user
+              timezone: userTimezone,
               // Platform contact info for sending messages
               contacts: {
                 email: user.email || null,

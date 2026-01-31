@@ -32,6 +32,7 @@ bootstrap(userId: "<from config>", agentId: "<your identity>")
 ```
 
 This returns:
+- **User Info**: User ID, contacts, and **timezone** (e.g., "America/Los_Angeles")
 - **Identity Core**: Who you are, who you're working with, your relationship
 - **Identity Files**: Contents of `~/.pcp/shared/` and `~/.pcp/{agentId}/` files (VALUES.md, IDENTITY.md, etc.)
 - **Active Context**: Current projects, focus, project-specific context
@@ -55,6 +56,35 @@ end_session(userId: "...", summary: "Built memory layer with versioning...")
 ```
 
 **Note**: Never commit PII (emails, user IDs) to the repository. Always read from config files.
+
+## Timezone Handling (IMPORTANT)
+
+**Always convert UTC timestamps to the user's local timezone when displaying.**
+
+The user's timezone is available from:
+1. **Bootstrap response**: `user.timezone` (e.g., "America/Los_Angeles")
+2. **get_timezone tool**: Returns timezone and current local time
+
+When presenting dates/times to users:
+- Convert from UTC to their timezone
+- Use friendly formats: "Fri, Jan 30 at 6:13 PM PST" not "2026-01-31T02:13:41+0000"
+- For relative times: "2 hours ago", "yesterday at 3pm"
+
+Example (JavaScript):
+```javascript
+const userTz = 'America/Los_Angeles'; // from bootstrap
+const utcDate = new Date('2026-01-31T02:13:41Z');
+const localTime = utcDate.toLocaleString('en-US', {
+  timeZone: userTz,
+  weekday: 'short',
+  month: 'short',
+  day: 'numeric',
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZoneName: 'short'
+});
+// "Fri, Jan 30, 6:13 PM PST"
+```
 
 ## Multi-Agent Identity System
 
