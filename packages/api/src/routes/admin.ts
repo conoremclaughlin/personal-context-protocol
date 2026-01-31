@@ -1274,4 +1274,85 @@ router.delete('/connected-accounts/:id', async (req: Request, res: Response) => 
   }
 });
 
+// =============================================================================
+// Skills
+// =============================================================================
+
+import { getSkillsService } from '../skills';
+
+/**
+ * GET /api/admin/skills
+ * List all available skills
+ */
+router.get('/skills', async (req: Request, res: Response) => {
+  try {
+    const { type, category, status, search } = req.query;
+    const skillsService = getSkillsService();
+
+    const result = skillsService.listSkills({
+      type: type as string | undefined,
+      category: category as string | undefined,
+      status: status as 'available' | 'installed' | 'needs-setup' | 'disabled' | undefined,
+      search: search as string | undefined,
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to list skills:', error);
+    res.status(500).json({ error: 'Failed to list skills' });
+  }
+});
+
+/**
+ * GET /api/admin/skills/:name
+ * Get skill details by name
+ */
+router.get('/skills/:name', async (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    const skillsService = getSkillsService();
+
+    const skill = skillsService.getSkill(name);
+    if (!skill) {
+      res.status(404).json({ error: 'Skill not found' });
+      return;
+    }
+
+    res.json(skill);
+  } catch (error) {
+    logger.error('Failed to get skill:', error);
+    res.status(500).json({ error: 'Failed to get skill' });
+  }
+});
+
+/**
+ * POST /api/admin/skills/refresh
+ * Refresh skill eligibility checks
+ */
+router.post('/skills/refresh', async (_req: Request, res: Response) => {
+  try {
+    const skillsService = getSkillsService();
+    const result = skillsService.refreshEligibility();
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to refresh skills:', error);
+    res.status(500).json({ error: 'Failed to refresh skills' });
+  }
+});
+
+/**
+ * GET /api/admin/skills/paths
+ * Get skill scan paths
+ */
+router.get('/skills/paths', async (_req: Request, res: Response) => {
+  try {
+    const skillsService = getSkillsService();
+    const paths = skillsService.getSkillPaths();
+    res.json({ paths });
+  } catch (error) {
+    logger.error('Failed to get skill paths:', error);
+    res.status(500).json({ error: 'Failed to get skill paths' });
+  }
+});
+
 export default router;

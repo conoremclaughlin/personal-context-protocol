@@ -3445,6 +3445,7 @@ __metadata:
     typescript: "npm:^5.3.3"
     vitest: "npm:^4.0.18"
     winston: "npm:^3.11.0"
+    yaml: "npm:^2.8.2"
     zod: "npm:^3.25.0"
   languageName: unknown
   linkType: soft

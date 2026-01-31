@@ -12,6 +12,7 @@ import {
   Bell,
   Link2,
   FileText,
+  Puzzle,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { createClient } from '@/lib/supabase/client';
@@ -26,6 +27,7 @@ const navigation = [
   { name: 'Artifacts', href: '/artifacts', icon: FileText },
   { name: 'Reminders', href: '/reminders', icon: Bell },
   { name: 'Connections', href: '/connected-accounts', icon: Link2 },
+  { name: 'Skills', href: '/skills', icon: Puzzle },
 ];
 
 export function Sidebar() {
