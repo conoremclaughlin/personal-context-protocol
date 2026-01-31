@@ -8,13 +8,15 @@ import {
   Link2,
   Link2Off,
   Mail,
-  ExternalLink,
   AlertCircle,
   CheckCircle,
   Clock,
   RefreshCw,
   MessageSquare,
   ChevronRight,
+  Calendar,
+  User,
+  Shield,
 } from 'lucide-react';
 import { useApiQuery, useApiDelete, apiGet } from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -46,11 +48,12 @@ interface ConnectedAccountsResponse {
   providers: Provider[];
 }
 
-const providerConfig: Record<string, { label: string; icon: React.ReactNode; color: string }> = {
+const providerConfig: Record<string, { label: string; icon: React.ReactNode; color: string; description: string }> = {
   google: {
     label: 'Google',
     icon: <Mail className="h-5 w-5" />,
     color: 'text-red-600',
+    description: 'Gmail, Calendar, and profile access',
   },
 };
 
@@ -80,6 +83,67 @@ const statusConfig = {
     bgColor: 'bg-red-100',
   },
 };
+
+// Permission groups for organized display
+type PermissionGroup = 'email' | 'calendar' | 'profile' | 'other';
+
+interface ScopeInfo {
+  label: string;
+  group: PermissionGroup;
+}
+
+const scopeTranslations: Record<string, ScopeInfo> = {
+  'https://www.googleapis.com/auth/gmail.readonly': { label: 'Read emails', group: 'email' },
+  'https://www.googleapis.com/auth/gmail.send': { label: 'Send emails', group: 'email' },
+  'https://www.googleapis.com/auth/gmail.modify': { label: 'Modify emails', group: 'email' },
+  'https://mail.google.com/': { label: 'Full access', group: 'email' },
+  'https://www.googleapis.com/auth/calendar.readonly': { label: 'View calendar', group: 'calendar' },
+  'https://www.googleapis.com/auth/calendar.events.readonly': { label: 'View events', group: 'calendar' },
+  'https://www.googleapis.com/auth/calendar.events': { label: 'Manage events', group: 'calendar' },
+  'https://www.googleapis.com/auth/userinfo.email': { label: 'Email address', group: 'profile' },
+  'https://www.googleapis.com/auth/userinfo.profile': { label: 'Profile info', group: 'profile' },
+  'openid': { label: 'OpenID', group: 'profile' },
+};
+
+const permissionGroups: Record<PermissionGroup, { label: string; icon: React.ReactNode }> = {
+  email: { label: 'Email', icon: <Mail className="h-4 w-4" /> },
+  calendar: { label: 'Calendar', icon: <Calendar className="h-4 w-4" /> },
+  profile: { label: 'Profile', icon: <User className="h-4 w-4" /> },
+  other: { label: 'Other', icon: <Shield className="h-4 w-4" /> },
+};
+
+function groupScopes(scopes: string[]): Record<PermissionGroup, string[]> {
+  const groups: Record<PermissionGroup, string[]> = {
+    email: [],
+    calendar: [],
+    profile: [],
+    other: [],
+  };
+
+  scopes.forEach((scope) => {
+    const info = scopeTranslations[scope];
+    if (info) {
+      groups[info.group].push(scope);
+    } else {
+      groups.other.push(scope);
+    }
+  });
+
+  return groups;
+}
+
+function translateScope(scope: string): string {
+  const info = scopeTranslations[scope];
+  if (info) {
+    return info.label;
+  }
+  // Fallback: simplify the scope URL
+  return scope
+    .replace('https://www.googleapis.com/auth/', '')
+    .replace('https://mail.google.com/', 'gmail.full')
+    .replace(/\./g, ' ')
+    .replace(/_/g, ' ');
+}
 
 function formatRelativeTime(date: string): string {
   const now = new Date();
@@ -168,6 +232,12 @@ export default function ConnectedAccountsPage() {
     }
   };
 
+  // Get providers that aren't connected yet
+  const availableProviders = providers.filter(p => {
+    const account = accounts.find(a => a.provider === p.name && a.status === 'active');
+    return account === undefined && p.configured;
+  });
+
   return (
     <div>
       <div className="flex items-center justify-between">
@@ -205,121 +275,26 @@ export default function ConnectedAccountsPage() {
         </Card>
       </Link>
 
-      {/* Available Providers */}
+      {/* Unified Integrations Card */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>Available Integrations</CardTitle>
+          <CardTitle>Integrations</CardTitle>
           <CardDescription>
-            Connect your accounts to enable additional features
+            Manage your connected accounts and available integrations
           </CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading ? (
             <p className="text-gray-500">Loading...</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {providers.map((provider) => {
-                const config = providerConfig[provider.name] || {
-                  label: provider.name,
-                  icon: <Link2 className="h-5 w-5" />,
-                  color: 'text-gray-600',
-                };
-                const connectedAccount = accounts.find(
-                  (a) => a.provider === provider.name && a.status === 'active'
-                );
-
-                return (
-                  <div
-                    key={provider.name}
-                    className={clsx(
-                      'rounded-lg border p-4',
-                      connectedAccount
-                        ? 'border-green-200 bg-green-50/50'
-                        : 'border-gray-200'
-                    )}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className={clsx('p-2 rounded-lg bg-white border', config.color)}>
-                          {config.icon}
-                        </div>
-                        <div>
-                          <h3 className="font-medium text-gray-900">{config.label}</h3>
-                          {connectedAccount ? (
-                            <p className="text-sm text-gray-500">{connectedAccount.email}</p>
-                          ) : (
-                            <p className="text-sm text-gray-400">Not connected</p>
-                          )}
-                        </div>
-                      </div>
-                      {!provider.configured ? (
-                        <Badge variant="outline" className="text-gray-500">
-                          Not configured
-                        </Badge>
-                      ) : connectedAccount ? (
-                        <Badge className="bg-green-100 text-green-800">
-                          <CheckCircle className="mr-1 h-3 w-3" />
-                          Connected
-                        </Badge>
-                      ) : (
-                        <Button
-                          size="sm"
-                          onClick={() => handleConnect(provider.name)}
-                          disabled={connectingProvider === provider.name}
-                        >
-                          {connectingProvider === provider.name ? (
-                            <>
-                              <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                              Connecting...
-                            </>
-                          ) : (
-                            <>
-                              <Link2 className="mr-2 h-4 w-4" />
-                              Connect
-                            </>
-                          )}
-                        </Button>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-              {providers.length === 0 && (
-                <p className="col-span-full text-center text-gray-500 py-4">
-                  No integrations available. Configure OAuth credentials in your environment.
-                </p>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Connected Accounts List */}
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle>Connected Accounts</CardTitle>
-          <CardDescription>
-            Manage your connected third-party accounts
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {isLoading ? (
-            <p className="text-gray-500">Loading...</p>
-          ) : accounts.length === 0 ? (
-            <div className="text-center py-8">
-              <Link2Off className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500">No accounts connected yet.</p>
-              <p className="text-sm text-gray-400 mt-1">
-                Connect an account above to get started.
-              </p>
-            </div>
           ) : (
             <div className="space-y-4">
+              {/* Connected Accounts */}
               {accounts.map((account) => {
                 const providerCfg = providerConfig[account.provider] || {
                   label: account.provider,
                   icon: <Link2 className="h-5 w-5" />,
                   color: 'text-gray-600',
+                  description: '',
                 };
                 const statusCfg = statusConfig[account.status];
                 const StatusIcon = statusCfg.icon;
@@ -330,7 +305,7 @@ export default function ConnectedAccountsPage() {
                     className={clsx(
                       'rounded-lg border p-4',
                       account.status === 'active'
-                        ? 'border-gray-200'
+                        ? 'border-green-200 bg-green-50/30'
                         : 'border-yellow-200 bg-yellow-50/50'
                     )}
                   >
@@ -341,9 +316,10 @@ export default function ConnectedAccountsPage() {
                             src={account.avatarUrl}
                             alt={account.displayName || ''}
                             className="h-12 w-12 rounded-full"
+                            referrerPolicy="no-referrer"
                           />
                         ) : (
-                          <div className={clsx('p-3 rounded-full bg-gray-100', providerCfg.color)}>
+                          <div className={clsx('p-3 rounded-full bg-white border', providerCfg.color)}>
                             {providerCfg.icon}
                           </div>
                         )}
@@ -400,28 +376,107 @@ export default function ConnectedAccountsPage() {
                       </div>
                     </div>
 
-                    {/* Scopes */}
+                    {/* Grouped Permissions */}
                     {account.scopes.length > 0 && (
-                      <div className="mt-3 pt-3 border-t">
-                        <p className="text-xs text-gray-500 mb-2">Permissions granted:</p>
-                        <div className="flex flex-wrap gap-1">
-                          {account.scopes.map((scope) => {
-                            // Simplify scope display
-                            const simplifiedScope = scope
-                              .replace('https://www.googleapis.com/auth/', '')
-                              .replace('https://mail.google.com/', 'gmail.full');
-                            return (
-                              <Badge key={scope} variant="secondary" className="text-xs">
-                                {simplifiedScope}
-                              </Badge>
-                            );
-                          })}
+                      <div className="mt-3 pt-3 border-t border-green-100">
+                        <p className="text-xs text-gray-500 mb-3">Permissions granted:</p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {(Object.entries(groupScopes(account.scopes)) as [PermissionGroup, string[]][])
+                            .filter(([, scopes]) => scopes.length > 0)
+                            .map(([group, scopes]) => {
+                              const groupConfig = permissionGroups[group];
+                              return (
+                                <div key={group} className="bg-gray-50 rounded-lg p-3">
+                                  <div className="flex items-center gap-2 text-gray-700 mb-2">
+                                    {groupConfig.icon}
+                                    <span className="text-sm font-medium">{groupConfig.label}</span>
+                                  </div>
+                                  <div className="space-y-1">
+                                    {scopes.map((scope) => (
+                                      <div key={scope} className="flex items-center gap-2 text-xs text-gray-600">
+                                        <CheckCircle className="h-3 w-3 text-green-500" />
+                                        {translateScope(scope)}
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              );
+                            })}
                         </div>
                       </div>
                     )}
                   </div>
                 );
               })}
+
+              {/* Divider if both sections have content */}
+              {accounts.length > 0 && availableProviders.length > 0 && (
+                <div className="relative py-2">
+                  <div className="absolute inset-0 flex items-center">
+                    <div className="w-full border-t border-gray-200" />
+                  </div>
+                  <div className="relative flex justify-center">
+                    <span className="bg-white px-3 text-xs text-gray-500">Available to connect</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Available Providers */}
+              {availableProviders.map((provider) => {
+                const config = providerConfig[provider.name] || {
+                  label: provider.name,
+                  icon: <Link2 className="h-5 w-5" />,
+                  color: 'text-gray-600',
+                  description: 'Connect this service',
+                };
+
+                return (
+                  <div
+                    key={provider.name}
+                    className="rounded-lg border border-gray-200 p-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-4">
+                        <div className={clsx('p-3 rounded-lg bg-gray-50 border', config.color)}>
+                          {config.icon}
+                        </div>
+                        <div>
+                          <h3 className="font-medium text-gray-900">{config.label}</h3>
+                          <p className="text-sm text-gray-500">{config.description}</p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        onClick={() => handleConnect(provider.name)}
+                        disabled={connectingProvider === provider.name}
+                      >
+                        {connectingProvider === provider.name ? (
+                          <>
+                            <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                            Connecting...
+                          </>
+                        ) : (
+                          <>
+                            <Link2 className="mr-2 h-4 w-4" />
+                            Connect
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Empty state */}
+              {accounts.length === 0 && availableProviders.length === 0 && (
+                <div className="text-center py-8">
+                  <Link2Off className="h-12 w-12 mx-auto text-gray-300 mb-3" />
+                  <p className="text-gray-500">No integrations available.</p>
+                  <p className="text-sm text-gray-400 mt-1">
+                    Configure OAuth credentials in your environment to enable integrations.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </CardContent>

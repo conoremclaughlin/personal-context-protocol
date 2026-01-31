@@ -145,6 +145,30 @@ import {
   listRegisteredAgentsSchema,
 } from './agent-triggers';
 
+import {
+  handleListCalendars,
+  handleListCalendarEvents,
+  handleGetCalendarEvent,
+  listCalendarsSchema,
+  listCalendarEventsSchema,
+  getCalendarEventSchema,
+} from '../../stories/google-calendar/handlers';
+
+import {
+  handleListEmails,
+  handleGetEmail,
+  handleSendEmail,
+  handleReplyToEmail,
+  handleDraftEmail,
+  handleListLabels,
+  listEmailsSchema,
+  getEmailSchema,
+  sendEmailSchema,
+  replyToEmailSchema,
+  draftEmailSchema,
+  listLabelsSchema,
+} from '../../stories/gmail/handlers';
+
 // Re-export for external use
 export { setResponseCallback, addPendingMessage } from './response-handlers';
 export { setTelegramListener, registerChannelListener } from './chat-context-handlers';
@@ -2029,6 +2053,244 @@ This is the "doorbell" - the inbox is the "mailbox". Use both together for relia
         return await handleListRegisteredAgents({}, dataComposer);
       } catch (error) {
         logger.error('Error in list_registered_agents:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // GOOGLE CALENDAR TOOLS (stories/google-calendar)
+  // =====================================================
+
+  server.registerTool(
+    'list_calendars',
+    {
+      description: `List all Google calendars accessible by the user.
+
+Returns calendar info including ID, name, access role, and whether it's the primary calendar.
+
+User must have connected their Google account with Calendar permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: listCalendarsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleListCalendars(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_calendars:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_calendar_events',
+    {
+      description: `List events from a Google calendar within a date range.
+
+Returns events with start/end times, summary, location, attendees, and status.
+
+User must have connected their Google account with Calendar permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: listCalendarEventsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleListCalendarEvents(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_calendar_events:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_calendar_event',
+    {
+      description: `Get details for a specific Google calendar event by ID.
+
+Returns full event details including description, attendees, organizer, and status.
+
+User must have connected their Google account with Calendar permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: getCalendarEventSchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetCalendarEvent(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_calendar_event:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // GMAIL TOOLS (stories/gmail)
+  // =====================================================
+
+  server.registerTool(
+    'list_emails',
+    {
+      description: `List emails from the user's Gmail inbox with optional filtering.
+
+Supports Gmail search queries like:
+- "is:unread" - Unread emails
+- "from:john@example.com" - From specific sender
+- "subject:meeting" - Subject contains "meeting"
+- "has:attachment" - Has attachments
+- "after:2024/01/01" - After a date
+
+User must have connected their Google account with Gmail permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: listEmailsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleListEmails(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_emails:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_email',
+    {
+      description: `Get full details for a specific email by message ID.
+
+Returns the complete email including body content, attachments info, and headers.
+
+User must have connected their Google account with Gmail permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: getEmailSchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetEmail(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_email:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'send_email',
+    {
+      description: `Send a new email from the user's Gmail account.
+
+Supports To, CC, BCC recipients. Body can be plain text or HTML.
+
+User must have connected their Google account with Gmail send permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: sendEmailSchema,
+    },
+    async (args) => {
+      try {
+        return await handleSendEmail(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in send_email:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'reply_to_email',
+    {
+      description: `Reply to an existing email. Automatically handles threading and subject line.
+
+Use replyAll=true to reply to all original recipients.
+
+User must have connected their Google account with Gmail send permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: replyToEmailSchema,
+    },
+    async (args) => {
+      try {
+        return await handleReplyToEmail(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in reply_to_email:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'draft_email',
+    {
+      description: `Create a draft email for later review and sending.
+
+Drafts appear in the user's Gmail drafts folder and can be edited/sent from the Gmail interface.
+
+User must have connected their Google account with Gmail permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: draftEmailSchema,
+    },
+    async (args) => {
+      try {
+        return await handleDraftEmail(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in draft_email:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_email_labels',
+    {
+      description: `List all Gmail labels (folders/categories) for the user.
+
+Returns system labels (INBOX, SENT, SPAM, etc.) and user-created labels.
+
+User must have connected their Google account with Gmail permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: listLabelsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleListLabels(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_email_labels:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,

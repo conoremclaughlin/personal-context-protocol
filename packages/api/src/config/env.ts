@@ -63,7 +63,7 @@ const envSchema = z.object({
   // OAuth - Google
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
-  OAUTH_REDIRECT_BASE_URL: optionalUrl, // Base URL for OAuth callbacks (e.g., http://localhost:3000)
+  OAUTH_REDIRECT_BASE_URL: optionalUrl, // OAuth callback URL - can be origin only (http://localhost:3001) or full URL (http://localhost:3001/api/admin/oauth/google/callback)
 });
 
 // Parse and validate environment variables

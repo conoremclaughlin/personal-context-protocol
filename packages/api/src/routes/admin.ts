@@ -935,8 +935,19 @@ router.get('/oauth/:provider/authorize', async (req: Request, res: Response) => 
     });
 
     // Build redirect URI
-    const baseUrl = env.OAUTH_REDIRECT_BASE_URL || `http://localhost:${env.MCP_HTTP_PORT}`;
-    const redirectUri = `${baseUrl}/api/admin/oauth/${provider}/callback`;
+    // OAUTH_REDIRECT_BASE_URL can be either:
+    // - Just the origin (e.g., http://localhost:3001) - path will be appended
+    // - Full redirect URI (e.g., http://localhost:3001/api/admin/oauth/google/callback) - used as-is
+    const configuredUrl = env.OAUTH_REDIRECT_BASE_URL;
+    const defaultPath = `/api/admin/oauth/${provider}/callback`;
+    let redirectUri: string;
+    if (configuredUrl) {
+      // If the configured URL has a path (not just origin), use it as-is
+      const url = new URL(configuredUrl);
+      redirectUri = url.pathname !== '/' ? configuredUrl : `${configuredUrl}${defaultPath}`;
+    } else {
+      redirectUri = `http://localhost:${env.MCP_HTTP_PORT}${defaultPath}`;
+    }
 
     const authUrl = oauthService.getAuthorizationUrl(provider, redirectUri, state);
 
@@ -1018,10 +1029,17 @@ router.get('/oauth/:provider/callback', async (req: Request, res: Response) => {
     // Clean up state
     oauthStateStore.delete(state as string);
 
-    // Exchange code for tokens
+    // Exchange code for tokens (redirect URI must match what was sent in auth request)
     const oauthService = getOAuthService();
-    const baseUrl = env.OAUTH_REDIRECT_BASE_URL || `http://localhost:${env.MCP_HTTP_PORT}`;
-    const redirectUri = `${baseUrl}/api/admin/oauth/${provider}/callback`;
+    const configuredUrl = env.OAUTH_REDIRECT_BASE_URL;
+    const defaultPath = `/api/admin/oauth/${provider}/callback`;
+    let redirectUri: string;
+    if (configuredUrl) {
+      const url = new URL(configuredUrl);
+      redirectUri = url.pathname !== '/' ? configuredUrl : `${configuredUrl}${defaultPath}`;
+    } else {
+      redirectUri = `http://localhost:${env.MCP_HTTP_PORT}${defaultPath}`;
+    }
 
     const tokens = await oauthService.exchangeCode(provider, code as string, redirectUri);
 
