@@ -1278,7 +1278,7 @@ router.delete('/connected-accounts/:id', async (req: Request, res: Response) => 
 // Skills
 // =============================================================================
 
-import { getSkillsService } from '../skills';
+import { getSkillsService, getCloudSkillsService, SkillType } from '../skills';
 
 /**
  * GET /api/admin/skills
@@ -1352,6 +1352,188 @@ router.get('/skills/paths', async (_req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to get skill paths:', error);
     res.status(500).json({ error: 'Failed to get skill paths' });
+  }
+});
+
+// =============================================================================
+// Skills Registry (Cloud)
+// =============================================================================
+
+/**
+ * GET /api/admin/skills/registry
+ * Browse the skills registry
+ */
+router.get('/skills/registry', async (req: Request, res: Response) => {
+  try {
+    const { type, category, search, official, limit, offset } = req.query;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { pcpUserId: string };
+
+    const cloudService = getCloudSkillsService(supabase);
+    const result = await cloudService.browseRegistry(
+      {
+        type: type as SkillType | undefined,
+        category: category as string | undefined,
+        search: search as string | undefined,
+        isOfficial: official === 'true' ? true : official === 'false' ? false : undefined,
+        limit: limit ? parseInt(limit as string, 10) : undefined,
+        offset: offset ? parseInt(offset as string, 10) : undefined,
+      },
+      authReq.pcpUserId
+    );
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to browse skills registry:', error);
+    res.status(500).json({ error: 'Failed to browse skills registry' });
+  }
+});
+
+/**
+ * GET /api/admin/skills/registry/:idOrName
+ * Get skill details from registry
+ */
+router.get('/skills/registry/:idOrName', async (req: Request, res: Response) => {
+  try {
+    const { idOrName } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { pcpUserId: string };
+
+    const cloudService = getCloudSkillsService(supabase);
+    const skill = await cloudService.getRegistrySkill(idOrName, authReq.pcpUserId);
+
+    if (!skill) {
+      res.status(404).json({ error: 'Skill not found in registry' });
+      return;
+    }
+
+    res.json(skill);
+  } catch (error) {
+    logger.error('Failed to get registry skill:', error);
+    res.status(500).json({ error: 'Failed to get registry skill' });
+  }
+});
+
+/**
+ * POST /api/admin/skills/install
+ * Install a skill from the registry
+ */
+router.post('/skills/install', async (req: Request, res: Response) => {
+  try {
+    const { skillId, versionPinned, config } = req.body;
+
+    if (!skillId) {
+      res.status(400).json({ error: 'skillId is required' });
+      return;
+    }
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { pcpUserId: string };
+
+    const cloudService = getCloudSkillsService(supabase);
+    const result = await cloudService.installSkill({
+      skillId,
+      userId: authReq.pcpUserId,
+      versionPinned,
+      config,
+    });
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message });
+      return;
+    }
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to install skill:', error);
+    res.status(500).json({ error: 'Failed to install skill' });
+  }
+});
+
+/**
+ * DELETE /api/admin/skills/install/:skillId
+ * Uninstall a skill
+ */
+router.delete('/skills/install/:skillId', async (req: Request, res: Response) => {
+  try {
+    const { skillId } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { pcpUserId: string };
+
+    const cloudService = getCloudSkillsService(supabase);
+    const result = await cloudService.uninstallSkill(skillId, authReq.pcpUserId);
+
+    if (!result.success) {
+      res.status(400).json({ error: result.message });
+      return;
+    }
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to uninstall skill:', error);
+    res.status(500).json({ error: 'Failed to uninstall skill' });
+  }
+});
+
+/**
+ * PATCH /api/admin/skills/install/:installationId
+ * Update skill installation (enable/disable, pin version, config)
+ */
+router.patch('/skills/install/:installationId', async (req: Request, res: Response) => {
+  try {
+    const { installationId } = req.params;
+    const { enabled, versionPinned } = req.body;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { pcpUserId: string };
+
+    const cloudService = getCloudSkillsService(supabase);
+
+    // Toggle enabled
+    if (enabled !== undefined) {
+      const result = await cloudService.toggleSkill(installationId, authReq.pcpUserId, enabled);
+      if (!result.success) {
+        res.status(400).json({ error: 'Failed to toggle skill' });
+        return;
+      }
+    }
+
+    // Pin version
+    if (versionPinned !== undefined) {
+      const result = await cloudService.pinSkillVersion(installationId, authReq.pcpUserId, versionPinned);
+      if (!result.success) {
+        res.status(400).json({ error: 'Failed to pin skill version' });
+        return;
+      }
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Failed to update skill installation:', error);
+    res.status(500).json({ error: 'Failed to update skill installation' });
+  }
+});
+
+/**
+ * GET /api/admin/skills/installed
+ * Get user's installed skills (merged local + cloud)
+ */
+router.get('/skills/installed', async (req: Request, res: Response) => {
+  try {
+    const { type, category, search } = req.query;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as Request & { pcpUserId: string };
+
+    const cloudService = getCloudSkillsService(supabase);
+    const result = await cloudService.listAllSkills(authReq.pcpUserId, {
+      type: type as string | undefined,
+      category: category as string | undefined,
+      search: search as string | undefined,
+    });
+
+    res.json(result);
+  } catch (error) {
+    logger.error('Failed to list installed skills:', error);
+    res.status(500).json({ error: 'Failed to list installed skills' });
   }
 });
 

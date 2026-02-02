@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -206,14 +207,22 @@ export default function SkillsPage() {
             Extend your assistant's capabilities with skills, tools, and guides
           </p>
         </div>
-        <Button
-          variant="outline"
-          onClick={handleRefresh}
-          disabled={isRefreshing}
-        >
-          <RefreshCw className={clsx('mr-2 h-4 w-4', isRefreshing && 'animate-spin')} />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Link href="/skills/registry">
+            <Button variant="default">
+              <Download className="mr-2 h-4 w-4" />
+              Browse Registry
+            </Button>
+          </Link>
+          <Button
+            variant="outline"
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+          >
+            <RefreshCw className={clsx('mr-2 h-4 w-4', isRefreshing && 'animate-spin')} />
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {error && (
