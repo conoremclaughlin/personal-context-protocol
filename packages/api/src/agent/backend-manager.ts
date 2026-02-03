@@ -210,6 +210,16 @@ export class BackendManager extends EventEmitter {
     return this.backends.get('claude-code') as ClaudeCodeBackend || null;
   }
 
+  /**
+   * Clear the current session, forcing a new session on next message.
+   */
+  clearSession(): void {
+    const ccBackend = this.getClaudeCodeBackend();
+    if (ccBackend) {
+      ccBackend.clearSession();
+    }
+  }
+
   private async createBackends(): Promise<void> {
     // Create Claude Code backend
     if (this.config.backends['claude-code'] || this.config.primaryBackend === 'claude-code') {
@@ -257,6 +267,14 @@ export class BackendManager extends EventEmitter {
 
     backend.on('response', (response: unknown) => {
       this.emit('response', response);
+    });
+
+    backend.on('session:captured', (sessionId: string) => {
+      this.emit('session:captured', sessionId);
+    });
+
+    backend.on('session:usage', (usage: unknown) => {
+      this.emit('session:usage', usage);
     });
   }
 

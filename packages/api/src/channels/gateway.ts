@@ -337,17 +337,24 @@ export class ChannelGateway extends EventEmitter {
       contentLength: combinedContent.length,
     });
 
-    // Forward the combined message
-    await this.forwardToHandler(
-      buffer.channel,
-      buffer.conversationId,
-      buffer.sender,
-      combinedContent,
-      {
-        ...buffer.metadata,
-        media: allMedia.length > 0 ? allMedia : undefined,
-      }
-    );
+    // Forward the combined message. On error, release the processing lock
+    // so the conversation isn't permanently deadlocked.
+    // On success, the lock is released by sendResponse → processPendingMessages.
+    try {
+      await this.forwardToHandler(
+        buffer.channel,
+        buffer.conversationId,
+        buffer.sender,
+        combinedContent,
+        {
+          ...buffer.metadata,
+          media: allMedia.length > 0 ? allMedia : undefined,
+        }
+      );
+    } catch (error) {
+      logger.error(`Error in flushBuffer for ${key}, releasing processing lock:`, error);
+      this.processingConversations.delete(key);
+    }
   }
 
   /**
@@ -403,6 +410,10 @@ export class ChannelGateway extends EventEmitter {
     } catch (error) {
       logger.error(`Error forwarding message to handler:`, error);
       this.stopTypingIndicator(conversationId);
+
+      // Release processing lock so conversation isn't permanently deadlocked
+      const key = this.getBufferKey(channel, conversationId);
+      this.processingConversations.delete(key);
 
       // Send error response based on channel
       try {

@@ -38,6 +38,8 @@ export interface SessionHostConfig {
   agentId?: string;
   /** Agent IDs to register trigger handlers for (enables wake-up via trigger_agent) */
   registeredAgents?: string[];
+  /** Max input tokens before rotating to a new session (default: 160000, ~80% of 200k) */
+  maxContextTokens?: number;
 }
 
 interface CachedContext {
@@ -63,6 +65,9 @@ export class SessionHost extends EventEmitter {
   // Trigger handlers
   private registeredAgents: string[] = [];
 
+  // Context window management
+  private maxContextTokens: number;
+
   constructor(config: SessionHostConfig) {
     super();
     this.dataComposer = config.dataComposer;
@@ -70,6 +75,7 @@ export class SessionHost extends EventEmitter {
     this.disableContextInjection = config.disableContextInjection ?? false;
     this.agentId = config.agentId;
     this.registeredAgents = config.registeredAgents || [];
+    this.maxContextTokens = config.maxContextTokens ?? 160000; // ~80% of 200k for Opus
 
     // Create backend manager
     this.backendManager = createBackendManager(config.backend);
@@ -95,6 +101,9 @@ export class SessionHost extends EventEmitter {
 
     // Register the response callback for MCP send_response tool
     setResponseCallback(this.handleResponse.bind(this));
+
+    // Restore Claude session from database (sets sessionId before first message)
+    await this.restoreClaudeSession();
 
     // Initialize backend manager
     await this.backendManager.initialize();
@@ -695,6 +704,119 @@ export class SessionHost extends EventEmitter {
     await this.backendManager.switchBackend(type);
   }
 
+  /**
+   * Persist the Claude Code session ID to the sessions table so it survives server restarts.
+   * Finds the most recent active session for this agent and updates its claude_session_id.
+   */
+  private async persistClaudeSessionId(claudeSessionId: string): Promise<void> {
+    if (!this.agentId) return;
+
+    try {
+      const supabase = this.dataComposer.getClient();
+
+      // Find the most recent active session for this agent
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('agent_id', this.agentId)
+        .is('ended_at', null)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (session) {
+        await supabase
+          .from('sessions')
+          .update({ claude_session_id: claudeSessionId, status: 'active' })
+          .eq('id', session.id);
+        logger.info('Persisted Claude session ID', { claudeSessionId, pcpSessionId: session.id });
+      } else {
+        logger.debug('No active PCP session found to persist Claude session ID — agent may not have called start_session yet', {
+          agentId: this.agentId,
+        });
+      }
+    } catch (error) {
+      logger.warn('Failed to persist Claude session ID:', error);
+    }
+  }
+
+  /**
+   * Rotate to a new Claude session when context window is approaching limits.
+   * Marks the current session as completed in the DB, clears the backend session ID,
+   * and clears the context cache so fresh context is injected on the next message.
+   */
+  private async rotateSession(): Promise<void> {
+    if (!this.agentId) return;
+
+    try {
+      const supabase = this.dataComposer.getClient();
+
+      // Mark current session as completed in the DB
+      const { data: currentSession } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('agent_id', this.agentId)
+        .is('ended_at', null)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (currentSession) {
+        await supabase
+          .from('sessions')
+          .update({ status: 'completed', ended_at: new Date().toISOString() })
+          .eq('id', currentSession.id);
+        logger.info('Marked current session as completed for rotation', { sessionId: currentSession.id });
+      }
+
+      // Clear session on the backend — next message starts a fresh Claude session
+      this.backendManager.clearSession();
+
+      // Clear context cache so fresh context is injected
+      this.contextCache.clear();
+
+      logger.info('Session rotated — next message will start a fresh context', { agentId: this.agentId });
+      this.emit('session:rotated', { agentId: this.agentId });
+    } catch (error) {
+      logger.error('Failed to rotate session:', error);
+    }
+  }
+
+  /**
+   * On startup, restore the Claude Code session ID from the database so --resume works across restarts.
+   */
+  private async restoreClaudeSession(): Promise<void> {
+    if (!this.agentId) return;
+
+    try {
+      const supabase = this.dataComposer.getClient();
+
+      const { data: session } = await supabase
+        .from('sessions')
+        .select('claude_session_id')
+        .eq('agent_id', this.agentId)
+        .is('ended_at', null)
+        .not('claude_session_id', 'is', null)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (session?.claude_session_id) {
+        const resumed = await this.backendManager.resumeSession(session.claude_session_id);
+        if (resumed) {
+          logger.info('Restored Claude session from database', {
+            claudeSessionId: session.claude_session_id,
+            agentId: this.agentId,
+          });
+        }
+      } else {
+        logger.info('No resumable Claude session found in database', { agentId: this.agentId });
+      }
+    } catch (error) {
+      logger.warn('Failed to restore Claude session from database:', error);
+    }
+  }
+
   private setupBackendEvents(): void {
     this.backendManager.on('backend:ready', (type) => {
       this.emit('backend:ready', type);
@@ -725,6 +847,28 @@ export class SessionHost extends EventEmitter {
     this.backendManager.on('response', async (response: AgentResponse) => {
       logger.info(`Received response from backend for ${response.channel}:${response.conversationId}`);
       await this.handleResponse(response);
+    });
+
+    // Persist Claude session ID to database when captured
+    this.backendManager.on('session:captured', async (sessionId: string) => {
+      await this.persistClaudeSessionId(sessionId);
+    });
+
+    // Monitor token usage for context window rotation
+    this.backendManager.on('session:usage', async (usage: {
+      inputTokens: number;
+      outputTokens: number;
+      messageInputTokens: number;
+      messageOutputTokens: number;
+    }) => {
+      if (usage.inputTokens >= this.maxContextTokens) {
+        logger.warn('Context window limit approaching, rotating to new session', {
+          inputTokens: usage.inputTokens,
+          maxContextTokens: this.maxContextTokens,
+          agentId: this.agentId,
+        });
+        await this.rotateSession();
+      }
     });
   }
 }

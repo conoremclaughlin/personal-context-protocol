@@ -291,6 +291,72 @@ describe('ChannelGateway', () => {
     });
   });
 
+  describe('Processing Lock Error Recovery', () => {
+    it('should release processing lock when handler throws in flushBuffer', async () => {
+      const handler = vi.fn().mockRejectedValue(new Error('Handler crashed'));
+      gateway.setMessageHandler(handler);
+
+      const bufferMessage = (gateway as any).bufferMessage.bind(gateway);
+      const processingConversations = (gateway as any).processingConversations;
+
+      // Send a message that will trigger flushBuffer
+      bufferMessage('telegram', 'chat123', { id: 'user1' }, 'Test message');
+      await vi.advanceTimersByTimeAsync(2100);
+
+      // Handler was called and threw
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      // Processing lock should be released despite the error
+      expect(processingConversations.has('telegram:chat123')).toBe(false);
+    });
+
+    it('should release processing lock when forwardToHandler catches error', async () => {
+      const handler = vi.fn().mockRejectedValue(new Error('Handler failed'));
+      gateway.setMessageHandler(handler);
+
+      const forwardToHandler = (gateway as any).forwardToHandler.bind(gateway);
+      const processingConversations = (gateway as any).processingConversations;
+
+      // Manually set processing lock (as flushBuffer would)
+      processingConversations.add('telegram:chat456');
+
+      // Call forwardToHandler directly — it should catch the error and release lock
+      await forwardToHandler(
+        'telegram', 'chat456',
+        { id: 'user1' }, 'Test message', {}
+      );
+
+      // Lock should be released
+      expect(processingConversations.has('telegram:chat456')).toBe(false);
+    });
+
+    it('should allow new messages after error recovery', async () => {
+      let callCount = 0;
+      const handler = vi.fn().mockImplementation(async () => {
+        callCount++;
+        if (callCount === 1) throw new Error('First call fails');
+        // Second call succeeds
+      });
+      gateway.setMessageHandler(handler);
+
+      const bufferMessage = (gateway as any).bufferMessage.bind(gateway);
+      const processingConversations = (gateway as any).processingConversations;
+
+      // First message — handler throws
+      bufferMessage('telegram', 'chat123', { id: 'user1' }, 'Failing message');
+      await vi.advanceTimersByTimeAsync(2100);
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(processingConversations.has('telegram:chat123')).toBe(false);
+
+      // Second message — should succeed since lock was released
+      bufferMessage('telegram', 'chat123', { id: 'user1' }, 'Recovery message');
+      await vi.advanceTimersByTimeAsync(2100);
+
+      expect(handler).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('Buffer Key Generation', () => {
     it('should generate unique keys per channel and conversation', () => {
       const getBufferKey = (gateway as any).getBufferKey.bind(gateway);

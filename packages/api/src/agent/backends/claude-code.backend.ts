@@ -70,6 +70,10 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
   // Track pending message for response routing
   private pendingMessage: AgentMessage | null = null;
 
+  // Track cumulative token usage for context window management
+  private totalInputTokens = 0;
+  private totalOutputTokens = 0;
+
   // Temp file for system prompt
   private systemPromptFile: string | null = null;
 
@@ -173,6 +177,7 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
             if (parsed.type === 'system' && parsed.session_id) {
               this.sessionId = parsed.session_id;
               logger.info('Claude Code backend ready', { sessionId: this.sessionId });
+              this.emit('session:captured', this.sessionId);
             }
 
             // Capture response text
@@ -187,6 +192,18 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
 
             // Handle result
             if (parsed.type === 'result') {
+              // Accumulate token usage for context window tracking
+              if (parsed.usage) {
+                this.totalInputTokens += parsed.usage.input_tokens;
+                this.totalOutputTokens += parsed.usage.output_tokens;
+                this.emit('session:usage', {
+                  inputTokens: this.totalInputTokens,
+                  outputTokens: this.totalOutputTokens,
+                  messageInputTokens: parsed.usage.input_tokens,
+                  messageOutputTokens: parsed.usage.output_tokens,
+                });
+              }
+
               this.emit('result', {
                 success: !parsed.is_error,
                 content: parsed.result || responseContent,
@@ -234,6 +251,7 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       proc.on('close', (code) => {
         clearTimeout(timeout);
         this.process = null;
+        this.pendingMessage = null;
 
         if (code !== 0) {
           logger.warn(`Claude Code exited with code ${code}`);
@@ -264,6 +282,8 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       uptime: this.startTime ? Date.now() - this.startTime.getTime() : undefined,
       messageCount: this.messageCount,
       error: this.lastError || undefined,
+      totalInputTokens: this.totalInputTokens,
+      totalOutputTokens: this.totalOutputTokens,
     };
   }
 
@@ -295,6 +315,16 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
    */
   clearPendingMessage(): void {
     this.pendingMessage = null;
+  }
+
+  /**
+   * Clear the session ID, forcing a new session on next message.
+   * Also resets token counters since we're starting fresh.
+   */
+  clearSession(): void {
+    this.sessionId = null;
+    this.totalInputTokens = 0;
+    this.totalOutputTokens = 0;
   }
 
   private buildArgs(): string[] {

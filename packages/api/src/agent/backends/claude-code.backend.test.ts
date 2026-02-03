@@ -273,6 +273,234 @@ describe('Claude Code Backend Response Guard', () => {
   });
 });
 
+describe('Session Continuity', () => {
+  let mockProcess: EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    stdin: { write: Mock; end: Mock };
+    kill: Mock;
+  };
+
+  beforeEach(() => {
+    mockProcess = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      stdin: { write: vi.fn(), end: vi.fn() },
+      kill: vi.fn(),
+    });
+    (spawn as Mock).mockReturnValue(mockProcess);
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('should emit session:captured when system message contains session_id', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const captured: string[] = [];
+    backend.on('session:captured', (id: string) => captured.push(id));
+
+    // Start a message (which spawns a process)
+    const messagePromise = backend.sendMessage({
+      id: 'msg-1',
+      channel: 'telegram',
+      conversationId: 'chat-1',
+      sender: { id: 'user-1' },
+      content: 'Hello',
+      timestamp: new Date(),
+    });
+
+    // Simulate Claude Code emitting system message with session_id
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","subtype":"init","session_id":"sess-abc123"}\n'
+    ));
+
+    // Emit result and close
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"result","result":"Hi there","usage":{"input_tokens":100,"output_tokens":50}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await messagePromise;
+
+    expect(captured).toEqual(['sess-abc123']);
+    expect(backend.getSessionId()).toBe('sess-abc123');
+  });
+
+  it('should track token usage cumulatively and emit session:usage', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const usageEvents: Array<{ inputTokens: number; outputTokens: number }> = [];
+    backend.on('session:usage', (usage) => usageEvents.push(usage));
+
+    // First message
+    const msg1 = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Hello', timestamp: new Date(),
+    });
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"s1"}\n' +
+      '{"type":"result","result":"Hi","usage":{"input_tokens":1000,"output_tokens":500}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg1;
+
+    expect(usageEvents.length).toBe(1);
+    expect(usageEvents[0].inputTokens).toBe(1000);
+    expect(usageEvents[0].outputTokens).toBe(500);
+
+    // Second message — tokens should accumulate
+    (spawn as Mock).mockReturnValue(Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stderr: new EventEmitter(),
+      stdin: { write: vi.fn(), end: vi.fn() },
+      kill: vi.fn(),
+    }));
+
+    const msg2 = backend.sendMessage({
+      id: 'msg-2', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'More', timestamp: new Date(),
+    });
+
+    const proc2 = (spawn as Mock).mock.results[(spawn as Mock).mock.results.length - 1].value;
+    proc2.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"s1"}\n' +
+      '{"type":"result","result":"Reply","usage":{"input_tokens":2000,"output_tokens":800}}\n'
+    ));
+    proc2.emit('close', 0);
+    await msg2;
+
+    expect(usageEvents.length).toBe(2);
+    expect(usageEvents[1].inputTokens).toBe(3000); // 1000 + 2000
+    expect(usageEvents[1].outputTokens).toBe(1300); // 500 + 800
+  });
+
+  it('should include token usage in health report', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Hello', timestamp: new Date(),
+    });
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"s1"}\n' +
+      '{"type":"result","result":"Hi","usage":{"input_tokens":5000,"output_tokens":2000}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    const health = backend.getHealth();
+    expect(health.totalInputTokens).toBe(5000);
+    expect(health.totalOutputTokens).toBe(2000);
+  });
+
+  it('should clear sessionId and token counters on clearSession()', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    // Send a message to establish session and tokens
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Hello', timestamp: new Date(),
+    });
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"sess-xyz"}\n' +
+      '{"type":"result","result":"Hi","usage":{"input_tokens":1000,"output_tokens":500}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    expect(backend.getSessionId()).toBe('sess-xyz');
+    expect(backend.getHealth().totalInputTokens).toBe(1000);
+
+    // Clear session
+    backend.clearSession();
+
+    expect(backend.getSessionId()).toBeNull();
+    expect(backend.getHealth().totalInputTokens).toBe(0);
+    expect(backend.getHealth().totalOutputTokens).toBe(0);
+  });
+
+  it('should clear pendingMessage when process closes', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Hello', timestamp: new Date(),
+    });
+
+    // Before close, pending message should exist
+    expect(backend.getPendingMessage()).not.toBeNull();
+
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"result","result":"Hi"}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    // After close, pending message should be cleared
+    expect(backend.getPendingMessage()).toBeNull();
+  });
+
+  it('should use --resume flag when sessionId is set', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    // Set session via resumeSession
+    await backend.resumeSession('existing-session-123');
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Continue', timestamp: new Date(),
+    });
+
+    // Check spawn was called with --resume flag
+    const spawnCall = (spawn as Mock).mock.calls[(spawn as Mock).mock.calls.length - 1];
+    const args = spawnCall[1] as string[];
+    expect(args).toContain('--resume');
+    expect(args).toContain('existing-session-123');
+
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"existing-session-123"}\n' +
+      '{"type":"result","result":"Resumed"}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+  });
+
+  it('should NOT use --resume flag for new sessions', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Fresh start', timestamp: new Date(),
+    });
+
+    const spawnCall = (spawn as Mock).mock.calls[(spawn as Mock).mock.calls.length - 1];
+    const args = spawnCall[1] as string[];
+    expect(args).not.toContain('--resume');
+
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"new-sess"}\n' +
+      '{"type":"result","result":"New"}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+  });
+});
+
 describe('Backend Configuration', () => {
   it('should have correct default timeout', () => {
     const DEFAULT_TIMEOUT = 300000; // 5 minutes

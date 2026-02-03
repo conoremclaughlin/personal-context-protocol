@@ -1,0 +1,360 @@
+/**
+ * Session Host Tests
+ *
+ * Tests for session persistence, restoration, and context window rotation.
+ */
+
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { EventEmitter } from 'events';
+
+// Mock dependencies
+vi.mock('../utils/logger', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
+vi.mock('../mcp/tools/response-handlers', () => ({
+  setResponseCallback: vi.fn(),
+  addPendingMessage: vi.fn(),
+}));
+
+vi.mock('../channels/agent-gateway', () => ({
+  getAgentGateway: vi.fn(() => ({
+    registerHandler: vi.fn(),
+  })),
+}));
+
+// Mock BackendManager
+const mockBackendManager = Object.assign(new EventEmitter(), {
+  initialize: vi.fn().mockResolvedValue(undefined),
+  shutdown: vi.fn().mockResolvedValue(undefined),
+  sendMessage: vi.fn().mockResolvedValue(undefined),
+  getSessionId: vi.fn().mockReturnValue(null),
+  getActiveBackendType: vi.fn().mockReturnValue('claude-code'),
+  setResponseHandler: vi.fn(),
+  resumeSession: vi.fn().mockResolvedValue(true),
+  clearSession: vi.fn(),
+  getClaudeCodeBackend: vi.fn().mockReturnValue(null),
+});
+
+vi.mock('./backend-manager', () => ({
+  BackendManager: vi.fn(),
+  createBackendManager: vi.fn(() => mockBackendManager),
+}));
+
+// Mock Supabase query builder
+function createMockQueryBuilder() {
+  const builder: Record<string, any> = {};
+  builder.from = vi.fn().mockReturnValue(builder);
+  builder.select = vi.fn().mockReturnValue(builder);
+  builder.insert = vi.fn().mockReturnValue(builder);
+  builder.update = vi.fn().mockReturnValue(builder);
+  builder.upsert = vi.fn().mockReturnValue(builder);
+  builder.eq = vi.fn().mockReturnValue(builder);
+  builder.is = vi.fn().mockReturnValue(builder);
+  builder.not = vi.fn().mockReturnValue(builder);
+  builder.order = vi.fn().mockReturnValue(builder);
+  builder.limit = vi.fn().mockReturnValue(builder);
+  builder.single = vi.fn().mockResolvedValue({ data: null, error: null });
+  return builder;
+}
+
+import { SessionHost } from './session-host';
+
+describe('SessionHost', () => {
+  let sessionHost: SessionHost;
+  let mockQueryBuilder: ReturnType<typeof createMockQueryBuilder>;
+  let mockDataComposer: any;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    // Reset the mock backend manager events
+    mockBackendManager.removeAllListeners();
+    mockBackendManager.initialize.mockResolvedValue(undefined);
+    mockBackendManager.resumeSession.mockResolvedValue(true);
+
+    mockQueryBuilder = createMockQueryBuilder();
+    mockDataComposer = {
+      getClient: vi.fn().mockReturnValue(mockQueryBuilder),
+      repositories: {
+        users: { findById: vi.fn(), findByPlatformId: vi.fn() },
+        context: { findAllByUser: vi.fn() },
+        projects: { findAllByUser: vi.fn() },
+        sessionFocus: { findLatestByUser: vi.fn() },
+        memory: { recall: vi.fn(), getActiveSession: vi.fn() },
+        conversations: { findByPlatformChatId: vi.fn(), createConversation: vi.fn(), createMessage: vi.fn() },
+        activityStream: { getConversationHistory: vi.fn() },
+      },
+    };
+
+    sessionHost = new SessionHost({
+      backend: { primaryBackend: 'claude-code', backends: {} },
+      dataComposer: mockDataComposer,
+      agentId: 'myra',
+      maxContextTokens: 160000,
+    });
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  describe('Session Restoration on Startup', () => {
+    it('should restore Claude session from database on initialize', async () => {
+      // Mock: DB returns an active session with claude_session_id
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { claude_session_id: 'restored-session-xyz' },
+        error: null,
+      });
+
+      await sessionHost.initialize();
+
+      // Should have queried sessions table
+      expect(mockQueryBuilder.from).toHaveBeenCalledWith('sessions');
+      expect(mockQueryBuilder.eq).toHaveBeenCalledWith('agent_id', 'myra');
+
+      // Should have called resumeSession on backend manager
+      expect(mockBackendManager.resumeSession).toHaveBeenCalledWith('restored-session-xyz');
+    });
+
+    it('should not restore when no active session exists', async () => {
+      // Mock: DB returns no session
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: null,
+        error: { code: 'PGRST116', message: 'not found' },
+      });
+
+      await sessionHost.initialize();
+
+      // Should NOT call resumeSession
+      expect(mockBackendManager.resumeSession).not.toHaveBeenCalled();
+    });
+
+    it('should not restore when session has no claude_session_id', async () => {
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { claude_session_id: null },
+        error: null,
+      });
+
+      await sessionHost.initialize();
+
+      expect(mockBackendManager.resumeSession).not.toHaveBeenCalled();
+    });
+
+    it('should handle database errors gracefully during restoration', async () => {
+      mockQueryBuilder.single.mockRejectedValueOnce(new Error('Connection refused'));
+
+      // Should not throw — initialization should continue
+      await expect(sessionHost.initialize()).resolves.toBeUndefined();
+
+      // Backend should still be initialized
+      expect(mockBackendManager.initialize).toHaveBeenCalled();
+    });
+
+    it('should skip restoration when agentId is not set', async () => {
+      const hostWithoutAgent = new SessionHost({
+        backend: { primaryBackend: 'claude-code', backends: {} },
+        dataComposer: mockDataComposer,
+      });
+
+      await hostWithoutAgent.initialize();
+
+      // Should not query the database at all
+      expect(mockQueryBuilder.from).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Session Persistence', () => {
+    it('should persist claude_session_id when session:captured fires', async () => {
+      await sessionHost.initialize();
+
+      // Mock: DB finds an active PCP session
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'pcp-session-uuid' },
+        error: null,
+      });
+
+      // Simulate backend capturing a session
+      mockBackendManager.emit('session:captured', 'claude-sess-new-123');
+
+      // Wait for async handler
+      await vi.waitFor(() => {
+        expect(mockQueryBuilder.update).toHaveBeenCalledWith({
+          claude_session_id: 'claude-sess-new-123',
+          status: 'active',
+        });
+      });
+    });
+
+    it('should not crash when no active PCP session exists to update', async () => {
+      await sessionHost.initialize();
+
+      // Mock: no active session found
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: null,
+        error: { code: 'PGRST116', message: 'not found' },
+      });
+
+      // Should not throw
+      mockBackendManager.emit('session:captured', 'claude-orphan-sess');
+
+      // Wait for async handler to complete without error
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    it('should handle DB errors gracefully during persistence', async () => {
+      await sessionHost.initialize();
+
+      mockQueryBuilder.single.mockRejectedValueOnce(new Error('DB timeout'));
+
+      // Should not throw
+      mockBackendManager.emit('session:captured', 'claude-fail-sess');
+
+      await new Promise((r) => setTimeout(r, 10));
+    });
+  });
+
+  describe('Context Window Rotation', () => {
+    it('should rotate session when input tokens exceed maxContextTokens', async () => {
+      await sessionHost.initialize();
+
+      // Mock: DB finds session to mark as completed
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'session-to-rotate' },
+        error: null,
+      });
+
+      // Emit usage that exceeds the limit (160000)
+      mockBackendManager.emit('session:usage', {
+        inputTokens: 165000,
+        outputTokens: 40000,
+        messageInputTokens: 5000,
+        messageOutputTokens: 1000,
+      });
+
+      await vi.waitFor(() => {
+        // Should mark session as completed
+        expect(mockQueryBuilder.update).toHaveBeenCalledWith(
+          expect.objectContaining({ status: 'completed' })
+        );
+        // Should clear session on backend
+        expect(mockBackendManager.clearSession).toHaveBeenCalled();
+      });
+    });
+
+    it('should NOT rotate when tokens are below threshold', async () => {
+      await sessionHost.initialize();
+
+      mockBackendManager.emit('session:usage', {
+        inputTokens: 50000,
+        outputTokens: 10000,
+        messageInputTokens: 5000,
+        messageOutputTokens: 1000,
+      });
+
+      await new Promise((r) => setTimeout(r, 10));
+
+      expect(mockBackendManager.clearSession).not.toHaveBeenCalled();
+    });
+
+    it('should emit session:rotated event when rotation occurs', async () => {
+      await sessionHost.initialize();
+
+      const rotated: unknown[] = [];
+      sessionHost.on('session:rotated', (data) => rotated.push(data));
+
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'rotating-session' },
+        error: null,
+      });
+
+      mockBackendManager.emit('session:usage', {
+        inputTokens: 200000,
+        outputTokens: 50000,
+        messageInputTokens: 10000,
+        messageOutputTokens: 2000,
+      });
+
+      await vi.waitFor(() => {
+        expect(rotated.length).toBe(1);
+        expect(rotated[0]).toEqual({ agentId: 'myra' });
+      });
+    });
+
+    it('should respect custom maxContextTokens config', async () => {
+      const customHost = new SessionHost({
+        backend: { primaryBackend: 'claude-code', backends: {} },
+        dataComposer: mockDataComposer,
+        agentId: 'myra',
+        maxContextTokens: 50000, // Lower threshold
+      });
+
+      await customHost.initialize();
+
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'custom-session' },
+        error: null,
+      });
+
+      // 55k tokens should trigger rotation with 50k threshold
+      mockBackendManager.emit('session:usage', {
+        inputTokens: 55000,
+        outputTokens: 10000,
+        messageInputTokens: 5000,
+        messageOutputTokens: 1000,
+      });
+
+      await vi.waitFor(() => {
+        expect(mockBackendManager.clearSession).toHaveBeenCalled();
+      });
+    });
+  });
+
+  describe('Session Resumption E2E Flow', () => {
+    it('should persist session ID then restore it after simulated restart', async () => {
+      // === Phase 1: First boot, receive a session ===
+      await sessionHost.initialize();
+
+      // Session captured from Claude Code
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'pcp-session-1' },
+        error: null,
+      });
+
+      mockBackendManager.emit('session:captured', 'claude-sess-original');
+
+      await vi.waitFor(() => {
+        expect(mockQueryBuilder.update).toHaveBeenCalledWith({
+          claude_session_id: 'claude-sess-original',
+          status: 'active',
+        });
+      });
+
+      // === Phase 2: Simulate restart — create a new SessionHost ===
+      vi.clearAllMocks();
+      mockBackendManager.removeAllListeners();
+
+      const restartedHost = new SessionHost({
+        backend: { primaryBackend: 'claude-code', backends: {} },
+        dataComposer: mockDataComposer,
+        agentId: 'myra',
+      });
+
+      // Mock: DB returns the persisted session
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { claude_session_id: 'claude-sess-original' },
+        error: null,
+      });
+
+      await restartedHost.initialize();
+
+      // Should have resumed with the original session ID
+      expect(mockBackendManager.resumeSession).toHaveBeenCalledWith('claude-sess-original');
+    });
+  });
+});
