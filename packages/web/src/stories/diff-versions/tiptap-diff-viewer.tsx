@@ -202,7 +202,7 @@ const TiptapDiffViewer = ({ originalText = '', modifiedText = '' }) => {
   const [tiptapJson, setTiptapJson] = useState<string | TiptapContent>();
 
   useEffect(() => {
-    if (originalText && modifiedText) {
+    if (originalText !== undefined && modifiedText !== undefined) {
       const originalDoc = parseMarkdownToTiptapDoc(
         originalText,
         CommonExtensions,

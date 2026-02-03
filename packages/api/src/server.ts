@@ -291,7 +291,16 @@ function buildIdentityPrompt(): string {
 
 When bootstrapping via PCP, use \`agentId: "${agentId}"\`.
 Do NOT read \`.pcp/identity.json\` - your identity is set by the server process.
-Skip directly to Step 2 (load user config from ~/.pcp/config.json) and bootstrap as "${agentId}".`;
+Skip directly to Step 2 (load user config from ~/.pcp/config.json) and bootstrap as "${agentId}".
+
+## Tool Priority
+
+Always use **PCP cloud tools** (mcp__pcp__*) over Claude Code's built-in equivalents:
+- Tasks: use mcp__pcp__create_task, not TaskCreate
+- Memory: use mcp__pcp__remember, not local notes
+- Sessions: use mcp__pcp__start_session/log_session/end_session
+
+PCP tools persist across sessions and are shared with Conor and all SBs.`;
 }
 
 /**
@@ -369,9 +378,11 @@ Memory:
 - remember, recall, forget - Long-term memory management
 - bootstrap - Load identity and context at session start
 
-Task management:
-- create_task, list_tasks, update_task, complete_task - Manage tasks
+Task management (**USE THESE instead of Claude Code's built-in task tools**):
+- create_task, list_tasks, update_task, complete_task - Manage tasks (cloud-persisted)
 - get_task_stats - Get task statistics
+**IMPORTANT**: Always use PCP cloud tasks (mcp__pcp__create_task, etc.) over local/built-in task tools.
+PCP tasks persist across sessions and are visible to Conor and all SBs.
 
 Link management:
 - save_link, search_links, tag_link - Manage saved links
