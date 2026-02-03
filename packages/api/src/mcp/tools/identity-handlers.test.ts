@@ -159,7 +159,15 @@ describe('Identity Handlers', () => {
     });
 
     it('should throw on database error', async () => {
-      mockSupabase._setReturnData(null, { message: 'Database error' });
+      // First call (fetch existing) succeeds, second call (upsert) fails
+      let callCount = 0;
+      mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({ data: null, error: null });
+        }
+        return Promise.resolve({ data: null, error: { message: 'Database error' } });
+      });
 
       await expect(
         handleSaveIdentity(
@@ -172,6 +180,181 @@ describe('Identity Handlers', () => {
           mockDataComposer as never
         )
       ).rejects.toThrow('Failed to save identity: Database error');
+    });
+
+    describe('partial update field preservation', () => {
+      const existingRecord = {
+        id: 'identity-123',
+        user_id: 'user-123',
+        agent_id: 'myra',
+        name: 'Myra',
+        role: 'Messaging bridge',
+        description: 'A persistent messaging agent',
+        values: ['reliability', 'continuity'],
+        relationships: { wren: 'collaborator' },
+        capabilities: ['messaging', 'task orchestration'],
+        metadata: { lastReflectedAt: '2026-01-28T00:00:00Z' },
+        heartbeat: '# HEARTBEAT.md\n\nMyra heartbeat content',
+        soul: '# SOUL.md\n\nMyra soul content',
+        version: 3,
+        created_at: '2026-01-27T00:00:00Z',
+        updated_at: '2026-02-01T00:00:00Z',
+      };
+
+      const savedResult = {
+        ...existingRecord,
+        version: 4,
+        updated_at: '2026-02-03T00:00:00Z',
+      };
+
+      it('should preserve soul and heartbeat when not provided in update', async () => {
+        let callCount = 0;
+        mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.resolve({ data: existingRecord, error: null });
+          }
+          return Promise.resolve({ data: savedResult, error: null });
+        });
+
+        await handleSaveIdentity(
+          {
+            userId: 'user-123',
+            agentId: 'myra',
+            name: 'Myra',
+            role: 'Updated role',
+          },
+          mockDataComposer as never
+        );
+
+        const upsertCall = (mockSupabase._queryBuilder.upsert as ReturnType<typeof vi.fn>).mock.calls[0];
+        const upsertData = upsertCall[0];
+
+        expect(upsertData.soul).toBe(existingRecord.soul);
+        expect(upsertData.heartbeat).toBe(existingRecord.heartbeat);
+        expect(upsertData.description).toBe(existingRecord.description);
+        expect(upsertData.values).toEqual(existingRecord.values);
+        expect(upsertData.relationships).toEqual(existingRecord.relationships);
+        expect(upsertData.capabilities).toEqual(existingRecord.capabilities);
+        expect(upsertData.metadata).toEqual(existingRecord.metadata);
+      });
+
+      it('should update soul when explicitly provided without wiping heartbeat', async () => {
+        let callCount = 0;
+        mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.resolve({ data: existingRecord, error: null });
+          }
+          return Promise.resolve({ data: savedResult, error: null });
+        });
+
+        const newSoul = '# SOUL.md\n\nUpdated soul content';
+
+        await handleSaveIdentity(
+          {
+            userId: 'user-123',
+            agentId: 'myra',
+            name: 'Myra',
+            role: 'Messaging bridge',
+            soul: newSoul,
+          },
+          mockDataComposer as never
+        );
+
+        const upsertData = (mockSupabase._queryBuilder.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+        expect(upsertData.soul).toBe(newSoul);
+        expect(upsertData.heartbeat).toBe(existingRecord.heartbeat);
+      });
+
+      it('should update heartbeat when explicitly provided without wiping soul', async () => {
+        let callCount = 0;
+        mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.resolve({ data: existingRecord, error: null });
+          }
+          return Promise.resolve({ data: savedResult, error: null });
+        });
+
+        const newHeartbeat = '# HEARTBEAT.md\n\nUpdated heartbeat';
+
+        await handleSaveIdentity(
+          {
+            userId: 'user-123',
+            agentId: 'myra',
+            name: 'Myra',
+            role: 'Messaging bridge',
+            heartbeat: newHeartbeat,
+          },
+          mockDataComposer as never
+        );
+
+        const upsertData = (mockSupabase._queryBuilder.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+        expect(upsertData.heartbeat).toBe(newHeartbeat);
+        expect(upsertData.soul).toBe(existingRecord.soul);
+      });
+
+      it('should default optional fields to null/empty when no existing record', async () => {
+        let callCount = 0;
+        mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.resolve({ data: null, error: { code: 'PGRST116' } });
+          }
+          return Promise.resolve({ data: { ...savedResult, version: 1 }, error: null });
+        });
+
+        await handleSaveIdentity(
+          {
+            userId: 'user-123',
+            agentId: 'newagent',
+            name: 'New Agent',
+            role: 'Test role',
+          },
+          mockDataComposer as never
+        );
+
+        const upsertData = (mockSupabase._queryBuilder.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+        expect(upsertData.soul).toBeNull();
+        expect(upsertData.heartbeat).toBeNull();
+        expect(upsertData.description).toBeNull();
+      });
+
+      it('should preserve all optional fields when only updating name', async () => {
+        let callCount = 0;
+        mockSupabase._queryBuilder.single = vi.fn().mockImplementation(() => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.resolve({ data: existingRecord, error: null });
+          }
+          return Promise.resolve({ data: savedResult, error: null });
+        });
+
+        await handleSaveIdentity(
+          {
+            userId: 'user-123',
+            agentId: 'myra',
+            name: 'Myra Updated',
+            role: 'Messaging bridge',
+          },
+          mockDataComposer as never
+        );
+
+        const upsertData = (mockSupabase._queryBuilder.upsert as ReturnType<typeof vi.fn>).mock.calls[0][0];
+
+        expect(upsertData.name).toBe('Myra Updated');
+        expect(upsertData.soul).toBe(existingRecord.soul);
+        expect(upsertData.heartbeat).toBe(existingRecord.heartbeat);
+        expect(upsertData.description).toBe(existingRecord.description);
+        expect(upsertData.values).toEqual(existingRecord.values);
+        expect(upsertData.relationships).toEqual(existingRecord.relationships);
+        expect(upsertData.capabilities).toEqual(existingRecord.capabilities);
+        expect(upsertData.metadata).toEqual(existingRecord.metadata);
+      });
     });
   });
 

@@ -264,6 +264,20 @@ All tools support multiple identification methods:
 - Log errors with context
 - Return structured error responses
 
+### Upsert / Partial Update Safety
+- When building upsert or update objects, **never set optional fields to `null` just because they weren't provided**. Omitted fields should preserve their existing database values.
+- Use `undefined` checks (`field !== undefined`) to distinguish "not provided" from "explicitly cleared":
+  ```typescript
+  // WRONG: wipes existing value when field is omitted
+  soul: soul || null,
+
+  // RIGHT: preserves existing value when field is omitted
+  soul: soul !== undefined ? (soul || null) : (existing?.soul ?? null),
+  ```
+- Only set a field to `null` when the caller explicitly passes `null` (or an empty string that should clear the field).
+- For handlers that accept partial updates, fetch the existing record first and merge provided fields over it.
+- When adding new columns to a table, also update: (1) archive/history triggers, (2) history response mappings, (3) restore handlers.
+
 ## Environment Variables
 
 Required:

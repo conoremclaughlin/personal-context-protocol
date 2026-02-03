@@ -427,6 +427,10 @@ export async function handleGetIdentityHistory(
               values: row.values,
               relationships: row.relationships,
               capabilities: row.capabilities,
+              soul: row.soul,
+              heartbeat: row.heartbeat,
+              hasSoul: !!row.soul,
+              hasHeartbeat: !!row.heartbeat,
               changeType: row.change_type,
               archivedAt: row.archived_at,
               originalCreatedAt: row.created_at,
@@ -484,6 +488,8 @@ export async function handleRestoreIdentity(
       relationships: historyEntry.relationships,
       capabilities: historyEntry.capabilities,
       metadata: historyEntry.metadata,
+      soul: historyEntry.soul,
+      heartbeat: historyEntry.heartbeat,
     })
     .eq('id', current.id)
     .select()
