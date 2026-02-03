@@ -50,6 +50,7 @@ module.exports = {
         NODE_ENV: 'development',
         MCP_TRANSPORT: 'http',
         ENABLE_WHATSAPP: 'true',
+        AGENT_ID: 'myra',  // Identity for the Claude Code backend
       },
       max_restarts: 10,
       restart_delay: 1000,

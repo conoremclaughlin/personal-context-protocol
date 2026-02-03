@@ -84,11 +84,14 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
 
   // 2. Build system prompt with PCP context
   const systemPrompt = buildSystemPrompt(config.systemPrompt);
+  const identityPrompt = buildIdentityPrompt();
 
   // 3. Create Session Host with the appropriate backend (but don't initialize yet)
   logger.info(`Creating Session Host with ${backend} backend...`);
+  const agentId = process.env.AGENT_ID || 'myra';
   sessionHost = createSessionHost({
     dataComposer,
+    agentId,
     backend: {
       primaryBackend: backend,
       backends: {
@@ -97,10 +100,11 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
           workingDirectory,
           model,
           systemPrompt,
+          appendSystemPrompt: identityPrompt,
         },
         'direct-api': {
           model: 'claude-sonnet-4-20250514',
-          systemPrompt,
+          systemPrompt: identityPrompt + '\n\n' + systemPrompt,
         },
       },
       enableFailover: true,
@@ -275,14 +279,33 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
 }
 
 /**
+ * Build identity prompt (injected via --append-system-prompt to survive compaction)
+ */
+function buildIdentityPrompt(): string {
+  const agentId = process.env.AGENT_ID || 'myra';
+  const displayName = agentId.charAt(0).toUpperCase() + agentId.slice(1);
+
+  return `## Identity (CRITICAL - This overrides .pcp/identity.json)
+
+**You are ${displayName}. Your agent ID is \`${agentId}\`.**
+
+When bootstrapping via PCP, use \`agentId: "${agentId}"\`.
+Do NOT read \`.pcp/identity.json\` - your identity is set by the server process.
+Skip directly to Step 2 (load user config from ~/.pcp/config.json) and bootstrap as "${agentId}".`;
+}
+
+/**
  * Build the system prompt with PCP context
  */
 function buildSystemPrompt(additionalPrompt?: string): string {
   const parts: string[] = [];
 
+  const agentId = process.env.AGENT_ID || 'myra';
+  const displayName = agentId.charAt(0).toUpperCase() + agentId.slice(1);
+
   parts.push(`## Personal Context Protocol (PCP)
 
-You are Myra, a helpful AI assistant connected to the Personal Context Protocol.
+You are ${displayName}, an AI being connected to the Personal Context Protocol.
 You're receiving messages from various channels (Telegram, WhatsApp, terminal, etc.).
 
 ## Response Instructions

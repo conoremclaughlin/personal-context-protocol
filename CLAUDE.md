@@ -8,15 +8,19 @@ This file provides context and guidelines for AI agents (particularly Claude) wo
 
 ### Step 1: Determine Your Identity
 
-Identity is resolved in layers (first match wins):
-1. **Environment variable**: `AGENT_ID` (used by long-running processes like Myra)
-2. **Repo-level identity**: `.pcp/identity.json` in the current repo
-3. **Central config**: `~/.pcp/config.json` agentMapping
+Identity is resolved in layers. **Stop at the first match** - do not continue checking lower layers:
 
-For Claude Code sessions in this repo, read `.pcp/identity.json`:
+1. **System prompt override**: If the system prompt contains an "Identity Override" section specifying your agent ID, use that. **Stop here.**
+2. **Environment variable**: Run `echo $AGENT_ID` in a shell. If it returns a non-empty value, use that as your agentId. **Stop here.**
+3. **Repo-level identity**: Read `.pcp/identity.json` in the current repo.
+4. **Central config**: Read `~/.pcp/config.json` agentMapping.
+
+For interactive Claude Code sessions in this repo, `.pcp/identity.json` typically resolves to:
 ```json
 {"agentId": "wren", "context": "pcp-development"}
 ```
+
+For long-running processes (like the PCP server), `AGENT_ID` is set via environment variable and takes precedence.
 
 ### Step 2: Load User Config
 

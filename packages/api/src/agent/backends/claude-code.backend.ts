@@ -43,6 +43,8 @@ export interface ClaudeCodeConfig extends BackendConfig {
   workingDirectory?: string;
   model?: string;
   systemPrompt?: string;
+  /** Appended to Claude Code's default system prompt (survives compaction/resume). */
+  appendSystemPrompt?: string;
   timeout?: number;
   /** Disable auto-response emission. Set true when agent has MCP tools like send_response. */
   disableAutoResponse?: boolean;
@@ -315,6 +317,15 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       writeFileSync(this.systemPromptFile, this.config.systemPrompt, 'utf-8');
       args.push('--system-prompt', this.systemPromptFile);
       logger.debug(`System prompt written to: ${this.systemPromptFile}`);
+    }
+
+    if (this.config.appendSystemPrompt) {
+      // --append-system-prompt is re-injected on every invocation (including --resume),
+      // so it survives compaction. Use this for identity and critical directives.
+      const appendFile = join(tmpdir(), `pcp-append-prompt-${Date.now()}.md`);
+      writeFileSync(appendFile, this.config.appendSystemPrompt, 'utf-8');
+      args.push('--append-system-prompt', appendFile);
+      logger.debug(`Append system prompt written to: ${appendFile}`);
     }
 
     if (this.sessionId) {
