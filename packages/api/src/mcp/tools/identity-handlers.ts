@@ -148,19 +148,27 @@ export async function handleSaveIdentity(
 
   const { agentId, name, role, description, values, relationships, capabilities, metadata, heartbeat, soul, syncToFile } = params;
 
-  // Build update object, only including fields that were provided
+  // Fetch existing record so omitted optional fields are preserved
+  const { data: existing } = await supabase
+    .from('agent_identities')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('agent_id', agentId)
+    .single();
+
+  // Build upsert object, preserving existing values for omitted fields
   const upsertData: TablesInsert<'agent_identities'> = {
     user_id: user.id,
     agent_id: agentId,
     name,
     role,
-    description: description || null,
-    values: (values || []) as unknown as Json,
-    relationships: (relationships || {}) as unknown as Json,
-    capabilities: (capabilities || []) as unknown as Json,
-    metadata: (metadata || {}) as unknown as Json,
-    heartbeat: heartbeat || null,
-    soul: soul || null,
+    description: description !== undefined ? (description || null) : (existing?.description ?? null),
+    values: (values !== undefined ? values : (existing?.values as unknown as string[] ?? [])) as unknown as Json,
+    relationships: (relationships !== undefined ? relationships : (existing?.relationships as unknown as Record<string, string> ?? {})) as unknown as Json,
+    capabilities: (capabilities !== undefined ? capabilities : (existing?.capabilities as unknown as string[] ?? [])) as unknown as Json,
+    metadata: (metadata !== undefined ? metadata : (existing?.metadata as unknown as Record<string, unknown> ?? {})) as unknown as Json,
+    heartbeat: heartbeat !== undefined ? (heartbeat || null) : (existing?.heartbeat ?? null),
+    soul: soul !== undefined ? (soul || null) : (existing?.soul ?? null),
   };
 
   // Use upsert to handle both create and update

@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { History, Brain, Sparkles, FileText, User, Heart, Zap } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -147,40 +146,34 @@ function UserIdentityCard({ userIdentity }: { userIdentity: UserIdentity }) {
         </div>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue={hasUserProfile ? 'user' : 'values'} className="w-full">
-          <TabsList className="mb-4">
-            {hasUserProfile && (
-              <TabsTrigger value="user" className="flex items-center gap-1">
-                <User className="h-4 w-4" />
-                USER.md
-              </TabsTrigger>
-            )}
-            {hasValues && (
-              <TabsTrigger value="values" className="flex items-center gap-1">
-                <Heart className="h-4 w-4" />
-                VALUES.md
-              </TabsTrigger>
-            )}
-          </TabsList>
+        <div className="space-y-6">
           {hasUserProfile && (
-            <TabsContent value="user">
-              <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+            <div className="rounded-lg border border-gray-200 bg-gray-50/30">
+              <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+                <User className="h-4 w-4 text-gray-600" />
+                <span className="font-mono text-sm font-medium">USER.md</span>
+              </div>
+              <div className="p-4 prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {userIdentity.userProfileMd || ''}
                 </ReactMarkdown>
               </div>
-            </TabsContent>
+            </div>
           )}
           {hasValues && (
-            <TabsContent value="values">
-              <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+            <div className="rounded-lg border border-gray-200 bg-gray-50/30">
+              <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+                <Heart className="h-4 w-4 text-gray-600" />
+                <span className="font-mono text-sm font-medium">VALUES.md</span>
+              </div>
+              <div className="p-4 prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {userIdentity.sharedValuesMd || ''}
                 </ReactMarkdown>
               </div>
-            </TabsContent>
+            </div>
           )}
-        </Tabs>
+        </div>
       </CardContent>
     </Card>
   );
@@ -232,51 +225,40 @@ function IdentityCard({ identity }: { identity: Identity }) {
         </div>
       </CardHeader>
       <CardContent>
-        {(identity.hasSoul || identity.hasHeartbeat) ? (
-          <Tabs defaultValue="identity" className="w-full">
-            <TabsList className="mb-4">
-              <TabsTrigger value="identity" className="flex items-center gap-1">
-                <FileText className="h-4 w-4" />
-                Identity
-              </TabsTrigger>
-              {identity.hasSoul && (
-                <TabsTrigger value="soul" className="flex items-center gap-1">
-                  <Sparkles className="h-4 w-4" />
-                  Soul
-                </TabsTrigger>
-              )}
-              {identity.hasHeartbeat && (
-                <TabsTrigger value="heartbeat" className="flex items-center gap-1">
-                  <Zap className="h-4 w-4" />
-                  Heartbeat
-                </TabsTrigger>
-              )}
-            </TabsList>
-            <TabsContent value="identity">
-              <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{identityMarkdown}</ReactMarkdown>
-              </div>
-            </TabsContent>
-            {identity.hasSoul && (
-              <TabsContent value="soul">
-                <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{identity.soul || '*No soul content yet.*'}</ReactMarkdown>
-                </div>
-              </TabsContent>
-            )}
-            {identity.hasHeartbeat && (
-              <TabsContent value="heartbeat">
-                <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{identity.heartbeat || '*No heartbeat content yet.*'}</ReactMarkdown>
-                </div>
-              </TabsContent>
-            )}
-          </Tabs>
-        ) : (
-          <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{identityMarkdown}</ReactMarkdown>
+        <div className="space-y-6">
+          {/* IDENTITY.md */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/30">
+            <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+              <FileText className="h-4 w-4 text-gray-600" />
+              <span className="font-mono text-sm font-medium">IDENTITY.md</span>
+            </div>
+            <div className="p-4 prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{identityMarkdown}</ReactMarkdown>
+            </div>
           </div>
-        )}
+
+          {/* SOUL.md */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/30">
+            <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+              <Sparkles className="h-4 w-4 text-amber-500" />
+              <span className="font-mono text-sm font-medium">SOUL.md</span>
+            </div>
+            <div className="p-4 prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{identity.soul || '*No soul content yet.*'}</ReactMarkdown>
+            </div>
+          </div>
+
+          {/* HEARTBEAT.md */}
+          <div className="rounded-lg border border-gray-200 bg-gray-50/30">
+            <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+              <Zap className="h-4 w-4 text-blue-500" />
+              <span className="font-mono text-sm font-medium">HEARTBEAT.md</span>
+            </div>
+            <div className="p-4 prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2 prose-ul:my-2 prose-li:my-0">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{identity.heartbeat || '*No heartbeat content yet.*'}</ReactMarkdown>
+            </div>
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

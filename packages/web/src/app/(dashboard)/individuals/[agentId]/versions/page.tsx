@@ -245,88 +245,82 @@ export default function VersionExplorerPage() {
                   {/* Show all changed files like a git diff */}
                   <div className="space-y-6">
                     {/* IDENTITY.md */}
-                    {hasIdentity && (
-                      <div className={clsx(
-                        'rounded-lg border',
-                        identityChanged ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200 bg-gray-50/30'
-                      )}>
-                        <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
-                          <FileText className="h-4 w-4 text-gray-600" />
-                          <span className="font-mono text-sm font-medium">IDENTITY.md</span>
-                          {identityChanged ? (
-                            <Badge variant="outline" className="ml-auto text-xs bg-amber-100">Changed</Badge>
-                          ) : (
-                            <Badge variant="outline" className="ml-auto text-xs text-gray-400">Unchanged</Badge>
-                          )}
-                        </div>
-                        <div className="p-4">
-                          {identityChanged ? (
-                            <MarkdownVersionDiff
-                              currentMarkdown={currentIdentityMd}
-                              previousMarkdown={prevIdentityMd}
-                            />
-                          ) : (
-                            <p className="text-sm text-gray-500 italic">No changes in this file</p>
-                          )}
-                        </div>
+                    <div className={clsx(
+                      'rounded-lg border',
+                      identityChanged ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200 bg-gray-50/30'
+                    )}>
+                      <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+                        <FileText className="h-4 w-4 text-gray-600" />
+                        <span className="font-mono text-sm font-medium">IDENTITY.md</span>
+                        {identityChanged ? (
+                          <Badge variant="outline" className="ml-auto text-xs bg-amber-100">Changed</Badge>
+                        ) : (
+                          <Badge variant="outline" className="ml-auto text-xs text-gray-400">Unchanged</Badge>
+                        )}
                       </div>
-                    )}
+                      <div className="p-4">
+                        {identityChanged ? (
+                          <MarkdownVersionDiff
+                            currentMarkdown={currentIdentityMd}
+                            previousMarkdown={prevIdentityMd}
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-500 italic">No changes in this file</p>
+                        )}
+                      </div>
+                    </div>
 
                     {/* SOUL.md */}
-                    {hasSoul && (
-                      <div className={clsx(
-                        'rounded-lg border',
-                        soulChanged ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200 bg-gray-50/30'
-                      )}>
-                        <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
-                          <Sparkles className="h-4 w-4 text-amber-500" />
-                          <span className="font-mono text-sm font-medium">SOUL.md</span>
-                          {soulChanged ? (
-                            <Badge variant="outline" className="ml-auto text-xs bg-amber-100">Changed</Badge>
-                          ) : (
-                            <Badge variant="outline" className="ml-auto text-xs text-gray-400">Unchanged</Badge>
-                          )}
-                        </div>
-                        <div className="p-4">
-                          {soulChanged ? (
-                            <MarkdownVersionDiff
-                              currentMarkdown={selectedVersion.soul || ''}
-                              previousMarkdown={comparisonVersion.soul || ''}
-                            />
-                          ) : (
-                            <p className="text-sm text-gray-500 italic">No changes in this file</p>
-                          )}
-                        </div>
+                    <div className={clsx(
+                      'rounded-lg border',
+                      soulChanged ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200 bg-gray-50/30'
+                    )}>
+                      <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+                        <Sparkles className="h-4 w-4 text-amber-500" />
+                        <span className="font-mono text-sm font-medium">SOUL.md</span>
+                        {soulChanged ? (
+                          <Badge variant="outline" className="ml-auto text-xs bg-amber-100">Changed</Badge>
+                        ) : (
+                          <Badge variant="outline" className="ml-auto text-xs text-gray-400">Unchanged</Badge>
+                        )}
                       </div>
-                    )}
+                      <div className="p-4">
+                        {soulChanged ? (
+                          <MarkdownVersionDiff
+                            currentMarkdown={selectedVersion?.soul || ''}
+                            previousMarkdown={comparisonVersion?.soul || ''}
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-500 italic">No changes in this file</p>
+                        )}
+                      </div>
+                    </div>
 
                     {/* HEARTBEAT.md */}
-                    {hasHeartbeat && (
-                      <div className={clsx(
-                        'rounded-lg border',
-                        heartbeatChanged ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200 bg-gray-50/30'
-                      )}>
-                        <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
-                          <Zap className="h-4 w-4 text-blue-500" />
-                          <span className="font-mono text-sm font-medium">HEARTBEAT.md</span>
-                          {heartbeatChanged ? (
-                            <Badge variant="outline" className="ml-auto text-xs bg-amber-100">Changed</Badge>
-                          ) : (
-                            <Badge variant="outline" className="ml-auto text-xs text-gray-400">Unchanged</Badge>
-                          )}
-                        </div>
-                        <div className="p-4">
-                          {heartbeatChanged ? (
-                            <MarkdownVersionDiff
-                              currentMarkdown={selectedVersion.heartbeat || ''}
-                              previousMarkdown={comparisonVersion.heartbeat || ''}
-                            />
-                          ) : (
-                            <p className="text-sm text-gray-500 italic">No changes in this file</p>
-                          )}
-                        </div>
+                    <div className={clsx(
+                      'rounded-lg border',
+                      heartbeatChanged ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200 bg-gray-50/30'
+                    )}>
+                      <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
+                        <Zap className="h-4 w-4 text-blue-500" />
+                        <span className="font-mono text-sm font-medium">HEARTBEAT.md</span>
+                        {heartbeatChanged ? (
+                          <Badge variant="outline" className="ml-auto text-xs bg-amber-100">Changed</Badge>
+                        ) : (
+                          <Badge variant="outline" className="ml-auto text-xs text-gray-400">Unchanged</Badge>
+                        )}
                       </div>
-                    )}
+                      <div className="p-4">
+                        {heartbeatChanged ? (
+                          <MarkdownVersionDiff
+                            currentMarkdown={selectedVersion?.heartbeat || ''}
+                            previousMarkdown={comparisonVersion?.heartbeat || ''}
+                          />
+                        ) : (
+                          <p className="text-sm text-gray-500 italic">No changes in this file</p>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </>
               ) : (
