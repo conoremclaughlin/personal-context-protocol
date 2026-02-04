@@ -136,8 +136,9 @@ export interface BackendHealth {
   uptime?: number;
   messageCount?: number;
   error?: string;
-  totalInputTokens?: number;
-  totalOutputTokens?: number;
+  currentContextTokens?: number;
+  cumulativeInputTokens?: number;
+  cumulativeOutputTokens?: number;
 }
 
 /**

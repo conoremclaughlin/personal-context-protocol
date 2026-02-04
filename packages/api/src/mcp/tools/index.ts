@@ -206,6 +206,16 @@ import {
   getSessionContextSchema,
 } from './activity-stream-handlers';
 
+import {
+  handleCreateWorkspace,
+  handleListWorkspaces,
+  handleGetWorkspace,
+  handleUpdateWorkspace,
+  handleCloseWorkspace,
+  handleAdoptWorkspace,
+  workspaceToolDefinitions,
+} from './workspace-handlers';
+
 // Re-export for external use
 export { setResponseCallback, addPendingMessage } from './response-handlers';
 export { setTelegramListener, registerChannelListener } from './chat-context-handlers';
@@ -2684,6 +2694,139 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleGetSessionContext(args, dataComposer);
       } catch (error) {
         logger.error('Error in get_session_context:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // WORKSPACE TOOLS (git worktree management)
+  // =====================================================
+
+  server.registerTool(
+    'create_workspace',
+    {
+      description: `Create a new git worktree workspace for isolated parallel work. Sets up the worktree, installs dependencies, and tracks it in the database.
+
+Branch naming: {agentId}/{type}/{slug} (e.g., wren/feat/session-monitoring)
+Path: {parentDir}/{repoBaseName}--{slug}
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: workspaceToolDefinitions[0].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleCreateWorkspace(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in create_workspace:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_workspaces',
+    {
+      description: `List workspaces for the current user. By default excludes cleaned workspaces. Can filter by agent and status.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: workspaceToolDefinitions[1].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleListWorkspaces(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_workspaces:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_workspace',
+    {
+      description: `Get full details of a workspace by its ID, branch name, or worktree path.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: workspaceToolDefinitions[2].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleGetWorkspace(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_workspace:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'update_workspace',
+    {
+      description: `Update a workspace status, purpose, or session linkage. Use unlinkSession to detach the current session and set status to idle.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: workspaceToolDefinitions[3].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleUpdateWorkspace(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in update_workspace:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'close_workspace',
+    {
+      description: `Close a workspace by removing its git worktree, optionally deleting the branch, and marking it as cleaned in the database.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: workspaceToolDefinitions[4].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleCloseWorkspace(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in close_workspace:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'adopt_workspace',
+    {
+      description: `Adopt an existing workspace by linking a new session to it and setting it to active. Useful when resuming work in a previously created worktree.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: workspaceToolDefinitions[5].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleAdoptWorkspace(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in adopt_workspace:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,

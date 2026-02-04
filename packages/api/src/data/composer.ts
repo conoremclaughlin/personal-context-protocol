@@ -14,6 +14,7 @@ import { AgentSessionsRepository } from './repositories/agent-sessions.repositor
 import { ProjectTasksRepository } from './repositories/project-tasks.repository';
 import { MemoryRepository } from './repositories/memory-repository';
 import { ActivityStreamRepository } from './repositories/activity-stream.repository';
+import { WorkspacesRepository } from './repositories/workspaces.repository';
 import { logger } from '../utils/logger';
 
 export class DataComposer {
@@ -33,6 +34,7 @@ export class DataComposer {
     projectTasks: ProjectTasksRepository;
     memory: MemoryRepository;
     activityStream: ActivityStreamRepository;
+    workspaces: WorkspacesRepository;
   };
 
   private constructor(supabaseClient: SupabaseClient<Database>) {
@@ -53,6 +55,7 @@ export class DataComposer {
       projectTasks: new ProjectTasksRepository(supabaseClient),
       memory: new MemoryRepository(supabaseClient),
       activityStream: new ActivityStreamRepository(supabaseClient),
+      workspaces: new WorkspacesRepository(supabaseClient),
     };
 
     logger.info('Data composer initialized with all repositories');

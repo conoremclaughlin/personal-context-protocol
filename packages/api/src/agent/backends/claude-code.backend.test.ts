@@ -329,12 +329,12 @@ describe('Session Continuity', () => {
     expect(backend.getSessionId()).toBe('sess-abc123');
   });
 
-  it('should track token usage cumulatively and emit session:usage', async () => {
+  it('should track per-turn context tokens and cumulative totals via session:usage', async () => {
     const { ClaudeCodeBackend } = await import('./claude-code.backend');
     const backend = new ClaudeCodeBackend({ type: 'claude-code' });
     await backend.initialize();
 
-    const usageEvents: Array<{ inputTokens: number; outputTokens: number }> = [];
+    const usageEvents: Array<Record<string, number>> = [];
     backend.on('session:usage', (usage) => usageEvents.push(usage));
 
     // First message
@@ -350,10 +350,12 @@ describe('Session Continuity', () => {
     await msg1;
 
     expect(usageEvents.length).toBe(1);
-    expect(usageEvents[0].inputTokens).toBe(1000);
-    expect(usageEvents[0].outputTokens).toBe(500);
+    // contextTokens = latest turn's input (proxy for context window size)
+    expect(usageEvents[0].contextTokens).toBe(1000);
+    expect(usageEvents[0].cumulativeInputTokens).toBe(1000);
+    expect(usageEvents[0].cumulativeOutputTokens).toBe(500);
 
-    // Second message — tokens should accumulate
+    // Second message — contextTokens reflects THIS turn, cumulative grows
     (spawn as Mock).mockReturnValue(Object.assign(new EventEmitter(), {
       stdout: new EventEmitter(),
       stderr: new EventEmitter(),
@@ -375,8 +377,11 @@ describe('Session Continuity', () => {
     await msg2;
 
     expect(usageEvents.length).toBe(2);
-    expect(usageEvents[1].inputTokens).toBe(3000); // 1000 + 2000
-    expect(usageEvents[1].outputTokens).toBe(1300); // 500 + 800
+    // contextTokens = this turn's input only (NOT cumulative)
+    expect(usageEvents[1].contextTokens).toBe(2000);
+    // cumulative totals grow across turns
+    expect(usageEvents[1].cumulativeInputTokens).toBe(3000); // 1000 + 2000
+    expect(usageEvents[1].cumulativeOutputTokens).toBe(1300); // 500 + 800
   });
 
   it('should include token usage in health report', async () => {
@@ -396,8 +401,9 @@ describe('Session Continuity', () => {
     await msg;
 
     const health = backend.getHealth();
-    expect(health.totalInputTokens).toBe(5000);
-    expect(health.totalOutputTokens).toBe(2000);
+    expect(health.currentContextTokens).toBe(5000);
+    expect(health.cumulativeInputTokens).toBe(5000);
+    expect(health.cumulativeOutputTokens).toBe(2000);
   });
 
   it('should clear sessionId and token counters on clearSession()', async () => {
@@ -418,14 +424,15 @@ describe('Session Continuity', () => {
     await msg;
 
     expect(backend.getSessionId()).toBe('sess-xyz');
-    expect(backend.getHealth().totalInputTokens).toBe(1000);
+    expect(backend.getHealth().currentContextTokens).toBe(1000);
 
     // Clear session
     backend.clearSession();
 
     expect(backend.getSessionId()).toBeNull();
-    expect(backend.getHealth().totalInputTokens).toBe(0);
-    expect(backend.getHealth().totalOutputTokens).toBe(0);
+    expect(backend.getHealth().currentContextTokens).toBe(0);
+    expect(backend.getHealth().cumulativeInputTokens).toBe(0);
+    expect(backend.getHealth().cumulativeOutputTokens).toBe(0);
   });
 
   it('should clear pendingMessage when process closes', async () => {

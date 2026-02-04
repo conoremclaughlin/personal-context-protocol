@@ -21,13 +21,25 @@ import type {
   InjectedContext,
 } from '../types';
 
+interface ClaudeContentBlock {
+  type: string;
+  text?: string;
+  // tool_use blocks
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  // tool_result blocks
+  tool_use_id?: string;
+  content?: string | Array<{ type: string; text?: string }>;
+}
+
 interface ClaudeStreamMessage {
   type: 'system' | 'assistant' | 'result' | 'user' | 'error';
   subtype?: string;
   session_id?: string;
   result?: string;
   message?: {
-    content: Array<{ type: string; text?: string }>;
+    content: ClaudeContentBlock[];
   };
   total_cost_usd?: number;
   usage?: {
@@ -72,9 +84,10 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
   // Track pending message for response routing
   private pendingMessage: AgentMessage | null = null;
 
-  // Track cumulative token usage for context window management
-  private totalInputTokens = 0;
-  private totalOutputTokens = 0;
+  // Token tracking: per-turn for context window management, cumulative for monitoring
+  private currentContextTokens = 0;   // Latest turn's input tokens ≈ current context window size
+  private cumulativeInputTokens = 0;  // Running total across all turns (for monitoring/billing)
+  private cumulativeOutputTokens = 0; // Running total across all turns
 
   // Temp file for system prompt
   private systemPromptFile: string | null = null;
@@ -182,31 +195,62 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
               this.emit('session:captured', this.sessionId);
             }
 
-            // Capture response text
+            // Capture response text and tool use from assistant messages
             if (parsed.type === 'assistant' && parsed.message?.content) {
               for (const block of parsed.message.content) {
                 if (block.type === 'text' && block.text) {
                   responseContent += block.text;
                   this.emit('text', block.text);
+                } else if (block.type === 'tool_use' && block.name) {
+                  this.emit('tool:call', {
+                    toolUseId: block.id,
+                    toolName: block.name,
+                    input: block.input || {},
+                  });
+                }
+              }
+            }
+
+            // Capture tool results from user messages (Claude Code feeds these back)
+            if (parsed.type === 'user' && parsed.message?.content) {
+              for (const block of parsed.message.content) {
+                if (block.type === 'tool_result' && block.tool_use_id) {
+                  const resultContent = typeof block.content === 'string'
+                    ? block.content
+                    : Array.isArray(block.content)
+                      ? block.content.filter((b) => b.type === 'text').map((b) => b.text).join('')
+                      : '';
+                  this.emit('tool:result', {
+                    toolUseId: block.tool_use_id,
+                    content: resultContent,
+                  });
                 }
               }
             }
 
             // Handle result
             if (parsed.type === 'result') {
-              // Accumulate token usage for context window tracking.
-              // Claude Code uses prompt caching, so the full context window is:
+              // Track token usage for context window management.
+              // With --resume, each turn's input includes the full conversation, so
+              // messageInputTokens ≈ current context window size.
+              // Claude Code uses prompt caching, so full context window tokens =
               //   input_tokens (non-cached) + cache_read + cache_creation
               if (parsed.usage) {
                 const messageInputTokens = parsed.usage.input_tokens
                   + (parsed.usage.cache_read_input_tokens ?? 0)
                   + (parsed.usage.cache_creation_input_tokens ?? 0);
                 const messageOutputTokens = parsed.usage.output_tokens;
-                this.totalInputTokens += messageInputTokens;
-                this.totalOutputTokens += messageOutputTokens;
+                // Current context window = this turn's total input (NOT cumulative)
+                this.currentContextTokens = messageInputTokens;
+                this.cumulativeInputTokens += messageInputTokens;
+                this.cumulativeOutputTokens += messageOutputTokens;
                 this.emit('session:usage', {
-                  inputTokens: this.totalInputTokens,
-                  outputTokens: this.totalOutputTokens,
+                  // Context window size (for compaction decisions)
+                  contextTokens: this.currentContextTokens,
+                  // Cumulative totals (for monitoring/billing)
+                  cumulativeInputTokens: this.cumulativeInputTokens,
+                  cumulativeOutputTokens: this.cumulativeOutputTokens,
+                  // Per-turn breakdown
                   messageInputTokens,
                   messageOutputTokens,
                 });
@@ -312,8 +356,9 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       uptime: this.startTime ? Date.now() - this.startTime.getTime() : undefined,
       messageCount: this.messageCount,
       error: this.lastError || undefined,
-      totalInputTokens: this.totalInputTokens,
-      totalOutputTokens: this.totalOutputTokens,
+      currentContextTokens: this.currentContextTokens,
+      cumulativeInputTokens: this.cumulativeInputTokens,
+      cumulativeOutputTokens: this.cumulativeOutputTokens,
     };
   }
 
@@ -353,8 +398,9 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
    */
   clearSession(): void {
     this.sessionId = null;
-    this.totalInputTokens = 0;
-    this.totalOutputTokens = 0;
+    this.currentContextTokens = 0;
+    this.cumulativeInputTokens = 0;
+    this.cumulativeOutputTokens = 0;
   }
 
   private buildArgs(): string[] {
@@ -558,14 +604,31 @@ export class ClaudeCodeBackend extends EventEmitter implements AgentBackend {
       }
     }
 
+    // Recent conversation history (provides continuity across session rotations)
+    if (context.conversationHistory && context.conversationHistory.length > 0) {
+      sections.push('');
+      sections.push('## Recent Conversation');
+      sections.push('Recent messages from the activity stream (for continuity):');
+      for (const msg of context.conversationHistory) {
+        const direction = msg.direction === 'in' ? 'User' : 'You';
+        const time = new Date(msg.timestamp).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+        const preview = msg.content.length > 300 ? msg.content.substring(0, 300) + '...' : msg.content;
+        sections.push(`- [${time}] ${direction}: ${preview}`);
+      }
+    }
+
+    // Recovery hint
+    sections.push('');
+    sections.push('## Context Recovery');
+    sections.push('If you need more context from previous conversations, use `recall` to search memories or `get_inbox` to check for recent messages from other agents.');
+
     sections.push('</user-context>');
     return sections.join('\n');
   }
 
   /**
    * Format minimal context for resuming sessions
-   * Only includes time (which changes) and a brief identity reminder
-   * Full context is already in the conversation history from the first message
+   * Includes time, identity reminder, and recent conversation for safety
    */
   private formatMinimalContext(context: InjectedContext): string {
     const parts: string[] = [];

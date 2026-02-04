@@ -45,7 +45,7 @@ describe('Compaction (end-to-end)', () => {
     // Debug: log token usage and lifecycle events
     const backendManager = (sessionHost as any).backendManager;
     backendManager.on('session:usage', (usage: any) => {
-      console.log(`[TEST] session:usage — input: ${usage.inputTokens}, output: ${usage.outputTokens}`);
+      console.log(`[TEST] session:usage — context: ${usage.contextTokens}, cumulative: ${usage.cumulativeInputTokens}, output: ${usage.cumulativeOutputTokens}`);
     });
     sessionHost.on('session:compactionStarted', () => console.log('[TEST] compaction started'));
     sessionHost.on('session:compactionComplete', () => console.log('[TEST] compaction complete'));

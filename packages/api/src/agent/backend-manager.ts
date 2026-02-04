@@ -276,6 +276,14 @@ export class BackendManager extends EventEmitter {
     backend.on('session:usage', (usage: unknown) => {
       this.emit('session:usage', usage);
     });
+
+    backend.on('tool:call', (data: unknown) => {
+      this.emit('tool:call', data);
+    });
+
+    backend.on('tool:result', (data: unknown) => {
+      this.emit('tool:result', data);
+    });
   }
 
   private async activateBackend(type: BackendType): Promise<void> {

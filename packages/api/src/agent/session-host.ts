@@ -11,6 +11,7 @@
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger';
 import type { DataComposer } from '../data/composer';
+import type { Json } from '../data/supabase/types';
 import type { AgentMessage, AgentResponse, ChannelType, ResponseHandler, InjectedContext } from './types';
 import { BackendManager, createBackendManager, BackendManagerConfig } from './backend-manager';
 import { setResponseCallback, addPendingMessage } from '../mcp/tools/response-handlers';
@@ -90,6 +91,12 @@ export class SessionHost extends EventEmitter {
   private hardRotationThreshold: number;
   private compactionInProgress = false;
 
+  // Current message context for activity stream persistence
+  private currentMessageUserId: string | null = null;
+  private currentMessageChannel: string | null = null;
+  private currentMessageChatId: string | null = null;
+  private currentSessionId: string | null = null;
+
   constructor(config: SessionHostConfig) {
     super();
     this.dataComposer = config.dataComposer;
@@ -97,9 +104,9 @@ export class SessionHost extends EventEmitter {
     this.disableContextInjection = config.disableContextInjection ?? false;
     this.agentId = config.agentId;
     this.registeredAgents = config.registeredAgents || [];
-    this.maxContextTokens = config.maxContextTokens ?? 160000; // ~80% of 200k for Opus
-    this.compactionThreshold = config.compactionThreshold ?? Math.floor(this.maxContextTokens * 0.75);
-    this.hardRotationThreshold = config.hardRotationThreshold ?? Math.floor(this.maxContextTokens * 0.85);
+    this.maxContextTokens = config.maxContextTokens ?? 200000; // 200k context window for Opus
+    this.compactionThreshold = config.compactionThreshold ?? Math.floor(this.maxContextTokens * 0.85); // ~170k default, leaves room for compaction
+    this.hardRotationThreshold = config.hardRotationThreshold ?? Math.floor(this.maxContextTokens * 0.95); // ~190k default, safety net
 
     // Create backend manager
     this.backendManager = createBackendManager(config.backend);
@@ -490,6 +497,11 @@ export class SessionHost extends EventEmitter {
 
       message.injectedContext = await this.getInjectedContext(userId, platform, platformId, conversationId);
     }
+
+    // Track current message context for tool call/result persistence
+    this.currentMessageUserId = message.context?.userId || null;
+    this.currentMessageChannel = channel;
+    this.currentMessageChatId = conversationId;
 
     // Send to the agent backend
     try {
@@ -908,6 +920,48 @@ export class SessionHost extends EventEmitter {
       this.emit('result', result);
     });
 
+    // Persist tool calls to activity stream for context recovery across sessions
+    this.backendManager.on('tool:call', async (data: { toolUseId: string; toolName: string; input: Record<string, unknown> }) => {
+      if (!this.currentMessageUserId) return;
+      try {
+        await this.dataComposer.repositories.activityStream.logActivity({
+          userId: this.currentMessageUserId,
+          agentId: this.agentId || 'unknown',
+          type: 'tool_call',
+          subtype: data.toolName,
+          content: `Tool call: ${data.toolName}`,
+          payload: { toolUseId: data.toolUseId, toolName: data.toolName, input: data.input } as unknown as Json,
+          sessionId: this.currentSessionId || undefined,
+          platform: this.currentMessageChannel || undefined,
+          platformChatId: this.currentMessageChatId || undefined,
+        });
+      } catch (error) {
+        logger.warn('Failed to persist tool call to activity stream:', error);
+      }
+    });
+
+    this.backendManager.on('tool:result', async (data: { toolUseId: string; content: string }) => {
+      if (!this.currentMessageUserId) return;
+      try {
+        // Truncate very large tool results for storage (keep first 10k chars)
+        const truncatedContent = data.content.length > 10000
+          ? data.content.substring(0, 10000) + `\n... [truncated, ${data.content.length} total chars]`
+          : data.content;
+        await this.dataComposer.repositories.activityStream.logActivity({
+          userId: this.currentMessageUserId,
+          agentId: this.agentId || 'unknown',
+          type: 'tool_result',
+          content: truncatedContent,
+          payload: { toolUseId: data.toolUseId, fullLength: data.content.length } as unknown as Json,
+          sessionId: this.currentSessionId || undefined,
+          platform: this.currentMessageChannel || undefined,
+          platformChatId: this.currentMessageChatId || undefined,
+        });
+      } catch (error) {
+        logger.warn('Failed to persist tool result to activity stream:', error);
+      }
+    });
+
     // Handle responses from backend (via stdout parsing)
     this.backendManager.on('response', async (response: AgentResponse) => {
       logger.info(`Received response from backend for ${response.channel}:${response.conversationId}`);
@@ -920,27 +974,37 @@ export class SessionHost extends EventEmitter {
     });
 
     // Monitor token usage for context window rotation (two-phase: compaction then rotation)
+    // Uses contextTokens (latest turn's input) as proxy for context window fullness,
+    // NOT cumulative totals which double-count shared context across turns.
     this.backendManager.on('session:usage', async (usage: {
-      inputTokens: number;
-      outputTokens: number;
+      contextTokens: number;
+      cumulativeInputTokens: number;
+      cumulativeOutputTokens: number;
       messageInputTokens: number;
       messageOutputTokens: number;
     }) => {
       // Skip if compaction is already in progress — sendCompactionMessage owns the rotation lifecycle
       if (this.compactionInProgress) return;
 
-      if (usage.inputTokens >= this.hardRotationThreshold) {
-        // Safety net: hard rotate if tokens exceed the higher threshold
+      logger.debug('Token usage update', {
+        contextTokens: usage.contextTokens,
+        cumulativeInput: usage.cumulativeInputTokens,
+        messageInput: usage.messageInputTokens,
+        agentId: this.agentId,
+      });
+
+      if (usage.contextTokens >= this.hardRotationThreshold) {
+        // Safety net: hard rotate if context window exceeds the higher threshold
         logger.warn('Hard rotation threshold exceeded, rotating immediately', {
-          inputTokens: usage.inputTokens,
+          contextTokens: usage.contextTokens,
           hardRotationThreshold: this.hardRotationThreshold,
           agentId: this.agentId,
         });
         await this.rotateSession();
-      } else if (usage.inputTokens >= this.compactionThreshold) {
+      } else if (usage.contextTokens >= this.compactionThreshold) {
         // Graceful: ask the agent to save context before rotating
         logger.info('Compaction threshold reached', {
-          inputTokens: usage.inputTokens,
+          contextTokens: usage.contextTokens,
           compactionThreshold: this.compactionThreshold,
           agentId: this.agentId,
         });

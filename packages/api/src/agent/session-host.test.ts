@@ -221,7 +221,7 @@ describe('SessionHost', () => {
 
   describe('Context Window Rotation', () => {
     it('should hard-rotate session when input tokens exceed hardRotationThreshold', async () => {
-      // Default: hardRotationThreshold = 85% of 160k = 136000
+      // With maxContextTokens=160000: hardRotationThreshold = 95% = 152000
       await sessionHost.initialize();
 
       // Mock: DB finds session to mark as completed
@@ -230,10 +230,10 @@ describe('SessionHost', () => {
         error: null,
       });
 
-      // Emit usage that exceeds the hard rotation threshold (136000)
+      // Emit usage that exceeds the hard rotation threshold (152000)
       mockBackendManager.emit('session:usage', {
-        inputTokens: 140000,
-        outputTokens: 40000,
+        contextTokens: 155000,
+        cumulativeOutputTokens: 40000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -253,8 +253,8 @@ describe('SessionHost', () => {
 
       // 50k is well below the compaction threshold (75% of 160k = 120k)
       mockBackendManager.emit('session:usage', {
-        inputTokens: 50000,
-        outputTokens: 10000,
+        contextTokens: 50000,
+        cumulativeOutputTokens: 10000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -278,8 +278,8 @@ describe('SessionHost', () => {
 
       // Exceed hard rotation threshold
       mockBackendManager.emit('session:usage', {
-        inputTokens: 200000,
-        outputTokens: 50000,
+        contextTokens: 200000,
+        cumulativeOutputTokens: 50000,
         messageInputTokens: 10000,
         messageOutputTokens: 2000,
       });
@@ -295,7 +295,7 @@ describe('SessionHost', () => {
         backend: { primaryBackend: 'claude-code', backends: {} },
         dataComposer: mockDataComposer,
         agentId: 'myra',
-        maxContextTokens: 50000, // Lower threshold — hard rotation at 42500
+        maxContextTokens: 50000, // Lower threshold — hard rotation at 95% = 47500
       });
 
       await customHost.initialize();
@@ -305,10 +305,10 @@ describe('SessionHost', () => {
         error: null,
       });
 
-      // 45k tokens should trigger hard rotation with 50k max (85% = 42.5k)
+      // 48k tokens should trigger hard rotation with 50k max (95% = 47.5k)
       mockBackendManager.emit('session:usage', {
-        inputTokens: 45000,
-        outputTokens: 10000,
+        contextTokens: 48000,
+        cumulativeOutputTokens: 10000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -320,8 +320,8 @@ describe('SessionHost', () => {
   });
 
   describe('Graceful Compaction', () => {
-    it('should send compaction message when tokens reach 75% of max', async () => {
-      // Default: compactionThreshold = 75% of 160k = 120000
+    it('should send compaction message when tokens reach compaction threshold', async () => {
+      // Default: compactionThreshold = 170000
       await sessionHost.initialize();
 
       // Mock: sendMessage resolves (compaction succeeds)
@@ -332,10 +332,10 @@ describe('SessionHost', () => {
         error: null,
       });
 
-      // 125k tokens — above compaction (120k) but below hard rotation (136k)
+      // 175k tokens — above compaction (170k) but below hard rotation (190k)
       mockBackendManager.emit('session:usage', {
-        inputTokens: 125000,
-        outputTokens: 30000,
+        contextTokens: 145000,
+        cumulativeOutputTokens: 30000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -368,8 +368,8 @@ describe('SessionHost', () => {
       });
 
       mockBackendManager.emit('session:usage', {
-        inputTokens: 125000,
-        outputTokens: 30000,
+        contextTokens: 145000,
+        cumulativeOutputTokens: 30000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -395,8 +395,8 @@ describe('SessionHost', () => {
       });
 
       mockBackendManager.emit('session:usage', {
-        inputTokens: 125000,
-        outputTokens: 30000,
+        contextTokens: 145000,
+        cumulativeOutputTokens: 30000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -419,8 +419,8 @@ describe('SessionHost', () => {
 
       // First usage event triggers compaction
       mockBackendManager.emit('session:usage', {
-        inputTokens: 125000,
-        outputTokens: 30000,
+        contextTokens: 145000,
+        cumulativeOutputTokens: 30000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -430,8 +430,8 @@ describe('SessionHost', () => {
 
       // Second usage event while compaction is in progress — should be skipped
       mockBackendManager.emit('session:usage', {
-        inputTokens: 130000,
-        outputTokens: 32000,
+        contextTokens: 148000,
+        cumulativeOutputTokens: 32000,
         messageInputTokens: 5000,
         messageOutputTokens: 2000,
       });
@@ -469,8 +469,8 @@ describe('SessionHost', () => {
 
       // 65k tokens — above custom compaction (60k) but below hard rotation (80k)
       mockBackendManager.emit('session:usage', {
-        inputTokens: 65000,
-        outputTokens: 15000,
+        contextTokens: 65000,
+        cumulativeOutputTokens: 15000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });
@@ -494,8 +494,8 @@ describe('SessionHost', () => {
       });
 
       mockBackendManager.emit('session:usage', {
-        inputTokens: 125000,
-        outputTokens: 30000,
+        contextTokens: 145000,
+        cumulativeOutputTokens: 30000,
         messageInputTokens: 5000,
         messageOutputTokens: 1000,
       });

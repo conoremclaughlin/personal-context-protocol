@@ -338,6 +338,15 @@ export async function handleGetAgentStatus(args: unknown, dataComposer: DataComp
     .eq('status', 'unread')
     .eq('priority', 'urgent');
 
+  // Get active workspaces for this agent
+  const { data: workspaces } = await supabase
+    .from('workspaces')
+    .select('id, branch, worktree_path, purpose, status, work_type, session_id, created_at')
+    .eq('user_id', resolved.user.id)
+    .eq('agent_id', agentId)
+    .in('status', ['active', 'idle'])
+    .order('created_at', { ascending: false });
+
   // Determine agent status based on session
   let agentStatus = 'inactive';
   if (latestSession) {
@@ -372,6 +381,16 @@ export async function handleGetAgentStatus(args: unknown, dataComposer: DataComp
                 workingDir: latestSession.working_dir,
               }
             : null,
+          workspaces: (workspaces || []).map((w) => ({
+            id: w.id,
+            branch: w.branch,
+            path: w.worktree_path,
+            purpose: w.purpose,
+            status: w.status,
+            workType: w.work_type,
+            hasLinkedSession: !!w.session_id,
+            createdAt: w.created_at,
+          })),
         }),
       },
     ],

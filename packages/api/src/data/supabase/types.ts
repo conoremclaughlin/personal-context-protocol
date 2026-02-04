@@ -2301,6 +2301,78 @@ export type Database = {
         }
         Relationships: []
       }
+      workspaces: {
+        Row: {
+          agent_id: string | null
+          archived_at: string | null
+          base_branch: string | null
+          branch: string
+          cleaned_at: string | null
+          created_at: string | null
+          id: string
+          metadata: Json | null
+          purpose: string | null
+          repo_root: string
+          session_id: string | null
+          status: string
+          updated_at: string | null
+          user_id: string
+          work_type: string | null
+          worktree_path: string
+        }
+        Insert: {
+          agent_id?: string | null
+          archived_at?: string | null
+          base_branch?: string | null
+          branch: string
+          cleaned_at?: string | null
+          created_at?: string | null
+          id?: string
+          metadata?: Json | null
+          purpose?: string | null
+          repo_root: string
+          session_id?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id: string
+          work_type?: string | null
+          worktree_path: string
+        }
+        Update: {
+          agent_id?: string | null
+          archived_at?: string | null
+          base_branch?: string | null
+          branch?: string
+          cleaned_at?: string | null
+          created_at?: string | null
+          id?: string
+          metadata?: Json | null
+          purpose?: string | null
+          repo_root?: string
+          session_id?: string | null
+          status?: string
+          updated_at?: string | null
+          user_id?: string
+          work_type?: string | null
+          worktree_path?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "workspaces_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "workspaces_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       user_installed_skills: {
