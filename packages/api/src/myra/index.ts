@@ -196,7 +196,11 @@ Do NOT just respond - you MUST explicitly call send_response to reach external c
 }
 
 /**
- * Handle agent trigger - called when another agent wants to wake us up
+ * Handle agent trigger - called when another agent wants to wake us up.
+ *
+ * All triggers flow through sessionHost.handleMessage() so the agent
+ * receives the context through the same path as Telegram messages,
+ * inbox messages, and heartbeat reminders.
  */
 async function handleAgentTrigger(payload: AgentTriggerPayload): Promise<void> {
   logger.info(`[Trigger] Received trigger from ${payload.fromAgentId}`, {
@@ -205,8 +209,72 @@ async function handleAgentTrigger(payload: AgentTriggerPayload): Promise<void> {
     summary: payload.summary,
   });
 
-  // Check inbox for the message that triggered us
+  if (!sessionHost) {
+    logger.warn('[Trigger] Session host not initialized');
+    return;
+  }
+
+  // Build trigger message from payload
+  let triggerMessage = `[TRIGGER from ${payload.fromAgentId}]\nType: ${payload.triggerType}`;
+  if (payload.summary) {
+    triggerMessage += `\nSummary: ${payload.summary}`;
+  }
+  if (payload.metadata && Object.keys(payload.metadata).length > 0) {
+    triggerMessage += `\nContext:\n${JSON.stringify(payload.metadata, null, 2)}`;
+  }
+
+  triggerMessage += `\n\n---\nIMPORTANT: This is a system trigger, NOT a user message on Telegram/WhatsApp.\nIf you need to message a user, use send_response with the appropriate channel and conversationId.`;
+
+  // Send to session host — same path as all other messages
+  await sessionHost.handleMessage(
+    'agent',
+    `trigger-myra`,
+    { id: payload.fromAgentId, name: payload.fromAgentId },
+    triggerMessage,
+    { chatType: 'direct' }
+  );
+
+  // Also check inbox for any pending messages
   await checkAndProcessInbox();
+}
+
+/**
+ * Deliver a reminder by sending it to the session host.
+ *
+ * This is the deliver callback for processHeartbeat(). It uses the SAME
+ * sessionHost.handleMessage() path as Telegram messages, inbox triggers,
+ * and agent-to-agent triggers — one function call for all wake-ups.
+ */
+async function deliverReminderViaSession(reminder: { id: string; title: string; description: string | null; delivery_channel: string; delivery_target: string | null }): Promise<boolean> {
+  if (!sessionHost) {
+    logger.warn('[Heartbeat] Cannot deliver reminder - session host not initialized');
+    return false;
+  }
+
+  const reminderMessage = `[HEARTBEAT REMINDER]
+Title: ${reminder.title}
+${reminder.description ? `Description: ${reminder.description}` : ''}
+Delivery: ${reminder.delivery_channel}${reminder.delivery_target ? ` → ${reminder.delivery_target}` : ''}
+
+---
+IMPORTANT: This reminder was triggered by the heartbeat service. Refer to your HEARTBEAT identity document for how to handle scheduled tasks.
+If you need to message a user on Telegram, use send_response with the appropriate channel and conversationId.
+Do NOT just respond here — you MUST explicitly call send_response to reach external channels.`;
+
+  try {
+    await sessionHost.handleMessage(
+      'agent',
+      'trigger-myra',
+      { id: 'system', name: 'heartbeat' },
+      reminderMessage,
+      { chatType: 'direct' }
+    );
+    logger.info(`[Heartbeat] Delivered reminder ${reminder.id} via session host`);
+    return true;
+  } catch (error) {
+    logger.error(`[Heartbeat] Failed to deliver reminder ${reminder.id}:`, error);
+    return false;
+  }
 }
 
 /**
@@ -257,6 +325,33 @@ async function resolveOrCreateWhatsAppUser(
     logger.error('Failed to resolve/create WhatsApp user:', error);
     return null;
   }
+}
+
+/**
+ * Build the identity prompt that survives context compaction.
+ * This is passed via --append-system-prompt so it's re-injected on every
+ * Claude Code invocation, including --resume.
+ */
+function buildIdentityPrompt(): string {
+  return `## Identity Override (CRITICAL)
+
+**You are Myra. Your agent ID is \`myra\`.**
+
+When calling PCP tools (bootstrap, remember, recall, start_session, etc.), use \`agentId: "myra"\`.
+Do NOT read \`.pcp/identity.json\` — your identity is set by this system prompt.
+Do NOT run \`echo $AGENT_ID\` — it will fail due to permission restrictions.
+
+Skip directly to loading user config from ~/.pcp/config.json and bootstrap as "myra".
+
+## Tool Priority (IMPORTANT)
+
+Always use **PCP cloud tools** (mcp__pcp__*) over file reads or Claude Code builtins:
+- Identity: use mcp__pcp__bootstrap, not file reads
+- Tasks: use mcp__pcp__create_task, not TaskCreate
+- Memory: use mcp__pcp__remember, not local notes
+- Sessions: use mcp__pcp__start_session/log_session/end_session
+
+PCP tools persist across sessions and are shared with Conor and other agents.`;
 }
 
 /**
@@ -462,29 +557,10 @@ async function startHttpServer(): Promise<void> {
     if (url.pathname === '/api/admin/heartbeat' && req.method === 'POST') {
       (async () => {
         try {
-          const { processHeartbeat, registerDeliveryChannel } = await import('../services/heartbeat.js');
+          const { processHeartbeat } = await import('../services/heartbeat.js');
+          logger.info('Heartbeat triggered via HTTP');
 
-          // Ensure delivery channels are registered before processing
-          const channels: string[] = [];
-          if (telegramListener) {
-            registerDeliveryChannel('telegram', {
-              sendMessage: async (target: string, message: string) => {
-                await telegramListener!.sendMessage(target, message);
-              },
-            });
-            channels.push('telegram');
-          }
-          if (whatsappListener) {
-            registerDeliveryChannel('whatsapp', {
-              sendMessage: async (target: string, message: string) => {
-                await whatsappListener!.sendMessage(target, message);
-              },
-            });
-            channels.push('whatsapp');
-          }
-          logger.info('Heartbeat triggered', { availableChannels: channels });
-
-          const stats = await processHeartbeat();
+          const stats = await processHeartbeat(deliverReminderViaSession);
           res.writeHead(200, { 'Content-Type': 'application/json' });
           res.end(JSON.stringify({
             success: true,
@@ -569,8 +645,9 @@ async function startMyra(config: MyraConfig = {}): Promise<void> {
     logger.warn('TELEGRAM_BOT_TOKEN not set - Telegram disabled');
   }
 
-  // 3. Build system prompt
+  // 3. Build system prompt and identity prompt
   const systemPrompt = buildSystemPrompt(config.systemPrompt);
+  const identityPrompt = buildIdentityPrompt();
 
   // 4. Create Session Host with Claude Code backend
   logger.info(`Creating Session Host with ${backend} backend...`);
@@ -585,10 +662,11 @@ async function startMyra(config: MyraConfig = {}): Promise<void> {
           workingDirectory,
           model,
           systemPrompt,
+          appendSystemPrompt: identityPrompt,
         },
         'direct-api': {
           model: 'claude-sonnet-4-20250514',
-          systemPrompt,
+          systemPrompt: identityPrompt + '\n\n' + systemPrompt,
         },
       },
       enableFailover: true,
@@ -885,32 +963,19 @@ async function startMyra(config: MyraConfig = {}): Promise<void> {
   await startHttpServer();
 
   // 9. Initialize heartbeat service for local development
-  const { initHeartbeatService, registerDeliveryChannel } = await import('../services/heartbeat.js');
-
-  // Register delivery channels
-  if (telegramListener) {
-    registerDeliveryChannel('telegram', {
-      sendMessage: async (target: string, message: string) => {
-        await telegramListener!.sendMessage(target, message);
-      },
-    });
-  }
-
-  if (whatsappListener) {
-    registerDeliveryChannel('whatsapp', {
-      sendMessage: async (target: string, message: string) => {
-        await whatsappListener!.sendMessage(target, message);
-      },
-    });
-  }
+  const { initHeartbeatService, processHeartbeat } = await import('../services/heartbeat.js');
 
   // Start local cron scheduler (disabled in production - uses pg_cron instead)
   const enableLocalCron = process.env.NODE_ENV !== 'production' && process.env.ENABLE_LOCAL_HEARTBEAT !== 'false';
   initHeartbeatService({
-    interval: process.env.HEARTBEAT_INTERVAL || '*/5 * * * *', // Every 5 minutes
+    interval: process.env.HEARTBEAT_INTERVAL || '*/10 * * * *', // Every 10 minutes
     enableLocalCron,
-    // Add inbox checking to heartbeat
     onHeartbeat: async () => {
+      // Process due reminders — delivery flows through sessionHost.handleMessage(),
+      // the same path as Telegram messages, inbox triggers, and agent-to-agent triggers.
+      await processHeartbeat(deliverReminderViaSession);
+
+      // Also check inbox for any pending messages from other agents
       await checkAndProcessInbox();
     },
   });

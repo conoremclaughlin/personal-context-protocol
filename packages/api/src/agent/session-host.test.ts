@@ -106,15 +106,21 @@ describe('SessionHost', () => {
 
   describe('Session Restoration on Startup', () => {
     it('should restore Claude session from database on initialize', async () => {
-      // Mock: DB returns an active session with claude_session_id
+      // Mock: First call to agent_identities returns user_id
       mockQueryBuilder.single.mockResolvedValueOnce({
-        data: { claude_session_id: 'restored-session-xyz' },
+        data: { user_id: 'user-123' },
+        error: null,
+      });
+      // Mock: Second call to sessions returns an active session with claude_session_id
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'session-abc', claude_session_id: 'restored-session-xyz' },
         error: null,
       });
 
       await sessionHost.initialize();
 
-      // Should have queried sessions table
+      // Should have queried both tables
+      expect(mockQueryBuilder.from).toHaveBeenCalledWith('agent_identities');
       expect(mockQueryBuilder.from).toHaveBeenCalledWith('sessions');
       expect(mockQueryBuilder.eq).toHaveBeenCalledWith('agent_id', 'myra');
 
@@ -123,7 +129,12 @@ describe('SessionHost', () => {
     });
 
     it('should not restore when no active session exists', async () => {
-      // Mock: DB returns no session
+      // Mock: First call to agent_identities returns user_id
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { user_id: 'user-123' },
+        error: null,
+      });
+      // Mock: Second call to sessions returns no session
       mockQueryBuilder.single.mockResolvedValueOnce({
         data: null,
         error: { code: 'PGRST116', message: 'not found' },
@@ -136,8 +147,14 @@ describe('SessionHost', () => {
     });
 
     it('should not restore when session has no claude_session_id', async () => {
+      // Mock: First call to agent_identities returns user_id
       mockQueryBuilder.single.mockResolvedValueOnce({
-        data: { claude_session_id: null },
+        data: { user_id: 'user-123' },
+        error: null,
+      });
+      // Mock: Second call to sessions returns session without claude_session_id
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'session-abc', claude_session_id: null },
         error: null,
       });
 
@@ -740,6 +757,17 @@ describe('SessionHost', () => {
   describe('Session Resumption E2E Flow', () => {
     it('should persist session ID then restore it after simulated restart', async () => {
       // === Phase 1: First boot, receive a session ===
+      // Mock: agent_identities lookup
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { user_id: 'user-123' },
+        error: null,
+      });
+      // Mock: sessions lookup (no existing session)
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: null,
+        error: { code: 'PGRST116', message: 'not found' },
+      });
+
       await sessionHost.initialize();
 
       // Session captured from Claude Code
@@ -767,9 +795,14 @@ describe('SessionHost', () => {
         agentId: 'myra',
       });
 
-      // Mock: DB returns the persisted session
+      // Mock: agent_identities lookup
       mockQueryBuilder.single.mockResolvedValueOnce({
-        data: { claude_session_id: 'claude-sess-original' },
+        data: { user_id: 'user-123' },
+        error: null,
+      });
+      // Mock: sessions lookup returns the persisted session
+      mockQueryBuilder.single.mockResolvedValueOnce({
+        data: { id: 'pcp-session-1', claude_session_id: 'claude-sess-original' },
         error: null,
       });
 

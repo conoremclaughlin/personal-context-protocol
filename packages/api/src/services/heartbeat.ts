@@ -4,16 +4,23 @@
  * Manages scheduled reminders and periodic checks.
  * - In production: triggered by pg_cron via HTTP
  * - In development: uses node-cron as fallback
+ *
+ * The heartbeat service is delivery-agnostic. It queries for due reminders,
+ * checks quiet hours, and delegates delivery to the caller via a callback.
+ * This means ALL agent wake-ups flow through the same path (e.g.,
+ * sessionHost.handleMessage), regardless of whether they're triggered by
+ * a reminder, an inbox message, or another agent.
  */
 
 import * as cron from 'node-cron';
+import { CronExpressionParser } from 'cron-parser';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { env } from '../config/env.js';
 import { logger } from '../utils/logger.js';
 import type { Database } from '../data/supabase/types.js';
 
 // DueReminder is the subset of fields we need for processing
-interface DueReminder {
+export interface DueReminder {
   id: string;
   user_id: string;
   title: string;
@@ -26,42 +33,32 @@ interface DueReminder {
   max_runs: number | null;
 }
 
-interface DeliveryChannel {
-  sendMessage: (target: string, message: string) => Promise<void>;
-}
-
 interface HeartbeatConfig {
   /** Cron expression for heartbeat interval (default: every 5 minutes) */
   interval?: string;
   /** Enable local cron scheduler */
   enableLocalCron?: boolean;
-  /** Delivery channels */
-  channels?: Record<string, DeliveryChannel>;
-  /** Callback to run on each heartbeat (for inbox checking, etc.) */
+  /** Callback to run on each heartbeat tick */
   onHeartbeat?: () => Promise<void>;
 }
 
 // Singleton state
 let cronTask: ReturnType<typeof cron.schedule> | null = null;
 let supabase: SupabaseClient<Database> | null = null;
-let deliveryChannels: Record<string, DeliveryChannel> = {};
+
+// Store the onHeartbeat callback
+let heartbeatCallback: (() => Promise<void>) | null = null;
 
 /**
  * Initialize the heartbeat service
  */
-// Store the onHeartbeat callback
-let heartbeatCallback: (() => Promise<void>) | null = null;
-
 export function initHeartbeatService(config: HeartbeatConfig = {}): void {
   const {
     interval = '*/5 * * * *', // Every 5 minutes
     enableLocalCron = process.env.NODE_ENV !== 'production',
-    channels = {},
     onHeartbeat,
   } = config;
 
-  // Store delivery channels and callback
-  deliveryChannels = channels;
   heartbeatCallback = onHeartbeat || null;
 
   // Initialize typed Supabase client
@@ -72,8 +69,6 @@ export function initHeartbeatService(config: HeartbeatConfig = {}): void {
 
     cronTask = cron.schedule(interval, async () => {
       try {
-        await processHeartbeat();
-        // Call the onHeartbeat callback if provided
         if (heartbeatCallback) {
           await heartbeatCallback();
         }
@@ -101,17 +96,18 @@ export function stopHeartbeatService(): void {
 }
 
 /**
- * Register a delivery channel
+ * Process heartbeat - query due reminders and deliver via callback.
+ *
+ * The `deliver` callback is how the caller wakes the agent. Typically this
+ * calls sessionHost.handleMessage() so the agent receives the reminder
+ * through the same path as all other triggers.
+ *
+ * If no callback is provided, reminders are still queried and logged
+ * but not delivered (useful for dry runs or external HTTP triggers).
  */
-export function registerDeliveryChannel(name: string, channel: DeliveryChannel): void {
-  deliveryChannels[name] = channel;
-  logger.info(`Registered delivery channel: ${name}`);
-}
-
-/**
- * Process heartbeat - called by cron (local or pg_cron via API)
- */
-export async function processHeartbeat(): Promise<{
+export async function processHeartbeat(
+  deliver?: (reminder: DueReminder) => Promise<boolean>,
+): Promise<{
   processed: number;
   delivered: number;
   failed: number;
@@ -160,22 +156,25 @@ export async function processHeartbeat(): Promise<{
         continue;
       }
 
-      // Deliver the reminder
-      const delivered = await deliverReminder(reminder);
+      // Deliver via caller-provided callback
+      let delivered = false;
+      if (deliver) {
+        delivered = await deliver(reminder);
+      } else {
+        logger.warn(`No deliver callback for reminder ${reminder.id} - skipping`);
+      }
 
       if (delivered) {
         stats.delivered++;
-
-        // Update reminder state
+        await recordDeliveryAttempt(reminder.id, 'delivered');
         await updateReminderAfterDelivery(reminder);
       } else {
         stats.failed++;
+        await recordDeliveryAttempt(reminder.id, 'failed', 'Delivery callback returned false');
       }
     } catch (error) {
       logger.error(`Failed to process reminder ${reminder.id}:`, error);
       stats.failed++;
-
-      // Record failure in history
       await recordDeliveryAttempt(reminder.id, 'failed', error instanceof Error ? error.message : 'Unknown error');
     }
   }
@@ -216,50 +215,18 @@ async function isInQuietHours(userId: string): Promise<boolean> {
 }
 
 /**
- * Deliver a reminder via the appropriate channel
+ * Get user's timezone from database
  */
-async function deliverReminder(reminder: DueReminder): Promise<boolean> {
-  const channel = deliveryChannels[reminder.delivery_channel];
+async function getUserTimezone(userId: string): Promise<string> {
+  if (!supabase) return 'UTC';
 
-  if (!channel) {
-    logger.warn(`No delivery channel registered for: ${reminder.delivery_channel}`);
-    await recordDeliveryAttempt(reminder.id, 'failed', `Unknown channel: ${reminder.delivery_channel}`);
-    return false;
-  }
+  const { data } = await supabase
+    .from('users')
+    .select('timezone')
+    .eq('id', userId)
+    .single();
 
-  const target = reminder.delivery_target;
-  if (!target) {
-    logger.warn(`No delivery target for reminder ${reminder.id}`);
-    await recordDeliveryAttempt(reminder.id, 'failed', 'No delivery target');
-    return false;
-  }
-
-  // Format the message
-  const message = formatReminderMessage(reminder);
-
-  try {
-    await channel.sendMessage(target, message);
-    await recordDeliveryAttempt(reminder.id, 'delivered');
-    logger.info(`Delivered reminder ${reminder.id} via ${reminder.delivery_channel}`);
-    return true;
-  } catch (error) {
-    logger.error(`Failed to deliver reminder ${reminder.id}:`, error);
-    await recordDeliveryAttempt(reminder.id, 'failed', error instanceof Error ? error.message : 'Delivery failed');
-    return false;
-  }
-}
-
-/**
- * Format reminder message for delivery
- */
-function formatReminderMessage(reminder: DueReminder): string {
-  let message = `🔔 **Reminder:** ${reminder.title}`;
-
-  if (reminder.description) {
-    message += `\n\n${reminder.description}`;
-  }
-
-  return message;
+  return data?.timezone || 'UTC';
 }
 
 /**
@@ -286,8 +253,9 @@ async function updateReminderAfterDelivery(reminder: DueReminder): Promise<void>
       })
       .eq('id', reminder.id);
   } else {
-    // Calculate next run time
-    const nextRun = calculateNextRun(reminder.cron_expression!, new Date());
+    // Calculate next run time in user's timezone
+    const userTimezone = await getUserTimezone(reminder.user_id);
+    const nextRun = calculateNextRun(reminder.cron_expression!, new Date(), userTimezone);
 
     await supabase
       .from('scheduled_reminders')
@@ -321,50 +289,20 @@ async function recordDeliveryAttempt(
 }
 
 /**
- * Calculate next run time from cron expression
- * Uses a simple implementation for common patterns
+ * Calculate next run time from a cron expression.
+ * Uses cron-parser for correct handling of all standard cron patterns
+ * including ranges (16-23), lists (0-7), and step values.
+ *
+ * @param cronExpr - Standard cron expression (interpreted in the given timezone)
+ * @param fromTime - Calculate next run after this time
+ * @param timezone - IANA timezone (e.g., 'America/Los_Angeles'). Defaults to UTC.
  */
-function calculateNextRun(cronExpr: string, fromTime: Date): Date {
-  const next = new Date(fromTime);
-
-  // Simple pattern matching for common cron expressions
-  // For production, consider using a library like 'cron-parser'
-  switch (cronExpr) {
-    case '* * * * *':
-      next.setMinutes(next.getMinutes() + 1);
-      break;
-    case '*/5 * * * *':
-      next.setMinutes(next.getMinutes() + 5);
-      break;
-    case '*/15 * * * *':
-      next.setMinutes(next.getMinutes() + 15);
-      break;
-    case '*/30 * * * *':
-      next.setMinutes(next.getMinutes() + 30);
-      break;
-    case '0 * * * *':
-      next.setHours(next.getHours() + 1);
-      next.setMinutes(0);
-      break;
-    case '0 0 * * *':
-      next.setDate(next.getDate() + 1);
-      next.setHours(0, 0, 0, 0);
-      break;
-    case '0 0 * * 0':
-      next.setDate(next.getDate() + 7);
-      next.setHours(0, 0, 0, 0);
-      break;
-    case '0 9 * * *':
-      // Daily at 9am
-      next.setDate(next.getDate() + 1);
-      next.setHours(9, 0, 0, 0);
-      break;
-    default:
-      // Default: next day same time
-      next.setDate(next.getDate() + 1);
-  }
-
-  return next;
+function calculateNextRun(cronExpr: string, fromTime: Date, timezone?: string): Date {
+  const interval = CronExpressionParser.parse(cronExpr, {
+    currentDate: fromTime,
+    tz: timezone || 'UTC',
+  });
+  return interval.next().toDate();
 }
 
 /**
@@ -384,8 +322,11 @@ export async function createReminder(params: {
     supabase = createClient<Database>(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
   }
 
+  // Get user's timezone for cron interpretation
+  const userTimezone = await getUserTimezone(params.userId);
+
   const nextRunAt = params.runAt || (params.cronExpression
-    ? calculateNextRun(params.cronExpression, new Date())
+    ? calculateNextRun(params.cronExpression, new Date(), userTimezone)
     : new Date());
 
   const { data, error } = await supabase

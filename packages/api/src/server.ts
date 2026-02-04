@@ -23,6 +23,7 @@ import { getDataComposer } from './data/composer';
 import { getAgentGateway, type TriggerCallback } from './channels/agent-gateway';
 import { createSessionHost, SessionHost } from './agent';
 import { createMCPServer, MCPServer, type IncomingMessageHandler } from './mcp/server';
+import { initHeartbeatService, processHeartbeat, type DueReminder } from './services/heartbeat';
 import { logger } from './utils/logger';
 import { env } from './config/env';
 
@@ -254,7 +255,52 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
     logger.info(`Agent trigger handler registered for: ${config.agentId}`);
   }
 
-  // 8. Print status
+  // 8. Initialize heartbeat service for scheduled reminders
+  const enableLocalCron = process.env.NODE_ENV !== 'production';
+  const heartbeatInterval = process.env.HEARTBEAT_INTERVAL || '*/5 * * * *';
+
+  /**
+   * Deliver reminder via SessionHost.handleMessage - same path as all other triggers.
+   * The agent receives the reminder context and can respond via send_response.
+   */
+  const deliverReminderViaSession = async (reminder: DueReminder): Promise<boolean> => {
+    const reminderMessage = `[HEARTBEAT REMINDER]
+Title: ${reminder.title}
+Description: ${reminder.description || 'No description'}
+Delivery: ${reminder.delivery_channel} → ${reminder.delivery_target || 'default'}
+
+---
+IMPORTANT: This reminder was triggered by the heartbeat service.
+Refer to your HEARTBEAT identity document for how to handle scheduled tasks.
+If you need to message a user on Telegram, use send_response with:
+- channel: "${reminder.delivery_channel}"
+- conversationId: "${reminder.delivery_target}"
+
+Do NOT just respond here — you MUST explicitly call send_response to reach external channels.`;
+
+    await sessionHost!.handleMessage(
+      'agent',
+      `heartbeat:${reminder.id}`,
+      { id: 'system', name: 'heartbeat' },
+      reminderMessage,
+      { chatType: 'direct' }
+    );
+    return true;
+  };
+
+  initHeartbeatService({
+    interval: heartbeatInterval,
+    enableLocalCron,
+    onHeartbeat: async () => {
+      logger.info('Heartbeat tick — processing due reminders');
+      const stats = await processHeartbeat(deliverReminderViaSession);
+      logger.info('Heartbeat complete', stats);
+    },
+  });
+  logger.info(`Heartbeat service started (interval: ${heartbeatInterval}, local cron: ${enableLocalCron})`);
+
+
+  // 9. Print status
   printStatus();
 
   // Ready

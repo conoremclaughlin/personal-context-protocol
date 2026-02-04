@@ -182,6 +182,23 @@ For high-volume deployments:
 - CDN for media storage
 - Edge deployment for low latency
 
+## Reminder System
+
+The heartbeat service manages scheduled reminders stored in the `scheduled_reminders` table. It runs every 5 minutes via `node-cron` in development and `pg_cron` in production.
+
+### Delivery Flow
+
+1. **Heartbeat tick** — fetches due reminders (`next_run_at <= now`, `status = 'active'`)
+2. **Quiet hours check** — skips delivery if the user's `heartbeat_state` indicates quiet hours
+3. **Delivery routing:**
+   - **Direct channel** — if a delivery channel (e.g., Telegram) is registered in the same process, sends the message directly
+   - **Agent trigger fallback** — if no direct channel exists (e.g., Telegram listener lives in the PCP server, not the agent process), triggers the agent via the Agent Gateway. The agent processes the reminder (checks emails, calendar, etc.) and responds via `send_response`, which routes through the Channel Gateway to the user
+4. **State update** — increments `run_count`, calculates `next_run_at` using `cron-parser`, or marks completed for one-time reminders
+
+### Cron Scheduling
+
+Next-run times are calculated using the `cron-parser` library (`CronExpressionParser.parse`), which correctly handles complex patterns like `0 16-23,0-7 * * *` (ranges, lists, step values). Cron expressions are evaluated in the server's timezone by default.
+
 ## Security Model
 
 ### Data Isolation

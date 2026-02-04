@@ -97,6 +97,9 @@ export class SessionHost extends EventEmitter {
   private currentMessageChatId: string | null = null;
   private currentSessionId: string | null = null;
 
+  // Agent's owner user ID (resolved from agent_identities at init)
+  private agentOwnerUserId: string | null = null;
+
   constructor(config: SessionHostConfig) {
     super();
     this.dataComposer = config.dataComposer;
@@ -742,7 +745,7 @@ export class SessionHost extends EventEmitter {
 
   /**
    * Persist the Claude Code session ID to the sessions table so it survives server restarts.
-   * Finds the most recent active session for this agent and updates its claude_session_id.
+   * Uses currentSessionId if set (from init), otherwise looks up/creates the session.
    */
   private async persistClaudeSessionId(claudeSessionId: string): Promise<void> {
     if (!this.agentId) return;
@@ -750,7 +753,20 @@ export class SessionHost extends EventEmitter {
     try {
       const supabase = this.dataComposer.getClient();
 
-      // Find the most recent active session for this agent
+      // If we already have a session ID from init, use it directly
+      if (this.currentSessionId) {
+        await supabase
+          .from('sessions')
+          .update({ claude_session_id: claudeSessionId, status: 'active' })
+          .eq('id', this.currentSessionId);
+        logger.info('Persisted Claude session ID to existing session', {
+          claudeSessionId,
+          pcpSessionId: this.currentSessionId,
+        });
+        return;
+      }
+
+      // Fallback: find or create session
       const { data: session } = await supabase
         .from('sessions')
         .select('id')
@@ -765,11 +781,41 @@ export class SessionHost extends EventEmitter {
           .from('sessions')
           .update({ claude_session_id: claudeSessionId, status: 'active' })
           .eq('id', session.id);
+        this.currentSessionId = session.id;
         logger.info('Persisted Claude session ID', { claudeSessionId, pcpSessionId: session.id });
       } else {
-        logger.debug('No active PCP session found to persist Claude session ID — agent may not have called start_session yet', {
-          agentId: this.agentId,
-        });
+        // Auto-create a session — use agentOwnerUserId or currentMessageUserId
+        const userId = this.agentOwnerUserId || this.currentMessageUserId;
+        if (!userId) {
+          logger.debug('No active PCP session and no userId — cannot persist Claude session ID', {
+            agentId: this.agentId,
+          });
+          return;
+        }
+
+        const { data: newSession, error } = await supabase
+          .from('sessions')
+          .insert({
+            user_id: userId,
+            agent_id: this.agentId,
+            claude_session_id: claudeSessionId,
+            status: 'active',
+            metadata: { autoCreated: true, source: 'session-host-persist' },
+          })
+          .select('id')
+          .single();
+
+        if (error) {
+          logger.warn('Failed to auto-create session for claude_session_id persistence:', error);
+        } else {
+          this.currentSessionId = newSession.id;
+          logger.info('Auto-created PCP session and persisted Claude session ID', {
+            claudeSessionId,
+            pcpSessionId: newSession.id,
+            agentId: this.agentId,
+            userId,
+          });
+        }
       }
     } catch (error) {
       logger.warn('Failed to persist Claude session ID:', error);
@@ -860,7 +906,10 @@ export class SessionHost extends EventEmitter {
   }
 
   /**
-   * On startup, restore the Claude Code session ID from the database so --resume works across restarts.
+   * On startup, restore or create a PCP session for this agent.
+   * If an active session with claude_session_id exists, resume it.
+   * If no session exists, resolve the agent's owner from agent_identities and create one.
+   * This ensures claude_session_id can be persisted when captured.
    */
   private async restoreClaudeSession(): Promise<void> {
     if (!this.agentId) return;
@@ -868,29 +917,79 @@ export class SessionHost extends EventEmitter {
     try {
       const supabase = this.dataComposer.getClient();
 
-      const { data: session } = await supabase
+      // Resolve the agent's owner user_id from agent_identities
+      const { data: identity } = await supabase
+        .from('agent_identities')
+        .select('user_id')
+        .eq('agent_id', this.agentId)
+        .single();
+
+      if (identity?.user_id) {
+        this.agentOwnerUserId = identity.user_id;
+        logger.debug('Resolved agent owner from identity', {
+          agentId: this.agentId,
+          userId: identity.user_id,
+        });
+      }
+
+      // Check for any active session (with or without claude_session_id)
+      const { data: existingSession } = await supabase
         .from('sessions')
-        .select('claude_session_id')
+        .select('id, claude_session_id')
         .eq('agent_id', this.agentId)
         .is('ended_at', null)
-        .not('claude_session_id', 'is', null)
         .order('started_at', { ascending: false })
         .limit(1)
         .single();
 
-      if (session?.claude_session_id) {
-        const resumed = await this.backendManager.resumeSession(session.claude_session_id);
+      if (existingSession?.claude_session_id) {
+        // Resume existing Claude session
+        const resumed = await this.backendManager.resumeSession(existingSession.claude_session_id);
         if (resumed) {
           logger.info('Restored Claude session from database', {
-            claudeSessionId: session.claude_session_id,
+            claudeSessionId: existingSession.claude_session_id,
+            pcpSessionId: existingSession.id,
             agentId: this.agentId,
           });
         }
+        this.currentSessionId = existingSession.id;
+      } else if (existingSession) {
+        // Session exists but no claude_session_id yet — will be populated on first message
+        logger.info('Found existing PCP session without Claude session ID', {
+          pcpSessionId: existingSession.id,
+          agentId: this.agentId,
+        });
+        this.currentSessionId = existingSession.id;
+      } else if (this.agentOwnerUserId) {
+        // No session exists — create one using the agent's owner
+        const { data: newSession, error } = await supabase
+          .from('sessions')
+          .insert({
+            user_id: this.agentOwnerUserId,
+            agent_id: this.agentId,
+            status: 'active',
+            metadata: { autoCreated: true, source: 'session-host-init' },
+          })
+          .select('id')
+          .single();
+
+        if (error) {
+          logger.warn('Failed to create initial session for agent:', error);
+        } else {
+          logger.info('Created initial PCP session for agent', {
+            pcpSessionId: newSession.id,
+            agentId: this.agentId,
+            userId: this.agentOwnerUserId,
+          });
+          this.currentSessionId = newSession.id;
+        }
       } else {
-        logger.info('No resumable Claude session found in database', { agentId: this.agentId });
+        logger.info('No resumable session and no agent identity — session will be created on first message', {
+          agentId: this.agentId,
+        });
       }
     } catch (error) {
-      logger.warn('Failed to restore Claude session from database:', error);
+      logger.warn('Failed to restore/create Claude session from database:', error);
     }
   }
 
