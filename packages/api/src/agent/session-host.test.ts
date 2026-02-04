@@ -87,8 +87,8 @@ describe('SessionHost', () => {
         projects: { findAllByUser: vi.fn() },
         sessionFocus: { findLatestByUser: vi.fn() },
         memory: { recall: vi.fn(), getActiveSession: vi.fn() },
-        conversations: { findByPlatformChatId: vi.fn(), createConversation: vi.fn(), createMessage: vi.fn() },
-        activityStream: { getConversationHistory: vi.fn() },
+        conversations: { findByPlatformChatId: vi.fn(), findConversationByPlatformId: vi.fn().mockResolvedValue(null), createConversation: vi.fn(), createMessage: vi.fn() },
+        activityStream: { getConversationHistory: vi.fn(), logActivity: vi.fn().mockResolvedValue({ id: 'act-mock' }) },
       },
     };
 
@@ -506,6 +506,233 @@ describe('SessionHost', () => {
         expect(call.content).toContain('compact_session');
         expect(call.content).toContain('remember');
         expect(call.content).toContain('create_task');
+      });
+    });
+  });
+
+  describe('Tool Call/Result Persistence', () => {
+    it('should persist tool:call events to the activity stream', async () => {
+      await sessionHost.initialize();
+
+      // Send a message to set currentMessageUserId context
+      mockDataComposer.repositories.activityStream.getConversationHistory.mockResolvedValue([]);
+      await sessionHost.handleMessage(
+        'telegram',
+        'chat-123',
+        { id: '726555973', name: 'Conor' },
+        'Check my emails',
+        { userId: 'user-456' }
+      );
+
+      // Simulate backend emitting a tool:call event
+      mockBackendManager.emit('tool:call', {
+        toolUseId: 'toolu_01ABC123',
+        toolName: 'mcp__pcp__list_emails',
+        input: { userId: 'user-456', maxResults: 5 },
+      });
+
+      await vi.waitFor(() => {
+        expect(mockDataComposer.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: 'user-456',
+            agentId: 'myra',
+            type: 'tool_call',
+            subtype: 'mcp__pcp__list_emails',
+            content: 'Tool call: mcp__pcp__list_emails',
+            payload: expect.objectContaining({
+              toolUseId: 'toolu_01ABC123',
+              toolName: 'mcp__pcp__list_emails',
+              input: { userId: 'user-456', maxResults: 5 },
+            }),
+            platform: 'telegram',
+            platformChatId: 'chat-123',
+          })
+        );
+      });
+    });
+
+    it('should persist tool:result events to the activity stream', async () => {
+      await sessionHost.initialize();
+
+      // Set up message context
+      mockDataComposer.repositories.activityStream.getConversationHistory.mockResolvedValue([]);
+      await sessionHost.handleMessage(
+        'telegram',
+        'chat-123',
+        { id: '726555973', name: 'Conor' },
+        'Check my emails',
+        { userId: 'user-456' }
+      );
+
+      const toolResultContent = JSON.stringify({
+        success: true,
+        emails: [
+          { id: '19c27850899dee3d', subject: 'Re: PR #974', from: { name: 'Ian Bicket' } },
+          { id: '19c26dc9a4f51c13', subject: '[AINews] Context Graphs', from: { name: 'swyx' } },
+        ],
+        count: 2,
+      });
+
+      // Simulate backend emitting a tool:result event
+      mockBackendManager.emit('tool:result', {
+        toolUseId: 'toolu_01ABC123',
+        content: toolResultContent,
+      });
+
+      await vi.waitFor(() => {
+        expect(mockDataComposer.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+          expect.objectContaining({
+            userId: 'user-456',
+            agentId: 'myra',
+            type: 'tool_result',
+            content: toolResultContent,
+            payload: expect.objectContaining({
+              toolUseId: 'toolu_01ABC123',
+              fullLength: toolResultContent.length,
+            }),
+            platform: 'telegram',
+            platformChatId: 'chat-123',
+          })
+        );
+      });
+    });
+
+    it('should truncate very large tool results to 10k chars', async () => {
+      await sessionHost.initialize();
+
+      mockDataComposer.repositories.activityStream.getConversationHistory.mockResolvedValue([]);
+      await sessionHost.handleMessage(
+        'telegram',
+        'chat-123',
+        { id: '726555973', name: 'Conor' },
+        'Get email details',
+        { userId: 'user-456' }
+      );
+
+      // Simulate a large tool result (e.g., a full HTML email body)
+      const largeContent = 'x'.repeat(25000);
+      mockBackendManager.emit('tool:result', {
+        toolUseId: 'toolu_02DEF456',
+        content: largeContent,
+      });
+
+      await vi.waitFor(() => {
+        const call = mockDataComposer.repositories.activityStream.logActivity.mock.calls.find(
+          (c: unknown[]) => (c[0] as Record<string, unknown>).type === 'tool_result'
+        );
+        expect(call).toBeTruthy();
+        const loggedContent = (call![0] as Record<string, string>).content;
+        // Should be truncated to ~10k + truncation notice
+        expect(loggedContent.length).toBeLessThan(11000);
+        expect(loggedContent).toContain('truncated');
+        expect(loggedContent).toContain('25000 total chars');
+        // Payload should record the full length
+        expect((call![0] as Record<string, Record<string, unknown>>).payload.fullLength).toBe(25000);
+      });
+    });
+
+    it('should not persist tool events when no message context is set', async () => {
+      await sessionHost.initialize();
+
+      // Emit tool events WITHOUT a preceding handleMessage (no currentMessageUserId)
+      mockBackendManager.emit('tool:call', {
+        toolUseId: 'toolu_orphan',
+        toolName: 'some_tool',
+        input: {},
+      });
+
+      mockBackendManager.emit('tool:result', {
+        toolUseId: 'toolu_orphan',
+        content: 'result',
+      });
+
+      // Wait a tick
+      await new Promise((r) => setTimeout(r, 10));
+
+      // logActivity should NOT have been called
+      expect(mockDataComposer.repositories.activityStream.logActivity).not.toHaveBeenCalled();
+    });
+
+    it('should handle logActivity errors gracefully without crashing', async () => {
+      await sessionHost.initialize();
+
+      mockDataComposer.repositories.activityStream.getConversationHistory.mockResolvedValue([]);
+      mockDataComposer.repositories.activityStream.logActivity.mockRejectedValue(
+        new Error('Database connection lost')
+      );
+
+      await sessionHost.handleMessage(
+        'telegram',
+        'chat-123',
+        { id: '726555973', name: 'Conor' },
+        'Check something',
+        { userId: 'user-456' }
+      );
+
+      // Should not throw when logActivity fails
+      mockBackendManager.emit('tool:call', {
+        toolUseId: 'toolu_fail',
+        toolName: 'failing_tool',
+        input: {},
+      });
+
+      // Wait for the async handler
+      await new Promise((r) => setTimeout(r, 10));
+
+      // logActivity was called (and failed), but no crash
+      expect(mockDataComposer.repositories.activityStream.logActivity).toHaveBeenCalled();
+    });
+
+    it('should persist multiple tool calls from a single message exchange', async () => {
+      await sessionHost.initialize();
+
+      mockDataComposer.repositories.activityStream.getConversationHistory.mockResolvedValue([]);
+      await sessionHost.handleMessage(
+        'telegram',
+        'chat-123',
+        { id: '726555973', name: 'Conor' },
+        'Check emails and calendar',
+        { userId: 'user-456' }
+      );
+
+      // First tool call: list_emails
+      mockBackendManager.emit('tool:call', {
+        toolUseId: 'toolu_01ABC',
+        toolName: 'mcp__pcp__list_emails',
+        input: { maxResults: 5 },
+      });
+
+      // First tool result
+      mockBackendManager.emit('tool:result', {
+        toolUseId: 'toolu_01ABC',
+        content: '{"emails": []}',
+      });
+
+      // Second tool call: list_calendar_events
+      mockBackendManager.emit('tool:call', {
+        toolUseId: 'toolu_02DEF',
+        toolName: 'mcp__pcp__list_calendar_events',
+        input: { calendarId: 'primary' },
+      });
+
+      // Second tool result
+      mockBackendManager.emit('tool:result', {
+        toolUseId: 'toolu_02DEF',
+        content: '{"events": []}',
+      });
+
+      await vi.waitFor(() => {
+        const calls = mockDataComposer.repositories.activityStream.logActivity.mock.calls;
+        const toolCallLogs = calls.filter(
+          (c: unknown[]) => (c[0] as Record<string, unknown>).type === 'tool_call'
+        );
+        const toolResultLogs = calls.filter(
+          (c: unknown[]) => (c[0] as Record<string, unknown>).type === 'tool_result'
+        );
+        expect(toolCallLogs).toHaveLength(2);
+        expect(toolResultLogs).toHaveLength(2);
+        expect((toolCallLogs[0][0] as Record<string, unknown>).subtype).toBe('mcp__pcp__list_emails');
+        expect((toolCallLogs[1][0] as Record<string, unknown>).subtype).toBe('mcp__pcp__list_calendar_events');
       });
     });
   });

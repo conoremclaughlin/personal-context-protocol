@@ -512,6 +512,132 @@ describe('Session Continuity', () => {
     expect(responses.length).toBe(0);
   });
 
+  it('should emit tool:call when assistant message contains tool_use blocks', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const toolCalls: Array<{ toolUseId: string; toolName: string; input: Record<string, unknown> }> = [];
+    backend.on('tool:call', (data) => toolCalls.push(data));
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Check my emails', timestamp: new Date(),
+    });
+
+    // Emit assistant message with text + tool_use
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"s1"}\n' +
+      '{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check."},{"type":"tool_use","id":"toolu_01ABC","name":"mcp__pcp__list_emails","input":{"userId":"user-456","maxResults":5}}]}}\n' +
+      '{"type":"result","result":"","usage":{"input_tokens":1000,"output_tokens":200}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]).toEqual({
+      toolUseId: 'toolu_01ABC',
+      toolName: 'mcp__pcp__list_emails',
+      input: { userId: 'user-456', maxResults: 5 },
+    });
+  });
+
+  it('should emit tool:result when user message contains tool_result blocks', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const toolResults: Array<{ toolUseId: string; content: string }> = [];
+    backend.on('tool:result', (data) => toolResults.push(data));
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Check emails', timestamp: new Date(),
+    });
+
+    // Emit user message with tool_result (string content)
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"s1"}\n' +
+      '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_01ABC","content":"{\\"emails\\":[],\\"count\\":0}"}]}}\n' +
+      '{"type":"result","result":"","usage":{"input_tokens":1000,"output_tokens":200}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0]).toEqual({
+      toolUseId: 'toolu_01ABC',
+      content: '{"emails":[],"count":0}',
+    });
+  });
+
+  it('should handle tool_result with array content blocks', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const toolResults: Array<{ toolUseId: string; content: string }> = [];
+    backend.on('tool:result', (data) => toolResults.push(data));
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Test', timestamp: new Date(),
+    });
+
+    // Emit user message with tool_result using array content (alternate format)
+    const arrayContent = [
+      { type: 'text', text: 'Part 1' },
+      { type: 'text', text: ' Part 2' },
+    ];
+    mockProcess.stdout.emit('data', Buffer.from(
+      `{"type":"system","session_id":"s1"}\n` +
+      `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_02DEF","content":${JSON.stringify(arrayContent)}}]}}\n` +
+      `{"type":"result","result":"","usage":{"input_tokens":1000,"output_tokens":200}}\n`
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    expect(toolResults).toHaveLength(1);
+    expect(toolResults[0].toolUseId).toBe('toolu_02DEF');
+    expect(toolResults[0].content).toBe('Part 1 Part 2');
+  });
+
+  it('should emit multiple tool:call and tool:result events for multi-tool interactions', async () => {
+    const { ClaudeCodeBackend } = await import('./claude-code.backend');
+    const backend = new ClaudeCodeBackend({ type: 'claude-code' });
+    await backend.initialize();
+
+    const toolCalls: Array<{ toolUseId: string; toolName: string }> = [];
+    const toolResults: Array<{ toolUseId: string }> = [];
+    backend.on('tool:call', (data) => toolCalls.push(data));
+    backend.on('tool:result', (data) => toolResults.push(data));
+
+    const msg = backend.sendMessage({
+      id: 'msg-1', channel: 'telegram', conversationId: 'c1',
+      sender: { id: 'u1' }, content: 'Check emails and calendar', timestamp: new Date(),
+    });
+
+    // Multi-turn tool interaction
+    mockProcess.stdout.emit('data', Buffer.from(
+      '{"type":"system","session_id":"s1"}\n' +
+      // Assistant calls two tools
+      '{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_A","name":"list_emails","input":{}},{"type":"tool_use","id":"toolu_B","name":"list_events","input":{}}]}}\n' +
+      // Results come back
+      '{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_A","content":"emails"},{"type":"tool_result","tool_use_id":"toolu_B","content":"events"}]}}\n' +
+      // Final result
+      '{"type":"result","result":"Done","usage":{"input_tokens":2000,"output_tokens":400}}\n'
+    ));
+    mockProcess.emit('close', 0);
+    await msg;
+
+    expect(toolCalls).toHaveLength(2);
+    expect(toolCalls[0].toolName).toBe('list_emails');
+    expect(toolCalls[1].toolName).toBe('list_events');
+    expect(toolResults).toHaveLength(2);
+    expect(toolResults[0].toolUseId).toBe('toolu_A');
+    expect(toolResults[1].toolUseId).toBe('toolu_B');
+  });
+
   it('should NOT use --resume flag for new sessions', async () => {
     const { ClaudeCodeBackend } = await import('./claude-code.backend');
     const backend = new ClaudeCodeBackend({ type: 'claude-code' });
