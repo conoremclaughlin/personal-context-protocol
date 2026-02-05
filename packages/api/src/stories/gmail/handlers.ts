@@ -95,6 +95,22 @@ export const draftEmailSchema = userIdentifierBaseSchema.extend({
 
 export const listLabelsSchema = userIdentifierBaseSchema.extend({});
 
+export const modifyEmailsSchema = userIdentifierBaseSchema.extend({
+  messageIds: z
+    .array(z.string())
+    .min(1)
+    .max(100)
+    .describe('Email message IDs to modify (max 100)'),
+  addLabelIds: z
+    .array(z.string())
+    .optional()
+    .describe('Label IDs to add (e.g., ["STARRED", "IMPORTANT"])'),
+  removeLabelIds: z
+    .array(z.string())
+    .optional()
+    .describe('Label IDs to remove (e.g., ["UNREAD", "INBOX"])'),
+});
+
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -542,6 +558,116 @@ export async function handleListLabels(
             {
               success: false,
               error: message,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
+/**
+ * Modify email labels (mark as read/unread, star/unstar, archive, etc.)
+ *
+ * Common operations:
+ * - Mark as read: removeLabelIds: ['UNREAD']
+ * - Mark as unread: addLabelIds: ['UNREAD']
+ * - Star: addLabelIds: ['STARRED']
+ * - Unstar: removeLabelIds: ['STARRED']
+ * - Archive: removeLabelIds: ['INBOX']
+ * - Move to trash: addLabelIds: ['TRASH']
+ */
+export async function handleModifyEmails(
+  args: unknown,
+  dataComposer: DataComposer
+): Promise<ToolResult> {
+  const params = modifyEmailsSchema.parse(args);
+  const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
+
+  // Validate at least one action
+  if (!params.addLabelIds?.length && !params.removeLabelIds?.length) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              success: false,
+              error: 'Must specify at least one of addLabelIds or removeLabelIds',
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const gmailService = getGmailService();
+
+  try {
+    const result = await gmailService.modifyEmails(user.id, {
+      messageIds: params.messageIds,
+      addLabelIds: params.addLabelIds,
+      removeLabelIds: params.removeLabelIds,
+    });
+
+    logger.info('Modified emails', {
+      userId: user.id,
+      modifiedCount: result.modified.length,
+      failedCount: result.failed.length,
+      addLabelIds: params.addLabelIds,
+      removeLabelIds: params.removeLabelIds,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              success: true,
+              user: { id: user.id, resolvedBy },
+              message: `Modified ${result.modified.length} emails${result.failed.length > 0 ? `, ${result.failed.length} failed` : ''}`,
+              modifiedCount: result.modified.length,
+              failedCount: result.failed.length,
+              modified: result.modified,
+              failed: result.failed.length > 0 ? result.failed : undefined,
+              operations: {
+                addedLabels: params.addLabelIds,
+                removedLabels: params.removeLabelIds,
+              },
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to modify emails', {
+      userId: user.id,
+      messageIds: params.messageIds,
+      error: message,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              success: false,
+              error: message,
+              hint:
+                message.includes('gmail.modify')
+                  ? 'User needs to re-authorize Google with Gmail modify permissions'
+                  : undefined,
             },
             null,
             2

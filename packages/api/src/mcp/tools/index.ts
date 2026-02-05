@@ -185,12 +185,14 @@ import {
   handleReplyToEmail,
   handleDraftEmail,
   handleListLabels,
+  handleModifyEmails,
   listEmailsSchema,
   getEmailSchema,
   sendEmailSchema,
   replyToEmailSchema,
   draftEmailSchema,
   listLabelsSchema,
+  modifyEmailsSchema,
 } from '../../stories/gmail/handlers';
 
 import {
@@ -2551,6 +2553,40 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleListLabels(args, dataComposer);
       } catch (error) {
         logger.error('Error in list_email_labels:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'modify_emails',
+    {
+      description: `Modify Gmail email labels to mark as read/unread, star/unstar, archive, etc.
+
+Common operations:
+- Mark as read: removeLabelIds: ['UNREAD']
+- Mark as unread: addLabelIds: ['UNREAD']
+- Star: addLabelIds: ['STARRED']
+- Unstar: removeLabelIds: ['STARRED']
+- Archive: removeLabelIds: ['INBOX']
+- Move to trash: addLabelIds: ['TRASH']
+- Mark important: addLabelIds: ['IMPORTANT']
+
+Supports batch operations on up to 100 emails at once.
+
+User must have connected their Google account with Gmail permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: modifyEmailsSchema,
+    },
+    async (args) => {
+      try {
+        return await handleModifyEmails(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in modify_emails:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,

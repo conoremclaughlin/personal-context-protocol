@@ -98,3 +98,14 @@ export interface EmailSearchResult {
   nextPageToken?: string;
   resultSizeEstimate: number;
 }
+
+export interface ModifyEmailOptions {
+  messageIds: string[];
+  addLabelIds?: string[];
+  removeLabelIds?: string[];
+}
+
+export interface ModifyEmailResult {
+  modified: string[];
+  failed: Array<{ messageId: string; error: string }>;
+}

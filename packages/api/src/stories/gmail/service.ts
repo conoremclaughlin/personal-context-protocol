@@ -19,6 +19,8 @@ import type {
   SendEmailOptions,
   DraftEmailOptions,
   ReplyToEmailOptions,
+  ModifyEmailOptions,
+  ModifyEmailResult,
 } from './types';
 
 export class GmailService {
@@ -336,6 +338,67 @@ export class GmailService {
       messagesTotal: label.messagesTotal || undefined,
       messagesUnread: label.messagesUnread || undefined,
     }));
+  }
+
+  /**
+   * Modify email labels (mark as read/unread, star/unstar, archive, etc.)
+   *
+   * Common operations:
+   * - Mark as read: removeLabelIds: ['UNREAD']
+   * - Mark as unread: addLabelIds: ['UNREAD']
+   * - Star: addLabelIds: ['STARRED']
+   * - Unstar: removeLabelIds: ['STARRED']
+   * - Archive: removeLabelIds: ['INBOX']
+   * - Move to trash: addLabelIds: ['TRASH']
+   */
+  async modifyEmails(userId: string, options: ModifyEmailOptions): Promise<ModifyEmailResult> {
+    const gmail = await this.getClient(userId);
+
+    const { messageIds, addLabelIds, removeLabelIds } = options;
+
+    logger.info('Modifying emails', {
+      userId,
+      count: messageIds.length,
+      addLabelIds,
+      removeLabelIds,
+    });
+
+    const modified: string[] = [];
+    const failed: Array<{ messageId: string; error: string }> = [];
+
+    // Process in parallel with concurrency limit
+    const batchSize = 10;
+    for (let i = 0; i < messageIds.length; i += batchSize) {
+      const batch = messageIds.slice(i, i + batchSize);
+
+      await Promise.all(
+        batch.map(async (messageId) => {
+          try {
+            await gmail.users.messages.modify({
+              userId: 'me',
+              id: messageId,
+              requestBody: {
+                addLabelIds: addLabelIds || [],
+                removeLabelIds: removeLabelIds || [],
+              },
+            });
+            modified.push(messageId);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Unknown error';
+            failed.push({ messageId, error: message });
+            logger.warn('Failed to modify email', { userId, messageId, error: message });
+          }
+        })
+      );
+    }
+
+    logger.info('Emails modified', {
+      userId,
+      modifiedCount: modified.length,
+      failedCount: failed.length,
+    });
+
+    return { modified, failed };
   }
 
   /**
