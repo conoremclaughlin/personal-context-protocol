@@ -30,7 +30,16 @@ export class GmailService {
    * Get an authenticated Gmail API client for a user
    */
   private async getClient(userId: string): Promise<gmail_v1.Gmail> {
+    const startTime = Date.now();
+    logger.debug('[Gmail:getClient] Fetching OAuth token', { userId });
+
     const accessToken = await this.oauthService.getValidAccessToken(userId, 'google');
+
+    logger.debug('[Gmail:getClient] Got OAuth token', {
+      userId,
+      tokenLength: accessToken?.length,
+      durationMs: Date.now() - startTime,
+    });
 
     const auth = new google.auth.OAuth2();
     auth.setCredentials({ access_token: accessToken });
@@ -354,33 +363,48 @@ export class GmailService {
    * - Move to trash: addLabelIds: ['TRASH']
    */
   async modifyEmails(userId: string, options: ModifyEmailOptions): Promise<ModifyEmailResult> {
+    const startTime = Date.now();
+    logger.info('[Gmail:modifyEmails] Starting', {
+      userId,
+      count: options.messageIds.length,
+      addLabelIds: options.addLabelIds,
+      removeLabelIds: options.removeLabelIds,
+    });
+
+    const clientStartTime = Date.now();
     const gmail = await this.getClient(userId);
+    logger.debug('[Gmail:modifyEmails] Got authenticated client', {
+      userId,
+      durationMs: Date.now() - clientStartTime,
+    });
 
     const { messageIds, addLabelIds, removeLabelIds } = options;
-
-    logger.info('Modifying emails via batchModify', {
-      userId,
-      count: messageIds.length,
-      addLabelIds,
-      removeLabelIds,
-    });
 
     const modified: string[] = [];
     const failed: Array<{ messageId: string; error: string }> = [];
 
     // Gmail batchModify supports up to 1000 IDs per request
     const batchSize = 1000;
+    const totalBatches = Math.ceil(messageIds.length / batchSize);
 
     for (let i = 0; i < messageIds.length; i += batchSize) {
       const batch = messageIds.slice(i, i + batchSize);
       const batchNum = Math.floor(i / batchSize) + 1;
-      const totalBatches = Math.ceil(messageIds.length / batchSize);
 
-      logger.info(`Processing batch ${batchNum}/${totalBatches} (${batch.length} emails)`, { userId });
+      logger.info(`[Gmail:modifyEmails] Starting batch ${batchNum}/${totalBatches}`, {
+        userId,
+        batchSize: batch.length,
+        firstMessageId: batch[0],
+        lastMessageId: batch[batch.length - 1],
+      });
+
+      const batchStartTime = Date.now();
 
       try {
         // Use batchModify for efficient bulk modification
-        await gmail.users.messages.batchModify({
+        logger.debug('[Gmail:modifyEmails] Calling Gmail API batchModify...', { userId, batchNum });
+
+        const response = await gmail.users.messages.batchModify({
           userId: 'me',
           requestBody: {
             ids: batch,
@@ -389,20 +413,41 @@ export class GmailService {
           },
         });
 
+        const batchDuration = Date.now() - batchStartTime;
+
         // batchModify succeeds atomically for all IDs in the batch
         modified.push(...batch);
-        logger.info(`Batch ${batchNum} completed successfully`, {
+        logger.info(`[Gmail:modifyEmails] Batch ${batchNum} completed`, {
           userId,
           modifiedCount: batch.length,
+          durationMs: batchDuration,
+          responseStatus: response.status,
+          responseStatusText: response.statusText,
         });
       } catch (error) {
+        const batchDuration = Date.now() - batchStartTime;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        const errorDetails = error instanceof Error ? {
+          name: error.name,
+          stack: error.stack?.split('\n').slice(0, 3).join(' | '),
+        } : {};
+
         // If batch fails, fall back to individual modifications to identify which failed
-        logger.warn(`Batch ${batchNum} failed, falling back to individual modifications`, {
+        logger.warn(`[Gmail:modifyEmails] Batch ${batchNum} failed after ${batchDuration}ms`, {
           userId,
-          error: error instanceof Error ? error.message : 'Unknown error',
+          error: errorMessage,
+          ...errorDetails,
         });
 
-        for (const messageId of batch) {
+        logger.info(`[Gmail:modifyEmails] Falling back to individual modifications for ${batch.length} emails`, { userId });
+
+        let individualSuccess = 0;
+        let individualFailed = 0;
+
+        for (let j = 0; j < batch.length; j++) {
+          const messageId = batch[j];
+          const individualStartTime = Date.now();
+
           try {
             await gmail.users.messages.modify({
               userId: 'me',
@@ -413,19 +458,43 @@ export class GmailService {
               },
             });
             modified.push(messageId);
+            individualSuccess++;
+
+            if ((j + 1) % 10 === 0) {
+              logger.debug(`[Gmail:modifyEmails] Individual progress: ${j + 1}/${batch.length}`, {
+                userId,
+                successCount: individualSuccess,
+                failedCount: individualFailed,
+              });
+            }
           } catch (individualError) {
             const message = individualError instanceof Error ? individualError.message : 'Unknown error';
             failed.push({ messageId, error: message });
-            logger.warn('Failed to modify email', { userId, messageId, error: message });
+            individualFailed++;
+            logger.warn('[Gmail:modifyEmails] Individual modify failed', {
+              userId,
+              messageId,
+              error: message,
+              durationMs: Date.now() - individualStartTime,
+            });
           }
         }
+
+        logger.info(`[Gmail:modifyEmails] Individual fallback completed`, {
+          userId,
+          successCount: individualSuccess,
+          failedCount: individualFailed,
+        });
       }
     }
 
-    logger.info('Emails modified', {
+    const totalDuration = Date.now() - startTime;
+    logger.info('[Gmail:modifyEmails] Completed', {
       userId,
       modifiedCount: modified.length,
       failedCount: failed.length,
+      totalDurationMs: totalDuration,
+      avgMsPerEmail: modified.length > 0 ? Math.round(totalDuration / modified.length) : 0,
     });
 
     return { modified, failed };
