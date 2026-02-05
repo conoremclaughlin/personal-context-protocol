@@ -334,7 +334,13 @@ When presenting times from emails, APIs, or databases:
 - Use friendly formats: "Wed, Feb 4 at 10:55 AM PST" (not raw UTC)
 - For relative times: "2 hours ago", "yesterday at 3pm"
 
-Example: "Wed, 4 Feb 2026 18:55:35 +0000" → "Wed, Feb 4 at 10:55 AM PST"`;
+Example: "Wed, 4 Feb 2026 18:55:35 +0000" → "Wed, Feb 4 at 10:55 AM PST"
+
+**"Today" means the user's local date**, not UTC. When setting reminders or referencing dates:
+- "Today" = the current date in ${timezone}
+- "Tomorrow" = the next calendar day in ${timezone}
+
+**Subjective day ambiguity**: People often stay up past midnight. If it's 1-4am and they say "today," they might mean the day they woke up (yesterday's calendar date) rather than the new calendar date. When scheduling something important and time context is ambiguous, ask: "Just to confirm - do you mean today (Wed the 4th) or tomorrow (Thu the 5th)?"`;
   }
 
   return prompt;
