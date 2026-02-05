@@ -1,5 +1,23 @@
 #!/usr/bin/env npx tsx
 /**
+ * @deprecated This standalone Myra process has been MIGRATED to the PCP server.
+ *
+ * Use `pm2 start pcp` instead. The PCP server (src/server.ts) now handles:
+ * - MCP Server with integrated ChannelGateway (Telegram/WhatsApp)
+ * - Session Host with Claude Code backend
+ * - Heartbeat service for scheduled reminders
+ * - Agent gateway for inter-agent triggers
+ *
+ * This file is kept for reference only. All functionality has been moved to:
+ * - src/server.ts (main orchestrator)
+ * - src/channels/gateway.ts (ChannelGateway)
+ * - src/agent/session-host.ts (SessionHost)
+ *
+ * Migration completed: 2026-02-04
+ *
+ * ---
+ * ORIGINAL DOCUMENTATION (for reference):
+ *
  * Myra - Persistent Messaging Process
  *
  * This is a long-lived process that handles Telegram/WhatsApp connections.
@@ -14,6 +32,9 @@
  * Run: pm2 start myra
  *      yarn myra
  */
+
+console.warn('⚠️  DEPRECATED: This standalone Myra process has been migrated to the PCP server.');
+console.warn('   Use `pm2 start pcp` instead.');
 
 import path from 'path';
 import http from 'http';

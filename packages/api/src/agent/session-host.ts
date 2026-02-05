@@ -17,20 +17,40 @@ import { BackendManager, createBackendManager, BackendManagerConfig } from './ba
 import { setResponseCallback, addPendingMessage } from '../mcp/tools/response-handlers';
 import { getAgentGateway, type AgentTriggerPayload } from '../channels/agent-gateway';
 
-const COMPACTION_PROMPT = `[SYSTEM: SESSION COMPACTION REQUEST]
+/**
+ * Build the compaction prompt with userId and agentId for MCP tool calls.
+ */
+function buildCompactionPrompt(userId: string, agentId: string): string {
+  return `[SYSTEM: SESSION COMPACTION REQUEST]
 
 Your context window is approaching capacity. This session will be rotated soon.
 Please perform the following maintenance tasks:
 
-1. Call \`compact_session\` to convert your session logs into durable memories.
-2. Review your recent conversation history for any important context, decisions, insights, or user preferences that may NOT be captured in session logs. Create a SINGLE consolidated summary memory using \`remember\` with topics: ["session-summary"] and salience: "high". Do NOT create separate memories for each item — consolidate everything into one comprehensive summary so the next session can reload it efficiently.
-3. Use \`create_task\` to capture any pending work or commitments you haven't completed yet.
+## Required Parameters
+For all MCP tool calls below, use these values:
+- userId: "${userId}"
+- agentId: "${agentId}"
 
-IMPORTANT:
+## Tasks
+
+1. Call \`mcp__pcp__compact_session\` with userId="${userId}" to convert your session logs into durable memories.
+
+2. Call \`mcp__pcp__remember\` to create ONE consolidated summary memory:
+   - userId: "${userId}"
+   - agentId: "${agentId}"
+   - content: A summary of the conversation including key facts, decisions, and context
+   - salience: "high"
+   - topics: ["session-summary"]
+   - source: "compaction"
+
+3. If there are pending tasks or commitments, use \`mcp__pcp__create_task\` with userId="${userId}".
+
+## IMPORTANT
 - This is an internal system message. Do NOT call send_response.
 - Do NOT call end_session — the system handles rotation automatically.
 - Complete these tasks silently and efficiently.
 - NEVER save sensitive information as memories: API keys, passwords, credit card numbers, payment details, SSNs, or other secrets. Summarize around them.`;
+}
 
 export interface ChannelSender {
   sendMessage(conversationId: string, content: string, options?: {
@@ -561,6 +581,13 @@ export class SessionHost extends EventEmitter {
     const sender = this.channels.get(channel);
 
     if (!sender) {
+      // Fallback: route telegram/whatsapp through Myra's HTTP endpoint
+      // This enables headless agents (without listeners) to still send messages
+      if (channel === 'telegram' || channel === 'whatsapp') {
+        await this.sendViaMyraHttp(channel, conversationId, content);
+        return;
+      }
+
       logger.warn(`No sender registered for channel: ${channel}`);
       // Emit event so external handlers can pick it up
       this.emit('response:unrouted', { channel, conversationId, content, options });
@@ -572,6 +599,40 @@ export class SessionHost extends EventEmitter {
       logger.info(`Response sent to ${channel}:${conversationId}`);
     } catch (error) {
       logger.error(`Failed to send to ${channel}:`, error);
+      this.emit('response:error', { channel, conversationId, content, error });
+    }
+  }
+
+  /**
+   * Send message via Myra's HTTP endpoint (fallback for headless operation)
+   */
+  private async sendViaMyraHttp(
+    channel: 'telegram' | 'whatsapp',
+    conversationId: string,
+    content: string
+  ): Promise<void> {
+    const myraUrl = process.env.MYRA_SEND_URL || 'http://localhost:3003/api/admin/send';
+
+    try {
+      logger.info(`Routing ${channel} message through Myra HTTP endpoint`, {
+        conversationId,
+        contentLength: content.length,
+      });
+
+      const response = await fetch(myraUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channel, conversationId, content }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(`Myra send failed: ${errorData.error || response.statusText}`);
+      }
+
+      logger.info(`Response sent to ${channel}:${conversationId} via Myra HTTP`);
+    } catch (error) {
+      logger.error(`Failed to send via Myra HTTP:`, error);
       this.emit('response:error', { channel, conversationId, content, error });
     }
   }
@@ -832,8 +893,18 @@ export class SessionHost extends EventEmitter {
     this.compactionInProgress = true;
     this.emit('session:compactionStarted', { agentId: this.agentId });
 
+    // Resolve userId for compaction prompt
+    const userId = this.agentOwnerUserId || this.currentMessageUserId;
+    if (!userId) {
+      logger.warn('No userId available for compaction — skipping compaction message', {
+        agentId: this.agentId,
+      });
+      return;
+    }
+
     logger.info('Compaction threshold reached, sending compaction message to agent', {
       agentId: this.agentId,
+      userId,
     });
 
     const compactionMessage: AgentMessage = {
@@ -841,7 +912,7 @@ export class SessionHost extends EventEmitter {
       channel: 'agent' as ChannelType,
       conversationId: `compaction-${this.agentId}`,
       sender: { id: 'system', name: 'System' },
-      content: COMPACTION_PROMPT,
+      content: buildCompactionPrompt(userId, this.agentId || 'unknown'),
       timestamp: new Date(),
       metadata: { isInternal: true, isCompaction: true },
     };

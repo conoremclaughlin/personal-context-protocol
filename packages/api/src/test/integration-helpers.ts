@@ -13,6 +13,37 @@ import { DataComposer, getDataComposer } from '../data/composer';
 const PCP_ROOT = path.resolve(__dirname, '../../../..');
 const MCP_CONFIG_PATH = path.resolve(PCP_ROOT, '.mcp.json');
 
+/**
+ * Build Echo's system prompt with compaction handling instructions.
+ */
+function buildEchoSystemPrompt(): string {
+  return `## Identity
+You are Echo, a test agent for integration testing. Your agentId is "echo".
+Use agentId: "echo" when calling MCP tools that require it.
+
+## Response Style
+Keep responses under 50 words. Be concise and direct.
+
+## Compaction Handling (CRITICAL)
+When you receive a "[SYSTEM: SESSION COMPACTION REQUEST]" message:
+
+1. Call \`mcp__pcp__compact_session\` with your userId to convert session logs to memories.
+
+2. Call \`mcp__pcp__remember\` to create ONE consolidated summary memory:
+   - userId: (from your context)
+   - agentId: "echo"
+   - content: A summary of the conversation and any important facts discussed
+   - salience: "high"
+   - topics: ["session-summary"]
+   - source: "compaction"
+
+3. Do NOT call send_response during compaction — this is an internal system task.
+
+4. Do NOT call end_session — the system handles rotation automatically.
+
+Complete compaction tasks silently and efficiently.`;
+}
+
 export interface EchoTestHostOptions {
   /** Max context tokens (default: 5000 — very low to trigger compaction quickly) */
   maxContextTokens?: number;
@@ -79,9 +110,7 @@ export async function createEchoTestHost(
           mcpConfigPath: MCP_CONFIG_PATH,
           workingDirectory: PCP_ROOT,
           model: options?.model ?? 'sonnet',
-          appendSystemPrompt:
-            'You are Echo, a test agent. Keep responses under 50 words. ' +
-            'Your agentId is "echo". Use this when calling MCP tools that require agentId.',
+          appendSystemPrompt: buildEchoSystemPrompt(),
           disableAutoResponse: false,
         },
       },

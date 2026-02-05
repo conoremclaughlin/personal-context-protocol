@@ -241,11 +241,11 @@ export async function handleListReminders(
 
     const supabase = getSupabase();
 
+    // Query all reminders if includeCompleted, otherwise only active/paused
     let query = supabase
       .from('scheduled_reminders')
       .select('*')
       .eq('user_id', resolved.user.id)
-      .order('next_run_at', { ascending: true })
       .limit(args.limit || 20);
 
     if (args.status) {
@@ -260,21 +260,47 @@ export async function handleListReminders(
       return mcpResponse({ success: false, error: error.message }, true);
     }
 
+    const mapReminder = (r: typeof data[0]) => ({
+      id: r.id,
+      title: r.title,
+      description: r.description,
+      deliveryChannel: r.delivery_channel,
+      cronExpression: r.cron_expression,
+      nextRunAt: r.next_run_at,
+      lastRunAt: r.last_run_at,
+      status: r.status,
+      runCount: r.run_count,
+      maxRuns: r.max_runs,
+      isRecurring: !!r.cron_expression,
+    });
+
+    // Sort: active/paused first (by next_run_at), then completed/failed (by last_run_at desc)
+    const active = (data || [])
+      .filter(r => r.status === 'active' || r.status === 'paused')
+      .sort((a, b) => new Date(a.next_run_at || 0).getTime() - new Date(b.next_run_at || 0).getTime());
+
+    const completed = (data || [])
+      .filter(r => r.status === 'completed' || r.status === 'failed')
+      .sort((a, b) => new Date(b.last_run_at || 0).getTime() - new Date(a.last_run_at || 0).getTime());
+
+    // Return grouped response if there are completed reminders
+    if (completed.length > 0 && args.includeCompleted) {
+      return mcpResponse({
+        success: true,
+        activeReminders: active.map(mapReminder),
+        completedReminders: completed.map(mapReminder),
+        summary: {
+          active: active.length,
+          completed: completed.length,
+          total: active.length + completed.length,
+        },
+      });
+    }
+
+    // Return flat list if no completed or not including them
     return mcpResponse({
       success: true,
-      reminders: (data || []).map(r => ({
-        id: r.id,
-        title: r.title,
-        description: r.description,
-        deliveryChannel: r.delivery_channel,
-        cronExpression: r.cron_expression,
-        nextRunAt: r.next_run_at,
-        lastRunAt: r.last_run_at,
-        status: r.status,
-        runCount: r.run_count,
-        maxRuns: r.max_runs,
-        isRecurring: !!r.cron_expression,
-      })),
+      reminders: active.map(mapReminder),
     });
   } catch (error) {
     return mcpResponse({

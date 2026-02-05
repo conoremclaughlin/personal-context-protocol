@@ -1,0 +1,51 @@
+/**
+ * Session Service - Public Exports
+ *
+ * Stateless session management for multi-user agent orchestration.
+ */
+
+// Main service
+export { SessionService, type SessionServiceConfig } from './session-service.js';
+
+// Repository (for direct database access if needed)
+export { SessionRepository } from './session-repository.js';
+
+// Context builder
+export { ContextBuilder, formatInjectedContext } from './context-builder.js';
+
+// Claude runner
+export { ClaudeRunner, buildIdentityPrompt } from './claude-runner.js';
+
+// Types
+export type {
+  // Channel types
+  ChannelType,
+  ChatType,
+  MediaAttachment,
+
+  // Session types
+  SessionType,
+  SessionStatus,
+  Session,
+
+  // Request/Response types
+  SessionRequest,
+  ChannelResponse,
+  SessionResult,
+
+  // Context injection types
+  AgentIdentity,
+  UserContext,
+  TemporalContext,
+  InjectedContext,
+
+  // Service interfaces
+  ISessionService,
+  ISessionRepository,
+  IContextBuilder,
+
+  // Claude runner types
+  ClaudeRunnerConfig,
+  ClaudeRunnerResult,
+  IClaudeRunner,
+} from './types.js';

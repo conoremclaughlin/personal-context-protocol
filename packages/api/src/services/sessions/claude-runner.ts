@@ -1,0 +1,322 @@
+/**
+ * Claude Runner
+ *
+ * Spawns and manages Claude Code processes.
+ * Handles message processing and response parsing.
+ */
+
+import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
+import type {
+  InjectedContext,
+  ClaudeRunnerConfig,
+  ClaudeRunnerResult,
+  ChannelResponse,
+  ChannelType,
+  IClaudeRunner,
+} from './types.js';
+import { formatInjectedContext } from './context-builder.js';
+import { logger } from '../../utils/logger.js';
+
+/**
+ * Parse usage stats from Claude Code stream output.
+ */
+interface ClaudeUsageStats {
+  contextTokens: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+}
+
+export class ClaudeRunner implements IClaudeRunner {
+  async run(
+    message: string,
+    options: {
+      claudeSessionId?: string;
+      injectedContext?: InjectedContext;
+      config: ClaudeRunnerConfig;
+    }
+  ): Promise<ClaudeRunnerResult> {
+    const { claudeSessionId, injectedContext, config } = options;
+
+    // Determine if resuming or starting new session
+    const isResume = !!claudeSessionId;
+    let sessionId = claudeSessionId || randomUUID();
+
+    // Build the message with injected context
+    let fullMessage = message;
+    if (injectedContext && !isResume) {
+      // Only inject full context on first message (not resume)
+      const contextBlock = formatInjectedContext(injectedContext);
+      fullMessage = `${contextBlock}\n\n---\n\n${message}`;
+    }
+
+    // Build Claude Code arguments
+    let args = this.buildArgs(sessionId, isResume, config);
+
+    logger.info('Spawning Claude Code', {
+      sessionId,
+      isResume,
+      workingDirectory: config.workingDirectory,
+      messageLength: fullMessage.length,
+    });
+
+    try {
+      const result = await this.spawnProcess(args, fullMessage, config);
+
+      // Check if resume failed because session doesn't exist
+      if (result.resumeFailedNoSession && isResume) {
+        logger.warn('Resume failed - session not found locally. Starting fresh session.', {
+          oldSessionId: sessionId,
+        });
+
+        // Generate a new session ID and retry without resume
+        sessionId = randomUUID();
+        args = this.buildArgs(sessionId, false, config);
+
+        // Rebuild message with full context for new session
+        if (injectedContext) {
+          const contextBlock = formatInjectedContext(injectedContext);
+          fullMessage = `${contextBlock}\n\n---\n\n${message}`;
+        }
+
+        logger.info('Retrying with fresh session', { sessionId });
+        const retryResult = await this.spawnProcess(args, fullMessage, config);
+
+        return {
+          success: true,
+          claudeSessionId: sessionId,
+          responses: retryResult.responses,
+          usage: retryResult.usage,
+          finalTextResponse: retryResult.finalTextResponse,
+        };
+      }
+
+      return {
+        success: true,
+        claudeSessionId: sessionId,
+        responses: result.responses,
+        usage: result.usage,
+        finalTextResponse: result.finalTextResponse,
+      };
+    } catch (error) {
+      logger.error('Claude Code process failed', {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      return {
+        success: false,
+        claudeSessionId: sessionId,
+        responses: [],
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  private buildArgs(
+    sessionId: string,
+    isResume: boolean,
+    config: ClaudeRunnerConfig
+  ): string[] {
+    const args: string[] = ['--print', '--output-format', 'stream-json', '--verbose'];
+
+    // Session handling
+    if (isResume) {
+      args.push('--resume', sessionId);
+    } else {
+      args.push('--session-id', sessionId);
+    }
+
+    // Model
+    if (config.model) {
+      args.push('--model', config.model);
+    }
+
+    // MCP config
+    if (config.mcpConfigPath) {
+      args.push('--mcp-config', config.mcpConfigPath);
+    }
+
+    // System prompt override (survives compaction)
+    if (config.appendSystemPrompt) {
+      args.push('--append-system-prompt', config.appendSystemPrompt);
+    }
+
+    return args;
+  }
+
+  private async spawnProcess(
+    args: string[],
+    message: string,
+    config: ClaudeRunnerConfig
+  ): Promise<{
+    responses: ChannelResponse[];
+    usage?: ClaudeUsageStats;
+    resumeFailedNoSession?: boolean;
+    finalTextResponse?: string;
+  }> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('claude', args, {
+        cwd: config.workingDirectory,
+        env: {
+          ...process.env,
+          // Ensure Claude Code uses correct paths
+          HOME: process.env.HOME,
+          PATH: process.env.PATH,
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      });
+
+      let stdout = '';
+      let stderr = '';
+      const responses: ChannelResponse[] = [];
+      let usage: ClaudeUsageStats | undefined;
+      let resumeFailedNoSession = false;
+      let finalTextResponse: string | undefined;
+
+      proc.stdout.on('data', (data) => {
+        const chunk = data.toString();
+        stdout += chunk;
+
+        // Parse streaming JSON lines
+        const lines = chunk.split('\n').filter((line: string) => line.trim());
+        for (const line of lines) {
+          try {
+            const parsed = JSON.parse(line);
+            this.handleStreamEvent(parsed, responses);
+
+            // Check for resume failure due to missing session
+            if (parsed.type === 'result' && parsed.subtype === 'error_during_execution') {
+              const errors = parsed.errors as string[] | undefined;
+              if (errors?.some((e: string) => e.includes('No conversation found with session ID'))) {
+                resumeFailedNoSession = true;
+              }
+            }
+
+            // Extract usage stats and final text response from result
+            if (parsed.type === 'result') {
+              if (parsed.usage) {
+                usage = {
+                  contextTokens: parsed.usage.context_tokens || 0,
+                  inputTokens: parsed.usage.input_tokens || 0,
+                  outputTokens: parsed.usage.output_tokens || 0,
+                  cacheReadTokens: parsed.usage.cache_read_tokens,
+                  cacheWriteTokens: parsed.usage.cache_write_tokens,
+                };
+              }
+              // Capture the final text response from the result
+              if (parsed.result && typeof parsed.result === 'string') {
+                finalTextResponse = parsed.result;
+              }
+            }
+
+            // Also capture text from assistant messages (streaming)
+            if (parsed.type === 'assistant' && parsed.message?.content) {
+              const content = parsed.message.content as Array<{ type: string; text?: string }>;
+              const textContent = content
+                .filter((c: { type: string }) => c.type === 'text')
+                .map((c: { text?: string }) => c.text || '')
+                .join('');
+              if (textContent) {
+                finalTextResponse = textContent;
+              }
+            }
+          } catch {
+            // Not JSON, likely plain text
+          }
+        }
+      });
+
+      proc.stderr.on('data', (data) => {
+        stderr += data.toString();
+      });
+
+      proc.on('error', (error) => {
+        reject(new Error(`Failed to spawn Claude: ${error.message}`));
+      });
+
+      proc.on('close', (code) => {
+        // Handle resume failure gracefully - don't reject, let caller retry
+        if (resumeFailedNoSession) {
+          resolve({ responses, usage, resumeFailedNoSession: true, finalTextResponse });
+          return;
+        }
+
+        if (code !== 0) {
+          logger.warn('Claude Code exited with non-zero code', { code, stderr });
+          // Don't reject on non-zero exit if we got responses or text
+          if (responses.length === 0 && !finalTextResponse) {
+            reject(new Error(`Claude exited with code ${code}: ${stderr}`));
+            return;
+          }
+        }
+
+        resolve({ responses, usage, finalTextResponse });
+      });
+
+      // Send the message
+      proc.stdin.write(message);
+      proc.stdin.end();
+    });
+  }
+
+  /**
+   * Handle a streaming JSON event from Claude Code.
+   */
+  private handleStreamEvent(
+    event: Record<string, unknown>,
+    responses: ChannelResponse[]
+  ): void {
+    // Look for tool calls, specifically send_response
+    if (event.type === 'tool_use') {
+      const toolName = event.name as string;
+      const input = event.input as Record<string, unknown>;
+
+      if (toolName === 'mcp__pcp__send_response') {
+        const channel = (input.channel as ChannelType) || 'telegram';
+        const response: ChannelResponse = {
+          channel,
+          conversationId: (input.conversationId as string) || '',
+          content: (input.content as string) || '',
+          format: input.format as 'text' | 'markdown' | 'code' | 'json' | undefined,
+          replyToMessageId: input.replyToMessageId as string | undefined,
+        };
+        responses.push(response);
+        logger.debug('Captured send_response call', { response });
+      }
+    }
+
+    // Also check for assistant text responses (fallback if no tool call)
+    if (event.type === 'text' && event.text) {
+      // We could capture this as a default response
+      // but for now, we only route explicit send_response calls
+    }
+  }
+}
+
+/**
+ * Build an identity prompt for append-system-prompt.
+ * This survives context compaction.
+ */
+export function buildIdentityPrompt(
+  agentId: string,
+  agentName: string,
+  soul?: string
+): string {
+  let prompt = `## Identity Override (CRITICAL)
+
+**You are ${agentName}. Your agent ID is \`${agentId}\`.**
+
+When calling PCP tools (bootstrap, remember, recall, start_session, etc.), use \`agentId: "${agentId}"\`.
+
+Do NOT read \`.pcp/identity.json\` — your identity is set by this system prompt.
+Do NOT run \`echo $AGENT_ID\` — you are running headlessly without shell access.`;
+
+  if (soul) {
+    prompt += `\n\n### Soul\n${soul}`;
+  }
+
+  return prompt;
+}

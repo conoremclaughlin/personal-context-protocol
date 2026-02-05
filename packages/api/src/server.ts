@@ -4,33 +4,32 @@
  *
  * Main entry point that orchestrates:
  * - MCP Server with integrated ChannelGateway (Telegram/WhatsApp)
- * - Session Host with persistent Claude Code backend
- * - Response routing via MCP send_response tool (direct, no HTTP round-trip)
- * - Session persistence to Supabase
+ * - SessionService for stateless, horizontally-scalable session management
+ * - Response routing via ChannelGateway
+ * - Heartbeat service for scheduled reminders
  *
  * Architecture:
  * - MCP Server owns the ChannelGateway (central channel management)
  * - ChannelGateway handles all Telegram/WhatsApp listeners
- * - Session Host processes messages and manages AI backend
- * - send_response tool routes directly through ChannelGateway
+ * - SessionService processes messages statelessly (queries DB per-request)
+ * - send_response tool calls are captured and routed through ChannelGateway
  *
  * Run: npx tsx src/server.ts
  *      yarn server
  */
 
 import path from 'path';
-import { getDataComposer } from './data/composer';
-import { getAgentGateway, type TriggerCallback } from './channels/agent-gateway';
-import { createSessionHost, SessionHost } from './agent';
-import { createMCPServer, MCPServer, type IncomingMessageHandler } from './mcp/server';
+import { getDataComposer, DataComposer } from './data/composer';
+import { SessionService, type SessionServiceConfig } from './services/sessions';
+import type { SessionRequest, ChannelResponse, ChannelType } from './services/sessions';
+import { createMCPServer, MCPServer, type IncomingMessageHandler, type ChannelGateway } from './mcp/server';
 import { initHeartbeatService, processHeartbeat, type DueReminder } from './services/heartbeat';
+import { setResponseCallback } from './mcp/tools/response-handlers';
 import { logger } from './utils/logger';
 import { env } from './config/env';
 
 // Server configuration
 interface ServerConfig {
-  /** Backend type: 'claude-code' (default) or 'direct-api' */
-  backend?: 'claude-code' | 'direct-api';
   /** Model to use (default: sonnet) */
   model?: string;
   /** Working directory for Claude Code */
@@ -39,24 +38,42 @@ interface ServerConfig {
   mcpConfigPath?: string;
   /** Telegram polling interval in ms */
   telegramPollingInterval?: number;
-  /** Allowed Telegram chat IDs (empty = allow all) */
-  allowedTelegramChats?: string[];
   /** WhatsApp account ID (default: 'default') */
   whatsappAccountId?: string;
   /** Whether to enable WhatsApp (requires credentials) */
   enableWhatsApp?: boolean;
-  /** System prompt to append */
-  systemPrompt?: string;
-  /** Agent ID for this server instance (for trigger handling) */
-  agentId?: string;
-  /** Trigger handler callback (called when another agent triggers this one) */
-  onAgentTrigger?: TriggerCallback;
+  /** Token threshold for compaction */
+  compactionThreshold?: number;
 }
 
 // Global state
-let sessionHost: SessionHost | null = null;
+let sessionService: SessionService | null = null;
 let mcpServer: MCPServer | null = null;
+let channelGateway: ChannelGateway | null = null;
+let dataComposer: DataComposer | null = null;
 let isShuttingDown = false;
+
+/**
+ * Route responses through the ChannelGateway.
+ * This is called after SessionService processes a message and returns responses.
+ */
+async function routeResponses(responses: ChannelResponse[]): Promise<void> {
+  if (!channelGateway) {
+    logger.warn('Cannot route responses - ChannelGateway not initialized');
+    return;
+  }
+
+  for (const response of responses) {
+    try {
+      await channelGateway.sendResponse(response);
+      logger.info(`Response routed to ${response.channel}:${response.conversationId}`, {
+        contentLength: response.content.length,
+      });
+    } catch (error) {
+      logger.error(`Failed to route response to ${response.channel}:${response.conversationId}`, error);
+    }
+  }
+}
 
 /**
  * Start the PCP server
@@ -68,81 +85,34 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
   const workingDirectory = config.workingDirectory || path.resolve(__dirname, '../../..');
   const mcpConfigPath = config.mcpConfigPath || path.resolve(workingDirectory, '.mcp.json');
   const model = config.model || env.DEFAULT_MODEL || 'sonnet';
-  const backend = config.backend || 'claude-code';
+  const agentId = process.env.AGENT_ID || 'myra';
 
   logger.info('Configuration:', {
-    backend,
     workingDirectory,
     mcpConfigPath,
     model,
+    agentId,
     telegramPollingInterval: config.telegramPollingInterval || 1000,
   });
 
   // 1. Initialize data layer
   logger.info('Initializing data layer...');
-  const dataComposer = await getDataComposer();
+  dataComposer = await getDataComposer();
   logger.info('Data layer ready');
 
-  // 2. Build system prompt with PCP context
-  const systemPrompt = buildSystemPrompt(config.systemPrompt);
-  const identityPrompt = buildIdentityPrompt();
+  // 2. Create SessionService (stateless, queries DB per-request)
+  logger.info('Creating SessionService...');
+  const sessionServiceConfig: Partial<SessionServiceConfig> = {
+    defaultWorkingDirectory: workingDirectory,
+    mcpConfigPath,
+    defaultModel: model,
+    compactionThreshold: config.compactionThreshold || 150000,
+  };
+  sessionService = new SessionService(dataComposer.getClient(), sessionServiceConfig);
+  logger.info('SessionService ready');
 
-  // 3. Create Session Host with the appropriate backend (but don't initialize yet)
-  logger.info(`Creating Session Host with ${backend} backend...`);
-  const agentId = process.env.AGENT_ID || 'myra';
-  sessionHost = createSessionHost({
-    dataComposer,
-    agentId,
-    backend: {
-      primaryBackend: backend,
-      backends: {
-        'claude-code': {
-          mcpConfigPath,
-          workingDirectory,
-          model,
-          systemPrompt,
-          appendSystemPrompt: identityPrompt,
-        },
-        'direct-api': {
-          model: 'claude-sonnet-4-20250514',
-          systemPrompt: identityPrompt + '\n\n' + systemPrompt,
-        },
-      },
-      enableFailover: true,
-    },
-    // Note: Channels are registered via ChannelGateway's response callback
-    // No need to manually register channel senders here
-    channels: {},
-    // Register trigger handlers for known agents (enables wake-up via trigger_agent)
-    registeredAgents: ['myra'],
-  });
-
-  // Forward session host events to console
-  sessionHost.on('text', (text: string) => {
-    process.stdout.write(text);
-  });
-
-  sessionHost.on('backend:ready', (type: string) => {
-    logger.info(`Backend ready: ${type}`);
-  });
-
-  sessionHost.on('backend:error', ({ type, error }: { type: string; error: Error }) => {
-    logger.error(`Backend error (${type}):`, error);
-  });
-
-  sessionHost.on('response:sent', (response: { channel: string; conversationId: string }) => {
-    logger.info(`Response sent to ${response.channel}:${response.conversationId}`);
-  });
-
-  sessionHost.on('response:unrouted', (response: { channel: string; content: string }) => {
-    // For unrouted responses (e.g., terminal), print to stdout
-    if (response.channel === 'terminal') {
-      console.log('\n[Response]', response.content);
-    }
-  });
-
-  // 4. Create the incoming message handler
-  // This connects the ChannelGateway to the SessionHost
+  // 3. Create the incoming message handler
+  // This connects the ChannelGateway to the SessionService
   const messageHandler: IncomingMessageHandler = async (
     channel,
     conversationId,
@@ -150,51 +120,92 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
     content,
     metadata
   ) => {
-    // Resolve or create user based on channel
+    // Resolve userId from channel
     let userId: string | undefined = metadata?.userId;
 
     if (!userId) {
       try {
-        if (channel === 'telegram') {
-          const user = await resolveOrCreateUser(dataComposer, {
-            sender: { id: sender.id, name: sender.name },
-          });
-          userId = user?.id;
-        } else if (channel === 'whatsapp') {
-          const user = await resolveOrCreateWhatsAppUser(dataComposer, {
-            sender: { id: sender.id, name: sender.name },
-          });
-          userId = user?.id;
-        }
+        userId = await resolveUserId(channel, sender.id, sender.name);
       } catch (error) {
         logger.error(`Failed to resolve user for ${channel}:${sender.id}`, error);
+        return;
       }
     }
 
-    // Forward to session host
-    await sessionHost!.handleMessage(
-      channel,
+    if (!userId) {
+      logger.error(`Cannot process message - no userId for ${channel}:${sender.id}`);
+      return;
+    }
+
+    // Build SessionRequest
+    const request: SessionRequest = {
+      userId,
+      agentId,
+      channel: channel as ChannelType,
       conversationId,
-      sender,
+      sender: {
+        id: sender.id,
+        name: sender.name || 'Unknown',
+        username: sender.name, // Use name as username for now
+      },
       content,
-      {
-        userId,
+      metadata: {
         replyToMessageId: metadata?.replyToMessageId,
-        media: metadata?.media,
         chatType: metadata?.chatType,
-        mentions: metadata?.mentions,
+        media: metadata?.media,
+        triggerType: 'message',
+      },
+    };
+
+    // Process through SessionService
+    const result = await sessionService!.handleMessage(request);
+
+    // Route any explicit send_response calls
+    if (result.responses && result.responses.length > 0) {
+      await routeResponses(result.responses);
+    }
+
+    // For external channels (telegram/whatsapp), ensure the conversation is released
+    // and auto-route the text response if no explicit send_response was called
+    const isExternalChannel = channel === 'telegram' || channel === 'whatsapp';
+    if (isExternalChannel && channelGateway) {
+      const hasExplicitResponse = result.responses && result.responses.length > 0;
+
+      if (!hasExplicitResponse && result.finalTextResponse && result.success) {
+        // Auto-route Claude's text response back to the originating channel
+        logger.info('Auto-routing text response (no explicit send_response called)', {
+          channel,
+          conversationId,
+          responseLength: result.finalTextResponse.length,
+        });
+        await channelGateway.releaseConversation(
+          channel as 'telegram' | 'whatsapp',
+          conversationId,
+          { content: result.finalTextResponse, format: 'markdown' }
+        );
+      } else {
+        // Just release the conversation (and process any pending messages)
+        await channelGateway.releaseConversation(
+          channel as 'telegram' | 'whatsapp',
+          conversationId
+        );
       }
-    );
+    }
+
+    if (!result.success) {
+      logger.error('SessionService failed to process message', {
+        error: result.error,
+        sessionId: result.sessionId,
+      });
+    }
   };
 
-  // 5. Start MCP server with ChannelGateway
-  // The gateway now owns Telegram/WhatsApp listeners and routes responses directly
+  // 4. Start MCP server with ChannelGateway
   logger.info('Starting MCP server with ChannelGateway...');
   mcpServer = await createMCPServer(dataComposer, {
     channelGateway: {
       enableTelegram: !!env.TELEGRAM_BOT_TOKEN,
       telegramPollingInterval: config.telegramPollingInterval || 1000,
-      allowedTelegramChats: config.allowedTelegramChats,
       enableWhatsApp: config.enableWhatsApp ?? (process.env.ENABLE_WHATSAPP === 'true'),
       whatsappAccountId: config.whatsappAccountId || 'default',
       printWhatsAppQr: true,
@@ -209,62 +220,40 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
   (env as { MCP_TRANSPORT: string }).MCP_TRANSPORT = originalTransport;
   logger.info(`MCP server ready on port ${env.MCP_HTTP_PORT}`);
 
-  // 5b. Register ChannelGateway's send methods with SessionHost
-  // This allows send_response tool calls to route through the gateway
-  const gateway = mcpServer.getChannelGateway();
-  if (gateway) {
-    // Create channel sender adapters that wrap gateway.sendResponse
-    if (gateway.getStatus().telegram.enabled) {
-      sessionHost.registerChannel('telegram', {
-        sendMessage: async (conversationId, content, options) => {
-          await gateway.sendResponse({
-            channel: 'telegram',
-            conversationId,
-            content,
-            format: options?.format as 'text' | 'markdown' | 'code' | 'json' | undefined,
-            replyToMessageId: options?.replyToMessageId,
-          });
-        },
-      });
-    }
-    if (gateway.getStatus().whatsapp.enabled) {
-      sessionHost.registerChannel('whatsapp', {
-        sendMessage: async (conversationId, content, options) => {
-          await gateway.sendResponse({
-            channel: 'whatsapp',
-            conversationId,
-            content,
-            format: options?.format as 'text' | 'markdown' | 'code' | 'json' | undefined,
-            replyToMessageId: options?.replyToMessageId,
-          });
-        },
-      });
-    }
-    logger.info('ChannelGateway senders registered with SessionHost');
+  // 5. Get ChannelGateway reference for response routing
+  channelGateway = mcpServer.getChannelGateway();
+  if (channelGateway) {
+    logger.info('ChannelGateway ready', channelGateway.getStatus());
+
+    // Register the response callback so send_response MCP calls route through ChannelGateway
+    setResponseCallback(async (response) => {
+      const channelResponse: ChannelResponse = {
+        channel: response.channel as ChannelType,
+        conversationId: response.conversationId,
+        content: response.content,
+        format: response.format,
+        replyToMessageId: response.replyToMessageId,
+      };
+      await channelGateway!.sendResponse(channelResponse);
+      logger.info(`Response routed via callback to ${response.channel}:${response.conversationId}`);
+    });
+    logger.info('Response callback registered for MCP send_response tool');
+  } else {
+    logger.warn('ChannelGateway not available - response routing will fail');
   }
 
-  // 6. Initialize the session host (starts the backend)
-  logger.info('Initializing Session Host (starting Claude Code)...');
-  await sessionHost.initialize();
-  logger.info('Session Host ready');
-
-  // 7. Register agent trigger handler (if configured)
-  if (config.agentId && config.onAgentTrigger) {
-    const agentGateway = getAgentGateway();
-    agentGateway.registerHandler(config.agentId, config.onAgentTrigger);
-    logger.info(`Agent trigger handler registered for: ${config.agentId}`);
-  }
-
-  // 8. Initialize heartbeat service for scheduled reminders
+  // 6. Initialize heartbeat service for scheduled reminders
   const enableLocalCron = process.env.NODE_ENV !== 'production';
   const heartbeatInterval = process.env.HEARTBEAT_INTERVAL || '*/5 * * * *';
 
   /**
-   * Deliver reminder via SessionHost.handleMessage - same path as all other triggers.
-   * The agent receives the reminder context and can respond via send_response.
+   * Deliver reminder via SessionService - same stateless flow as all other messages.
    */
   const deliverReminderViaSession = async (reminder: DueReminder): Promise<boolean> => {
-    const reminderMessage = `[HEARTBEAT REMINDER]
+    // Resolve the userId from the reminder
+    const userId = reminder.user_id;
+
+    const reminderContent = `[HEARTBEAT REMINDER]
 Title: ${reminder.title}
 Description: ${reminder.description || 'No description'}
 Delivery: ${reminder.delivery_channel} → ${reminder.delivery_target || 'default'}
@@ -278,14 +267,32 @@ If you need to message a user on Telegram, use send_response with:
 
 Do NOT just respond here — you MUST explicitly call send_response to reach external channels.`;
 
-    await sessionHost!.handleMessage(
-      'agent',
-      `heartbeat:${reminder.id}`,
-      { id: 'system', name: 'heartbeat' },
-      reminderMessage,
-      { chatType: 'direct' }
-    );
-    return true;
+    const request: SessionRequest = {
+      userId,
+      agentId,
+      channel: 'agent',
+      conversationId: `heartbeat:${reminder.id}`,
+      sender: { id: 'system', name: 'heartbeat' },
+      content: reminderContent,
+      metadata: {
+        triggerType: 'heartbeat',
+        chatType: 'direct',
+      },
+    };
+
+    try {
+      const result = await sessionService!.handleMessage(request);
+
+      // Route any responses
+      if (result.responses && result.responses.length > 0) {
+        await routeResponses(result.responses);
+      }
+
+      return result.success;
+    } catch (error) {
+      logger.error(`Failed to deliver reminder ${reminder.id}:`, error);
+      return false;
+    }
   };
 
   initHeartbeatService({
@@ -299,18 +306,17 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
   });
   logger.info(`Heartbeat service started (interval: ${heartbeatInterval}, local cron: ${enableLocalCron})`);
 
-
-  // 9. Print status
+  // 7. Print status
   printStatus();
 
   // Ready
   logger.info('');
   logger.info('='.repeat(60));
-  logger.info('PCP Server is running');
+  logger.info('PCP Server is running (SessionService architecture)');
   logger.info('='.repeat(60));
   logger.info('');
 
-  const status = gateway?.getStatus();
+  const status = channelGateway?.getStatus();
   const enabledChannels: string[] = [];
   if (status?.telegram.enabled) enabledChannels.push('Telegram');
   if (status?.whatsapp.enabled) enabledChannels.push('WhatsApp');
@@ -325,217 +331,70 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
 }
 
 /**
- * Build identity prompt (injected via --append-system-prompt to survive compaction)
+ * Resolve userId from channel and sender info.
+ * Creates user if not exists.
  */
-function buildIdentityPrompt(): string {
-  const agentId = process.env.AGENT_ID || 'myra';
-  const displayName = agentId.charAt(0).toUpperCase() + agentId.slice(1);
+async function resolveUserId(
+  channel: string,
+  senderId: string,
+  senderName?: string
+): Promise<string | undefined> {
+  if (!dataComposer) return undefined;
 
-  return `## Identity (CRITICAL - This overrides .pcp/identity.json)
-
-**You are ${displayName}. Your agent ID is \`${agentId}\`.**
-
-When bootstrapping via PCP, use \`agentId: "${agentId}"\`.
-Do NOT read \`.pcp/identity.json\` - your identity is set by the server process.
-Skip directly to Step 2 (load user config from ~/.pcp/config.json) and bootstrap as "${agentId}".
-
-## Tool Priority
-
-Always use **PCP cloud tools** (mcp__pcp__*) over Claude Code's built-in equivalents:
-- Tasks: use mcp__pcp__create_task, not TaskCreate
-- Memory: use mcp__pcp__remember, not local notes
-- Sessions: use mcp__pcp__start_session/log_session/end_session
-
-PCP tools persist across sessions and are shared with Conor and all SBs.`;
-}
-
-/**
- * Build the system prompt with PCP context
- */
-function buildSystemPrompt(additionalPrompt?: string): string {
-  const parts: string[] = [];
-
-  const agentId = process.env.AGENT_ID || 'myra';
-  const displayName = agentId.charAt(0).toUpperCase() + agentId.slice(1);
-
-  parts.push(`## Personal Context Protocol (PCP)
-
-You are ${displayName}, an AI being connected to the Personal Context Protocol.
-You're receiving messages from various channels (Telegram, WhatsApp, terminal, etc.).
-
-## Response Instructions
-
-Your response will be automatically routed back to the channel the message came from.
-Be concise and helpful.
-
-The message metadata shows:
-- [Channel: X] - Which platform the message came from (telegram, whatsapp, etc.)
-- [Conversation: X] - The conversation/chat ID
-  - Telegram: negative IDs = group chats
-  - WhatsApp: ends with @g.us = group chats, @s.whatsapp.net = DMs
-- [From: X] - The sender's name or phone number
-
-### Group Chat Behavior (IMPORTANT)
-
-In **group chats** (conversation ID is negative, or chatType is "group"/"supergroup"):
-- **ONLY respond if you are directly mentioned** (@myra_help_bot) or called by name ("Myra")
-- If the message doesn't mention you, stay silent - do NOT respond
-- When you do respond in groups, keep it brief and relevant
-
-In **private/direct chats**: respond to all messages normally.
-
-This prevents you from interrupting group conversations where you weren't addressed.
-
-### Telegram Formatting
-When responding to Telegram, use plain text. Telegram has limited markdown support:
-- Use single newlines for line breaks (double newlines may not render properly)
-- Avoid complex formatting - keep it simple and readable
-- Lists work best as plain text with - or numbers
-
-## Skills (Mini-Apps)
-
-You have access to specialized skills for common tasks. Before responding to requests
-that might use a skill:
-
-1. Check if a skill applies using \`list_skills\` or recognize triggers like:
-   - "split", "bill", "receipt", "who owes" → bill-split skill
-
-2. If a skill applies, call \`get_skill\` to read the full instructions (SKILL.md)
-
-3. Follow the skill's conversation flow and use its functions correctly
-
-**IMPORTANT**: Always read the skill documentation before using skill functions.
-The skill doc explains proper usage, edge cases, and formatting requirements.
-
-## Available MCP Tools
-
-### Skill Tools
-- list_skills - List all available mini-app skills with triggers
-- get_skill - Read the full SKILL.md documentation for a skill
-
-### PCP Tools (mcp__pcp__*)
-Context management:
-- save_context - Save context summaries
-- get_context - Retrieve context
-- save_project, list_projects, get_project - Manage projects
-- set_focus, get_focus - Track current working context
-
-Memory:
-- remember, recall, forget - Long-term memory management
-- bootstrap - Load identity and context at session start
-
-Task management (**USE THESE instead of Claude Code's built-in task tools**):
-- create_task, list_tasks, update_task, complete_task - Manage tasks (cloud-persisted)
-- get_task_stats - Get task statistics
-**IMPORTANT**: Always use PCP cloud tasks (mcp__pcp__create_task, etc.) over local/built-in task tools.
-PCP tasks persist across sessions and are visible to Conor and all SBs.
-
-Link management:
-- save_link, search_links, tag_link - Manage saved links
-
-Chat context (for understanding conversation history):
-- get_chat_context - Fetch recent messages from a chat (ephemeral, 30 min TTL)
-- clear_chat_context - Clear message cache after summarizing (privacy pattern)
-
-Mini-app records (for persisting skill data):
-- save_mini_app_record - Save structured data for a mini-app
-- query_mini_app_records - Query saved records
-- record_mini_app_debt, get_mini_app_debts, settle_mini_app_debt - Debt tracking
-
-### Supabase Tools (mcp__supabase__*)
-You also have access to Supabase MCP tools for direct database operations.
-`);
-
-  if (additionalPrompt) {
-    parts.push('');
-    parts.push('## Additional Instructions');
-    parts.push(additionalPrompt);
-  }
-
-  return parts.join('\n');
-}
-
-/**
- * Resolve or create a user from an incoming Telegram message
- */
-async function resolveOrCreateUser(
-  dataComposer: Awaited<ReturnType<typeof getDataComposer>>,
-  message: { sender: { id: string; username?: string; name?: string } }
-) {
   try {
-    // Try to find by Telegram ID
-    let user = await dataComposer.repositories.users.findByTelegramId(parseInt(message.sender.id, 10));
+    if (channel === 'telegram') {
+      // Try to find by Telegram ID
+      let user = await dataComposer.repositories.users.findByTelegramId(parseInt(senderId, 10));
 
-    if (!user) {
-      // Create new user
-      user = await dataComposer.repositories.users.create({
-        telegram_id: parseInt(message.sender.id, 10),
-        telegram_username: message.sender.username,
-        first_name: message.sender.name?.split(' ')[0],
-        last_name: message.sender.name?.split(' ').slice(1).join(' ') || undefined,
-      });
-      logger.info(`Created new user: ${user.id}`);
+      if (!user) {
+        // Create new user
+        user = await dataComposer.repositories.users.create({
+          telegram_id: parseInt(senderId, 10),
+          first_name: senderName?.split(' ')[0],
+          last_name: senderName?.split(' ').slice(1).join(' ') || undefined,
+        });
+        logger.info(`Created new Telegram user: ${user.id}`);
+      }
+
+      return user.id;
+    } else if (channel === 'whatsapp') {
+      // WhatsApp IDs are phone numbers
+      let user = await dataComposer.repositories.users.findByPhoneNumber(senderId);
+
+      if (!user) {
+        user = await dataComposer.repositories.users.create({
+          phone_number: senderId,
+          first_name: senderName?.split(' ')[0],
+          last_name: senderName?.split(' ').slice(1).join(' ') || undefined,
+        });
+        logger.info(`Created new WhatsApp user: ${user.id}`);
+      }
+
+      return user.id;
     }
-
-    return user;
   } catch (error) {
     logger.error('Failed to resolve user:', error);
-    return null;
   }
-}
 
-/**
- * Resolve or create a user from a WhatsApp message
- */
-async function resolveOrCreateWhatsAppUser(
-  dataComposer: Awaited<ReturnType<typeof getDataComposer>>,
-  message: { sender: { id: string; name?: string } }
-) {
-  try {
-    // WhatsApp IDs are phone numbers in E.164 format
-    const phoneNumber = message.sender.id;
-
-    // Try to find by phone number
-    let user = await dataComposer.repositories.users.findByPhoneNumber(phoneNumber);
-
-    if (!user) {
-      // Create new user with phone number
-      user = await dataComposer.repositories.users.create({
-        phone_number: phoneNumber,
-        first_name: message.sender.name?.split(' ')[0],
-        last_name: message.sender.name?.split(' ').slice(1).join(' ') || undefined,
-      });
-      logger.info(`Created new WhatsApp user: ${user.id}`);
-    }
-
-    return user;
-  } catch (error) {
-    logger.error('Failed to resolve WhatsApp user:', error);
-    return null;
-  }
+  return undefined;
 }
 
 /**
  * Print server status
  */
 function printStatus(): void {
-  if (!sessionHost) return;
-
-  const health = sessionHost.getHealth();
-  const sessionId = sessionHost.getSessionId();
-
   logger.info('');
   logger.info('='.repeat(60));
-  logger.info('Session Status');
+  logger.info('Server Status');
   logger.info('='.repeat(60));
-  logger.info(`  Backend: ${Object.keys(health.backend).find(k => health.backend[k as keyof typeof health.backend]?.healthy) || 'none'}`);
-  logger.info(`  Session ID: ${sessionId || 'none'}`);
-  logger.info(`  Channels: ${health.channels.join(', ') || 'via ChannelGateway'}`);
+  logger.info(`  Architecture: SessionService (stateless)`);
+  logger.info(`  Agent ID: ${process.env.AGENT_ID || 'myra'}`);
+  logger.info(`  MCP Port: ${env.MCP_HTTP_PORT}`);
 
-  if (sessionId) {
-    logger.info('');
-    logger.info('To attach to this session from another terminal:');
-    logger.info(`  claude --resume ${sessionId}`);
+  const status = channelGateway?.getStatus();
+  if (status) {
+    logger.info(`  Telegram: ${status.telegram.enabled ? (status.telegram.connected ? 'Connected' : 'Enabled') : 'Disabled'}`);
+    logger.info(`  WhatsApp: ${status.whatsapp.enabled ? (status.whatsapp.connected ? 'Connected' : 'Awaiting QR') : 'Disabled'}`);
   }
 
   logger.info('='.repeat(60));
@@ -549,12 +408,6 @@ async function shutdown(): Promise<void> {
   isShuttingDown = true;
 
   logger.info('\nShutting down PCP Server...');
-
-  // Shutdown session host
-  if (sessionHost) {
-    await sessionHost.shutdown();
-    logger.info('Session host stopped');
-  }
 
   // Shutdown MCP server (includes ChannelGateway shutdown)
   if (mcpServer) {
@@ -582,12 +435,9 @@ process.on('unhandledRejection', (reason) => {
 
 // Start the server
 startServer({
-  // Use environment variables or defaults
-  backend: (process.env.PCP_BACKEND as 'claude-code' | 'direct-api') || 'claude-code',
   model: env.DEFAULT_MODEL || 'sonnet',
   workingDirectory: process.env.PCP_WORKING_DIR || path.resolve(__dirname, '../../..'),
   mcpConfigPath: process.env.MCP_CONFIG_PATH,
-  systemPrompt: process.env.PCP_SYSTEM_PROMPT,
 }).catch((error) => {
   logger.error('Failed to start server:', error);
   process.exit(1);

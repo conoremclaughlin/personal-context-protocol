@@ -9,9 +9,8 @@
  * - MCP Server (tools, admin API)
  * - ChannelGateway (Telegram/WhatsApp listeners)
  * - SessionHost (Claude Code backend)
- *
- * Legacy 'myra' process is kept but disabled. Enable with:
- *   ENABLE_MYRA_LISTENERS=true pm2 start myra
+ * - Heartbeat service for scheduled reminders
+ * - Agent gateway for inter-agent triggers
  *
  * Commands:
  *   pm2 start ecosystem.config.cjs    # Start all processes
@@ -35,17 +34,13 @@ const nextBin = path.join(rootDir, 'node_modules/.bin/next');
 module.exports = {
   apps: [
     {
-      // Full PCP Server: MCP + ChannelGateway + SessionHost
+      // Full PCP Server: MCP + ChannelGateway + SessionService
+      // Using SessionService for stateless, horizontally-scalable architecture
       name: 'pcp',
       cwd: apiDir,
       script: tsxBin,
-      args: 'watch src/server.ts',
-      watch: [path.join(apiDir, 'src')],
-      ignore_watch: [
-        'node_modules',
-        '.auth',
-        'src/myra',  // Legacy Myra process
-      ],
+      args: 'src/server.ts',
+      watch: false,  // Disable watch - restart manually with: pm2 restart pcp
       env: {
         NODE_ENV: 'development',
         MCP_TRANSPORT: 'http',
@@ -55,24 +50,16 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 1000,
     },
-    {
-      // Legacy standalone Myra process (disabled by default)
-      // Enable with: ENABLE_MYRA_LISTENERS=true pm2 start myra
-      name: 'myra',
-      cwd: apiDir,
-      script: tsxBin,
-      args: 'src/myra/index.ts',
-      watch: false,
-      env: {
-        NODE_ENV: 'development',
-        ENABLE_WHATSAPP: 'true',
-        // Listeners disabled - use 'pcp' process instead
-        // Set ENABLE_MYRA_LISTENERS=true to enable legacy mode
-      },
-      autorestart: false,  // Disabled by default
-      max_restarts: 5,
-      restart_delay: 5000,
-    },
+    // DEPRECATED: Myra standalone process has been migrated to PCP server.
+    // This entry is kept only for cleanup purposes. Use `pm2 delete myra` to remove.
+    // All Myra functionality is now in the 'pcp' process (src/server.ts).
+    // {
+    //   name: 'myra',
+    //   cwd: apiDir,
+    //   script: tsxBin,
+    //   args: 'src/myra/index.ts',
+    //   ...
+    // },
     {
       name: 'web',
       cwd: webDir,

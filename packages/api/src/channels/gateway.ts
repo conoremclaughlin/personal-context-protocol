@@ -572,6 +572,42 @@ export class ChannelGateway extends EventEmitter {
   }
 
   /**
+   * Release the processing lock for a conversation and process any pending messages.
+   * Call this when message processing completes, even if no response was sent.
+   * This prevents conversations from getting stuck.
+   */
+  async releaseConversation(
+    channel: 'telegram' | 'whatsapp',
+    conversationId: string,
+    autoResponse?: { content: string; format?: 'text' | 'markdown' }
+  ): Promise<void> {
+    const key = this.getBufferKey(channel, conversationId);
+
+    // If an auto-response was provided, send it first
+    if (autoResponse && autoResponse.content) {
+      try {
+        await this.sendResponse({
+          channel,
+          conversationId,
+          content: autoResponse.content,
+          format: autoResponse.format,
+        });
+        // sendResponse will call processPendingMessages, so we're done
+        return;
+      } catch (error) {
+        logger.error(`Failed to send auto-response for ${key}:`, error);
+        // Continue to release the lock even if send fails
+      }
+    }
+
+    // Stop typing indicator
+    this.stopTypingIndicator(conversationId);
+
+    // Process pending messages (which will also release the lock)
+    await this.processPendingMessages(channel, conversationId);
+  }
+
+  /**
    * Send a Telegram message with proper formatting
    */
   private async sendTelegramMessage(
