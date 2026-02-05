@@ -286,13 +286,18 @@ export class SessionService implements ISessionService {
 
 Your context window is approaching its limit. Please:
 
-1. **Save important context**: Use \`remember\` to save any important information, decisions, or context that should persist.
+1. **Notify waiting users**: If someone recently reached out and you haven't fully responded yet (or the response requires substantial work), use \`send_response\` to let them know:
+   "I'm running low on my context space, so I'll need a moment to consolidate my memories. I'll get right back to you!"
 
-2. **End current session**: Use \`end_session\` with a summary of what was accomplished.
+   Skip this if you've already fully responded or if it was just a quick exchange that's complete.
 
-3. **Acknowledge**: Reply with "COMPACTION COMPLETE" when done.
+2. **Save important context**: Use \`remember\` to save any important information, decisions, open tasks, or context that should persist beyond this session.
 
-This session will continue with a fresh context after compaction.`;
+3. **End current session**: Use \`end_session\` with a summary of what was accomplished and any pending items.
+
+4. **Acknowledge**: Reply with "COMPACTION COMPLETE" when done.
+
+This session will continue with a fresh context after compaction. Your identity, values, and memories will persist - only the conversation history resets.`;
 
     const context = await this.contextBuilder.buildMinimalContext(
       session.userId,
