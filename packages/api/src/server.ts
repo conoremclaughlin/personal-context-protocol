@@ -25,6 +25,7 @@ import type { SessionRequest, ChannelResponse, ChannelType } from './services/se
 import { createMCPServer, MCPServer, type IncomingMessageHandler, type ChannelGateway } from './mcp/server';
 import { initHeartbeatService, processHeartbeat, type DueReminder } from './services/heartbeat';
 import { setResponseCallback, hasExplicitResponse } from './mcp/tools/response-handlers';
+import { getAgentGateway, type AgentTriggerPayload } from './channels/agent-gateway';
 import { logger } from './utils/logger';
 import { env } from './config/env';
 
@@ -312,7 +313,98 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
   });
   logger.info(`Heartbeat service started (interval: ${heartbeatInterval}, local cron: ${enableLocalCron})`);
 
-  // 7. Print status
+  // 7. Register default trigger handler for stateless, database-driven agent routing
+  // This handles triggers for ANY agent by looking up config from the database
+  const agentGateway = getAgentGateway();
+  agentGateway.setDefaultHandler(async (payload: AgentTriggerPayload) => {
+    const targetAgentId = payload.toAgentId;
+
+    logger.info(`[Trigger] Received trigger for ${targetAgentId} from ${payload.fromAgentId}`, {
+      type: payload.triggerType,
+      priority: payload.priority,
+      summary: payload.summary,
+    });
+
+    // 1. Verify agent exists (either in agent_identities or known agents list)
+    const { data: agentIdentity } = await dataComposer!.getClient()
+      .from('agent_identities')
+      .select('agent_id')
+      .eq('agent_id', targetAgentId)
+      .limit(1);
+
+    // Allow known agents even if not in agent_identities table yet
+    const knownAgents = ['myra', 'wren', 'benson'];
+    const isKnownAgent = knownAgents.includes(targetAgentId);
+    const existsInDb = agentIdentity && agentIdentity.length > 0;
+
+    if (!existsInDb && !isKnownAgent) {
+      logger.error(`[Trigger] Unknown agent: ${targetAgentId}`);
+      throw new Error(`Unknown agent: ${targetAgentId}`);
+    }
+
+    // 2. Resolve userId from inbox message (required for stateless processing)
+    let userId: string | undefined;
+    if (payload.inboxMessageId) {
+      const { data: inboxMsg } = await dataComposer!.getClient()
+        .from('agent_inbox')
+        .select('recipient_user_id')
+        .eq('id', payload.inboxMessageId)
+        .single();
+      userId = inboxMsg?.recipient_user_id;
+    }
+
+    if (!userId) {
+      logger.error(`[Trigger] Cannot process - no userId found for agent ${targetAgentId}`);
+      throw new Error('Cannot process trigger without userId (inbox message required)');
+    }
+
+    // 3. Build trigger message
+    let triggerMessage = `[TRIGGER from ${payload.fromAgentId}]
+Type: ${payload.triggerType}`;
+    if (payload.summary) {
+      triggerMessage += `\nSummary: ${payload.summary}`;
+    }
+    if (payload.metadata && Object.keys(payload.metadata).length > 0) {
+      triggerMessage += `\nContext:\n${JSON.stringify(payload.metadata, null, 2)}`;
+    }
+    triggerMessage += `
+
+---
+IMPORTANT: This is a system trigger, NOT a user message on Telegram/WhatsApp.
+Check your inbox for the full message using get_inbox.
+If you need to message a user, use send_response with the appropriate channel and conversationId.`;
+
+    // 4. Process via SessionService (stateless - looks up session from DB)
+    const request: SessionRequest = {
+      userId,
+      agentId: targetAgentId,
+      channel: 'agent',
+      conversationId: `trigger:${targetAgentId}`,
+      sender: { id: payload.fromAgentId, name: payload.fromAgentId },
+      content: triggerMessage,
+      metadata: {
+        triggerType: 'agent',
+        chatType: 'direct',
+      },
+    };
+
+    const result = await sessionService!.handleMessage(request);
+
+    // 5. Route any responses
+    if (result.responses && result.responses.length > 0) {
+      await routeResponses(result.responses);
+    }
+
+    if (!result.success) {
+      logger.error(`[Trigger] SessionService failed for ${targetAgentId}:`, result.error);
+      throw new Error(result.error || 'SessionService processing failed');
+    }
+
+    logger.info(`[Trigger] Successfully processed trigger for ${targetAgentId}`);
+  });
+  logger.info('Default agent trigger handler registered (stateless, database-driven)');
+
+  // 8. Print status
   printStatus();
 
   // Ready

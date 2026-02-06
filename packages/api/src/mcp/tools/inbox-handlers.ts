@@ -133,18 +133,33 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       priority,
     };
 
-    const result = await gateway.processTrigger(payload);
+    // Fire-and-forget: don't await the trigger processing
+    // The message is already in the inbox - we just need to wake the agent
+    gateway.processTrigger(payload)
+      .then((result) => {
+        logger.info('Inbox message trigger completed', {
+          messageId: message.id,
+          triggerId: result.triggerId,
+          processed: result.processed,
+          error: result.error,
+        });
+      })
+      .catch((error) => {
+        logger.error('Inbox message trigger failed', {
+          messageId: message.id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+
     triggerResult = {
       triggered: true,
-      triggerId: result.triggerId,
-      processed: result.processed,
-      error: result.error,
+      triggerId: 'async', // Trigger ID assigned asynchronously
+      processed: undefined, // Processing happens in background
     };
 
-    logger.info('Inbox message triggered recipient', {
+    logger.info('Inbox message trigger dispatched (async)', {
       messageId: message.id,
-      triggerId: result.triggerId,
-      processed: result.processed,
+      recipientAgentId,
     });
   } else if (trigger && !senderAgentId) {
     logger.warn('Trigger requested but no senderAgentId provided', { messageId: message.id });

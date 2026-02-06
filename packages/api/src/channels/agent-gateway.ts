@@ -46,9 +46,14 @@ export type TriggerCallback = (payload: AgentTriggerPayload) => Promise<void>;
  *
  * Similar to TelegramListener/WhatsAppListener but for inter-agent communication.
  * Registered handlers process triggers by agent ID.
+ *
+ * Supports:
+ * - Specific handlers: registerHandler(agentId, callback) for per-agent handling
+ * - Default handler: setDefaultHandler(callback) for dynamic/stateless routing
  */
 export class AgentGateway extends EventEmitter {
   private handlers: Map<string, TriggerCallback> = new Map();
+  private defaultHandler: TriggerCallback | null = null;
   private triggerCounter = 0;
 
   constructor() {
@@ -74,6 +79,23 @@ export class AgentGateway extends EventEmitter {
   }
 
   /**
+   * Set a default handler for agents without specific handlers.
+   * Enables stateless, database-driven agent routing.
+   */
+  setDefaultHandler(callback: TriggerCallback): void {
+    this.defaultHandler = callback;
+    logger.info('[AgentGateway] Default handler registered');
+  }
+
+  /**
+   * Clear the default handler
+   */
+  clearDefaultHandler(): void {
+    this.defaultHandler = null;
+    logger.info('[AgentGateway] Default handler cleared');
+  }
+
+  /**
    * Process an incoming trigger
    * Called by the HTTP endpoint or MCP tool
    */
@@ -87,8 +109,8 @@ export class AgentGateway extends EventEmitter {
       priority: payload.priority,
     });
 
-    // Find handler for target agent
-    const handler = this.handlers.get(payload.toAgentId);
+    // Find handler for target agent (specific handler takes precedence over default)
+    const handler = this.handlers.get(payload.toAgentId) || this.defaultHandler;
 
     if (!handler) {
       logger.warn(`[AgentGateway] No handler for agent: ${payload.toAgentId}`);
@@ -102,6 +124,11 @@ export class AgentGateway extends EventEmitter {
         processed: false,
         error: `No handler registered for agent: ${payload.toAgentId}`,
       };
+    }
+
+    const isDefaultHandler = !this.handlers.has(payload.toAgentId);
+    if (isDefaultHandler) {
+      logger.info(`[AgentGateway] Using default handler for agent: ${payload.toAgentId}`);
     }
 
     try {
