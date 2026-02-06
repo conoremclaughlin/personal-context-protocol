@@ -49,8 +49,19 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Redirect to dashboard if already logged in and trying to access login
+  // Already logged in and trying to access login
   if (user && request.nextUrl.pathname.startsWith('/login')) {
+    const mcpRedirect = request.nextUrl.searchParams.get('redirect');
+    const mcpPendingId = request.nextUrl.searchParams.get('pending_id');
+
+    if (mcpRedirect && mcpPendingId) {
+      // MCP OAuth flow: user is already logged in, skip login form and go
+      // straight to the login page so client-side redirectToMcp() can fire
+      // with the existing session's access token.
+      return supabaseResponse;
+    }
+
+    // Normal case: redirect to dashboard
     const url = request.nextUrl.clone();
     url.pathname = '/';
     return NextResponse.redirect(url);

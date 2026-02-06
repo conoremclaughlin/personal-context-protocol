@@ -45,11 +45,28 @@ export default function LoginForm() {
   const [authMode, setAuthMode] = useState<AuthMode>('password');
   const [isLoading, setIsLoading] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [mcpRedirecting, setMcpRedirecting] = useState(false);
 
   // MCP OAuth redirect params
   const mcpRedirect = searchParams.get('redirect');
   const mcpPendingId = searchParams.get('pending_id');
   const isMcpAuth = !!(mcpRedirect && mcpPendingId);
+
+  // If already logged in and this is an MCP auth flow, redirect immediately
+  useEffect(() => {
+    if (!isMcpAuth) return;
+
+    const checkExistingSession = async () => {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.access_token) {
+        setMcpRedirecting(true);
+        redirectToMcp();
+      }
+    };
+
+    checkExistingSession();
+  }, [isMcpAuth]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Check for error in URL params on mount
   useEffect(() => {
@@ -130,7 +147,8 @@ export default function LoginForm() {
     } else {
       // Successful login
       if (isMcpAuth) {
-        // Redirect to MCP callback with access token
+        // Show granting access view, then redirect to MCP callback
+        setMcpRedirecting(true);
         await redirectToMcp();
       } else {
         // Normal dashboard redirect
@@ -158,6 +176,26 @@ export default function LoginForm() {
     }
   };
 
+  // Already logged in + MCP auth → show granting access view
+  if (mcpRedirecting) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-gray-100">
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <CardTitle className="text-2xl">PCP</CardTitle>
+            <CardDescription>Granting MCP access to Claude Code...</CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center gap-4 py-6">
+            <div className="animate-spin h-8 w-8 border-4 border-blue-500 border-t-transparent rounded-full" />
+            <p className="text-sm text-gray-500">
+              Redirecting back to your terminal. You can close this tab once connected.
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-gray-100">
       <Card className="w-full max-w-md">
@@ -170,7 +208,7 @@ export default function LoginForm() {
           </CardDescription>
           {isMcpAuth && (
             <div className="mt-2 text-xs text-blue-600 bg-blue-50 rounded-md px-3 py-2">
-              🔗 Authenticating for Claude Code MCP connection
+              Authenticating for Claude Code MCP connection
             </div>
           )}
         </CardHeader>
