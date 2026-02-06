@@ -11,3 +11,4 @@ export {
   detectMiniAppTrigger,
   getMiniAppsInfo,
 } from './loader';
+export type { LoadedMiniApp } from './loader';

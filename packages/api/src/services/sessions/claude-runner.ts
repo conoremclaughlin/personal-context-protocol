@@ -5,7 +5,7 @@
  * Handles message processing and response parsing.
  */
 
-import { spawn } from 'child_process';
+import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
 import type {
   InjectedContext,
@@ -17,6 +17,9 @@ import type {
 } from './types.js';
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
+
+/** Maximum time (ms) to wait for a Claude Code subprocess before killing it */
+const PROCESS_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Parse usage stats from Claude Code stream output.
@@ -169,18 +172,65 @@ export class ClaudeRunner implements IClaudeRunner {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      let stdout = '';
       let stderr = '';
       const responses: ChannelResponse[] = [];
       let usage: ClaudeUsageStats | undefined;
       let resumeFailedNoSession = false;
       let finalTextResponse: string | undefined;
+      let settled = false;
+      let lastActivityAt = Date.now();
+
+      // Activity-based timeout: reset every time we get output from the process.
+      // This distinguishes "Claude is working and streaming output" from "Claude is stuck."
+      const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 min with no output = stuck
+      let idleTimer: NodeJS.Timeout;
+
+      const resetIdleTimer = () => {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => {
+          if (!settled) {
+            const idleSecs = Math.round((Date.now() - lastActivityAt) / 1000);
+            logger.error('Claude Code process idle too long, killing', {
+              idleSeconds: idleSecs,
+              hasResponses: responses.length > 0,
+              hasFinalText: !!finalTextResponse,
+            });
+            this.killProcess(proc);
+            settled = true;
+            resolve({
+              responses,
+              usage,
+              finalTextResponse: finalTextResponse || `[Process timed out after ${idleSecs}s idle]`,
+            });
+          }
+        }, IDLE_TIMEOUT_MS);
+      };
+      resetIdleTimer();
+
+      // Hard ceiling: no process should run longer than this regardless of activity
+      const timeout = setTimeout(() => {
+        if (!settled) {
+          logger.error('Claude Code process hit hard timeout, killing', {
+            timeoutMs: PROCESS_TIMEOUT_MS,
+            hasResponses: responses.length > 0,
+            hasFinalText: !!finalTextResponse,
+          });
+          this.killProcess(proc);
+          settled = true;
+          resolve({
+            responses,
+            usage,
+            finalTextResponse: finalTextResponse || '[Process hit hard timeout]',
+          });
+        }
+      }, PROCESS_TIMEOUT_MS);
 
       proc.stdout.on('data', (data) => {
+        lastActivityAt = Date.now();
+        resetIdleTimer();
         const chunk = data.toString();
-        stdout += chunk;
 
-        // Parse streaming JSON lines
+        // Parse streaming JSON lines (don't accumulate raw stdout - avoid memory bloat)
         const lines = chunk.split('\n').filter((line: string) => line.trim());
         for (const line of lines) {
           try {
@@ -230,14 +280,26 @@ export class ClaudeRunner implements IClaudeRunner {
       });
 
       proc.stderr.on('data', (data) => {
+        lastActivityAt = Date.now();
+        resetIdleTimer();
         stderr += data.toString();
       });
 
       proc.on('error', (error) => {
-        reject(new Error(`Failed to spawn Claude: ${error.message}`));
+        clearTimeout(timeout);
+        clearTimeout(idleTimer);
+        if (!settled) {
+          settled = true;
+          reject(new Error(`Failed to spawn Claude: ${error.message}`));
+        }
       });
 
       proc.on('close', (code) => {
+        clearTimeout(timeout);
+        clearTimeout(idleTimer);
+        if (settled) return; // Already resolved by timeout
+        settled = true;
+
         // Handle resume failure gracefully - don't reject, let caller retry
         if (resumeFailedNoSession) {
           resolve({ responses, usage, resumeFailedNoSession: true, finalTextResponse });
@@ -260,6 +322,27 @@ export class ClaudeRunner implements IClaudeRunner {
       proc.stdin.write(message);
       proc.stdin.end();
     });
+  }
+
+  /**
+   * Kill a Claude Code subprocess gracefully, with escalation to SIGKILL.
+   */
+  private killProcess(proc: ChildProcess): void {
+    try {
+      proc.kill('SIGTERM');
+      // If it doesn't die in 5s, force kill
+      setTimeout(() => {
+        try {
+          if (!proc.killed) {
+            proc.kill('SIGKILL');
+          }
+        } catch {
+          // Process already dead
+        }
+      }, 5000);
+    } catch {
+      // Process already dead
+    }
   }
 
   /**

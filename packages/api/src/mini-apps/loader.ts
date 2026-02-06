@@ -35,7 +35,7 @@ interface MiniAppManifest {
   entry: string;
 }
 
-interface LoadedMiniApp {
+export interface LoadedMiniApp {
   manifest: MiniAppManifest;
   skillContent: string;
   functions: Record<string, (...args: unknown[]) => unknown>;

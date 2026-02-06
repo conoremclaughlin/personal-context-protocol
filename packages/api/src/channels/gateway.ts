@@ -62,7 +62,9 @@ export type IncomingMessageHandler = (
 
 // Typing indicator management
 const activeTypingIntervals = new Map<string, NodeJS.Timeout>();
+const activeTypingTimeouts = new Map<string, NodeJS.Timeout>();
 const TYPING_INTERVAL_MS = 4000;
+const TYPING_MAX_DURATION_MS = 10 * 60 * 1000; // 10 min max before auto-clear
 
 // Message buffering configuration
 const DEFAULT_BUFFER_DELAY_MS = 2000; // Wait 2 seconds for additional messages
@@ -169,10 +171,14 @@ export class ChannelGateway extends EventEmitter {
 
     logger.info('Stopping ChannelGateway...');
 
-    // Clear all typing indicators
+    // Clear all typing indicators and safety timeouts
     for (const [conversationId, interval] of activeTypingIntervals) {
       clearInterval(interval);
       activeTypingIntervals.delete(conversationId);
+    }
+    for (const [conversationId, timeout] of activeTypingTimeouts) {
+      clearTimeout(timeout);
+      activeTypingTimeouts.delete(conversationId);
     }
 
     // Clear all message buffers (flush them first)
@@ -808,6 +814,17 @@ export class ChannelGateway extends EventEmitter {
     }, TYPING_INTERVAL_MS);
 
     activeTypingIntervals.set(conversationId, interval);
+
+    // Safety net: auto-clear after max duration to prevent infinite loops
+    const maxTimeout = setTimeout(() => {
+      logger.warn('Typing indicator hit max duration, auto-clearing', {
+        conversationId,
+        maxDurationMs: TYPING_MAX_DURATION_MS,
+      });
+      this.stopTypingIndicator(conversationId);
+    }, TYPING_MAX_DURATION_MS);
+
+    activeTypingTimeouts.set(conversationId, maxTimeout);
   }
 
   /**
@@ -818,6 +835,12 @@ export class ChannelGateway extends EventEmitter {
     if (interval) {
       clearInterval(interval);
       activeTypingIntervals.delete(conversationId);
+    }
+
+    const timeout = activeTypingTimeouts.get(conversationId);
+    if (timeout) {
+      clearTimeout(timeout);
+      activeTypingTimeouts.delete(conversationId);
     }
   }
 

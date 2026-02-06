@@ -1,6 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { SSEServerTransport } from '@modelcontextprotocol/sdk/server/sse.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
 import cors from 'cors';
 import crypto from 'crypto';
@@ -11,7 +11,7 @@ import { env } from '../config/env';
 import { logger } from '../utils/logger';
 import type { DataComposer } from '../data/composer';
 import { registerAllTools, setMiniAppsRegistry, setTelegramListener } from './tools';
-import { loadMiniApps, registerMiniAppTools, getMiniAppsInfo } from '../mini-apps';
+import { loadMiniApps, registerMiniAppTools, getMiniAppsInfo, type LoadedMiniApp } from '../mini-apps';
 import adminRouter, { setWhatsAppListener } from '../routes/admin';
 import agentTriggerRouter, { getAgentGateway } from '../routes/agent-trigger';
 import { ChannelGateway, createChannelGateway, type ChannelGatewayConfig, type IncomingMessageHandler } from '../channels/gateway';
@@ -26,13 +26,25 @@ export interface MCPServerConfig {
   messageHandler?: IncomingMessageHandler;
 }
 
+/** Tracked MCP client session (one per connected client) */
+interface McpSession {
+  server: McpServer;
+  transport: StreamableHTTPServerTransport;
+  createdAt: number;
+}
+
 export class MCPServer {
+  /** Primary server instance (used for stdio transport only) */
   private server: McpServer;
   private dataComposer: DataComposer;
   private httpServer: Server | null = null;
-  private sseTransport: SSEServerTransport | null = null;
+
+  /** Multi-client session management for HTTP transport */
+  private sessions = new Map<string, McpSession>();
+
+  private miniApps: Map<string, LoadedMiniApp> = new Map();
   private miniAppsInfo: Array<{ name: string; version: string; description: string; triggers: string[]; functions: string[] }> = [];
-  private toolsVersion = 0; // Incremented when tools change
+  private toolsVersion = 0;
   private channelGateway: ChannelGateway | null = null;
   private config: MCPServerConfig;
 
@@ -40,41 +52,39 @@ export class MCPServer {
     this.dataComposer = dataComposer;
     this.config = config;
 
-    // Create MCP server instance using the high-level McpServer API
-    this.server = new McpServer({
-      name: MCP_SERVER_NAME,
-      version: MCP_SERVER_VERSION,
-      description: MCP_SERVER_DESCRIPTION,
-    });
+    // Load mini-apps once (shared across all sessions)
+    this.miniApps = loadMiniApps();
+    setMiniAppsRegistry(this.miniApps);
+    this.miniAppsInfo = getMiniAppsInfo(this.miniApps);
+    logger.info(`Mini-apps loaded: ${this.miniAppsInfo.map(a => a.name).join(', ') || 'none'}`);
 
-    // Register all tools
-    this.registerTools();
-
-    // Set up error handling on the underlying server
-    this.server.server.onerror = (error) => {
-      logger.error('MCP Server error:', error);
-    };
+    // Create primary server instance (used for stdio; HTTP creates per-session servers)
+    this.server = this.createMcpServerInstance();
 
     logger.info('MCP Server initialized');
   }
 
   /**
-   * Register all MCP tools
+   * Create a new McpServer instance with all tools registered.
+   * Each HTTP client session gets its own instance.
    */
-  private registerTools(): void {
-    // Register core PCP tools
-    registerAllTools(this.server, this.dataComposer);
-    logger.info('Core MCP tools registered');
+  private createMcpServerInstance(): McpServer {
+    const server = new McpServer({
+      name: MCP_SERVER_NAME,
+      version: MCP_SERVER_VERSION,
+      description: MCP_SERVER_DESCRIPTION,
+    });
 
-    // Load and register mini-app tools
-    const miniApps = loadMiniApps();
-    registerMiniAppTools(this.server, miniApps);
+    // Register all tools on this server instance
+    registerAllTools(server, this.dataComposer);
+    registerMiniAppTools(server, this.miniApps);
 
-    // Register mini-apps with skill handlers so get_skill tool can access them
-    setMiniAppsRegistry(miniApps);
+    // Error handling
+    server.server.onerror = (error) => {
+      logger.error('MCP Server instance error:', error);
+    };
 
-    this.miniAppsInfo = getMiniAppsInfo(miniApps);
-    logger.info(`Mini-apps loaded: ${this.miniAppsInfo.map(a => a.name).join(', ') || 'none'}`);
+    return server;
   }
 
   /**
@@ -97,6 +107,7 @@ export class MCPServer {
 
   /**
    * Start with stdio transport (for local use with Claude Desktop)
+   * Single-client: uses the primary server instance.
    */
   private async startStdio(): Promise<void> {
     const transport = new StdioServerTransport();
@@ -105,7 +116,8 @@ export class MCPServer {
   }
 
   /**
-   * Start with HTTP/SSE transport
+   * Start with Streamable HTTP transport (multi-client)
+   * Each connecting client gets its own McpServer + Transport pair.
    */
   private async startHttp(): Promise<void> {
     const port = env.MCP_HTTP_PORT;
@@ -113,7 +125,6 @@ export class MCPServer {
 
     // ============================================================================
     // Supabase JWT validation helper
-    // Uses the same auth as /api/admin endpoints - one JWT for everything
     // ============================================================================
     const validateSupabaseToken = async (authHeader: string | undefined): Promise<{ userId: string; email: string } | null> => {
       if (!authHeader?.startsWith('Bearer ')) return null;
@@ -128,7 +139,6 @@ export class MCPServer {
           return null;
         }
 
-        // Look up PCP user by email
         const { data: pcpUser } = await supabase
           .from('users')
           .select('id, email')
@@ -147,62 +157,169 @@ export class MCPServer {
       }
     };
 
-    // Enable CORS for web portal, MCP clients, and Myra
+    // Enable CORS for web portal, MCP clients, and agents
     app.use(cors({
       origin: ['http://localhost:3001', 'http://localhost:3002', 'http://localhost:3003'],
       credentials: true,
     }));
 
-    // SSE endpoint for MCP communication
-    app.get('/sse', async (req, res) => {
-      logger.info('SSE connection request received');
+    // ============================================================================
+    // Streamable HTTP MCP endpoint (multi-client)
+    // Handles: POST (tool calls + initialize), GET (SSE stream), DELETE (session end)
+    // ============================================================================
+    app.post('/mcp', async (req, res) => {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
 
-      // Validate Supabase JWT and set session context
-      const userData = await validateSupabaseToken(req.headers.authorization);
-      if (userData) {
-        setSessionContext({
-          userId: userData.userId,
-          email: userData.email,
-        });
-        logger.info('SSE connection authenticated', {
-          userId: userData.userId,
-          email: userData.email,
-        });
+      if (sessionId) {
+        // Existing session - route to correct transport
+        const session = this.sessions.get(sessionId);
+        if (!session) {
+          res.status(404).json({
+            jsonrpc: '2.0',
+            error: { code: -32000, message: 'Session not found. Client must re-initialize.' },
+            id: null,
+          });
+          return;
+        }
+
+        try {
+          await session.transport.handleRequest(req, res);
+        } catch (error) {
+          logger.error('Error handling MCP message:', { sessionId, error });
+          if (!res.headersSent) {
+            res.status(500).json({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: 'Internal server error' },
+              id: null,
+            });
+          }
+        }
       } else {
-        logger.warn('SSE connection without valid Supabase token');
+        // New client - create session
+        logger.info('New MCP client connecting (Streamable HTTP)');
+
+        // Validate auth if provided
+        const userData = await validateSupabaseToken(req.headers.authorization);
+        if (userData) {
+          setSessionContext({
+            userId: userData.userId,
+            email: userData.email,
+          });
+          logger.info('MCP session authenticated', {
+            userId: userData.userId,
+            email: userData.email,
+          });
+        }
+
+        try {
+          const transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => `pcp-${crypto.randomUUID()}`,
+          });
+          const mcpServer = this.createMcpServerInstance();
+
+          // Clean up session when transport closes
+          transport.onclose = () => {
+            const sid = transport.sessionId;
+            if (sid) {
+              logger.info('MCP session closed', { sessionId: sid });
+              this.sessions.delete(sid);
+              mcpServer.close().catch((err) => {
+                logger.debug('Error closing MCP server for session', { sessionId: sid, error: err });
+              });
+            }
+          };
+
+          await mcpServer.connect(transport);
+
+          // Handle the initialize request (sessionId is generated during this call)
+          await transport.handleRequest(req, res);
+
+          // Store session after handleRequest (sessionId is now available)
+          if (transport.sessionId) {
+            this.sessions.set(transport.sessionId, {
+              server: mcpServer,
+              transport,
+              createdAt: Date.now(),
+            });
+            logger.info('MCP session created', {
+              sessionId: transport.sessionId,
+              activeSessions: this.sessions.size,
+            });
+          }
+        } catch (error) {
+          logger.error('Error creating MCP session:', error);
+          if (!res.headersSent) {
+            res.status(500).json({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: 'Failed to create session' },
+              id: null,
+            });
+          }
+        }
       }
-
-      this.sseTransport = new SSEServerTransport('/message', res);
-
-      // Connect the transport to the MCP server
-      // Note: connect() calls start() automatically on the transport
-      await this.server.connect(this.sseTransport);
-
-      logger.info('SSE transport connected', { sessionId: this.sseTransport.sessionId });
     });
 
-    // Message endpoint for client-to-server messages
-    // Note: Don't use express.json() here - handlePostMessage reads the raw body itself
-    app.post('/message', async (req, res) => {
-      if (!this.sseTransport) {
-        res.status(503).json({ error: 'SSE transport not connected' });
+    // GET /mcp - SSE stream for server-to-client notifications
+    app.get('/mcp', async (req, res) => {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing mcp-session-id header' });
+        return;
+      }
+
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        res.status(404).json({ error: 'Session not found' });
         return;
       }
 
       try {
-        await this.sseTransport.handlePostMessage(req, res);
+        await session.transport.handleRequest(req, res);
       } catch (error) {
-        logger.error('Error handling message:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        logger.error('Error handling SSE stream:', { sessionId, error });
+        if (!res.headersSent) {
+          res.status(500).json({ error: 'Internal server error' });
+        }
       }
     });
 
-    // Health check endpoint for external monitoring (UptimeRobot, Healthchecks.io, etc.)
+    // DELETE /mcp - Session termination
+    app.delete('/mcp', async (req, res) => {
+      const sessionId = req.headers['mcp-session-id'] as string | undefined;
+      if (!sessionId) {
+        res.status(400).json({ error: 'Missing mcp-session-id header' });
+        return;
+      }
+
+      const session = this.sessions.get(sessionId);
+      if (!session) {
+        // Already gone - that's fine
+        res.status(204).end();
+        return;
+      }
+
+      try {
+        await session.transport.handleRequest(req, res);
+        await session.server.close();
+        this.sessions.delete(sessionId);
+        logger.info('MCP session terminated', { sessionId, activeSessions: this.sessions.size });
+      } catch (error) {
+        logger.error('Error terminating MCP session:', { sessionId, error });
+        // Clean up anyway
+        this.sessions.delete(sessionId);
+        if (!res.headersSent) {
+          res.status(204).end();
+        }
+      }
+    });
+
+    // ============================================================================
+    // Health check
+    // ============================================================================
     app.get('/health', async (_req, res) => {
       const startTime = Date.now();
       const checks: Record<string, { status: 'ok' | 'error'; latencyMs?: number; error?: string; details?: unknown }> = {};
 
-      // Check database connectivity
       try {
         const dbStart = Date.now();
         const { error } = await this.dataComposer.getClient().from('users').select('id').limit(1);
@@ -213,7 +330,6 @@ export class MCPServer {
         checks.database = { status: 'error', error: err instanceof Error ? err.message : 'Unknown error' };
       }
 
-      // Check channel gateway status
       if (this.channelGateway) {
         const gatewayStatus = this.channelGateway.getStatus();
         checks.telegram = {
@@ -228,17 +344,15 @@ export class MCPServer {
         };
       }
 
-      // MCP server status
       checks.mcp = {
         status: 'ok',
         details: {
-          sseConnected: this.sseTransport !== null,
+          activeSessions: this.sessions.size,
           toolsVersion: this.toolsVersion,
           miniApps: this.miniAppsInfo.map((m) => m.name),
         },
       };
 
-      // Overall status - database is critical, channels are not
       const dbOk = checks.database?.status === 'ok';
       const overallStatus = dbOk ? 'healthy' : 'unhealthy';
 
@@ -254,11 +368,7 @@ export class MCPServer {
 
     // ============================================================================
     // OAuth 2.0 endpoints for MCP authentication
-    // Implements: Dynamic Client Registration, Authorization Code + PKCE flow
-    // Uses Supabase Auth - returns Supabase JWT which is validated at /sse
     // ============================================================================
-
-    // Store for OAuth state (in production, use Redis or similar)
     interface PendingAuth {
       clientId: string;
       codeChallenge: string;
@@ -270,16 +380,15 @@ export class MCPServer {
       clientId: string;
       codeChallenge: string;
       redirectUri: string;
-      supabaseToken: string;  // The actual Supabase JWT to return
-      userId: string;         // For logging
-      userEmail: string;      // For logging
+      supabaseToken: string;
+      userId: string;
+      userEmail: string;
       expiresAt: number;
     }
 
     const pendingAuths = new Map<string, PendingAuth>();
     const oauthCodes = new Map<string, AuthCode>();
 
-    // POST /register - OAuth 2.0 Dynamic Client Registration (RFC 7591)
     app.post('/register', express.json(), (req, res) => {
       logger.info('MCP /register called', { body: req.body });
 
@@ -297,36 +406,26 @@ export class MCPServer {
       });
     });
 
-    // GET /authorize - OAuth 2.0 Authorization Endpoint
-    // Redirects to web portal login page (localhost:3002)
     app.get('/authorize', (req, res) => {
       const { client_id, redirect_uri, state, code_challenge, response_type } = req.query;
 
-      logger.info('MCP /authorize called', {
-        client_id,
-        redirect_uri,
-        state,
-        response_type,
-      });
+      logger.info('MCP /authorize called', { client_id, redirect_uri, state, response_type });
 
       if (response_type !== 'code') {
         res.status(400).json({ error: 'unsupported_response_type' });
         return;
       }
 
-      // Generate a pending auth ID to track this request
       const pendingId = `pending-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
-      // Store the pending auth request
       pendingAuths.set(pendingId, {
         clientId: client_id as string,
         codeChallenge: code_challenge as string,
         redirectUri: redirect_uri as string,
         state: state as string,
-        expiresAt: Date.now() + 10 * 60 * 1000, // 10 minutes
+        expiresAt: Date.now() + 10 * 60 * 1000,
       });
 
-      // Redirect to web portal login with callback to MCP
       const webPortalUrl = process.env.WEB_PORTAL_URL || 'http://localhost:3002';
       const mcpCallback = `http://localhost:${port}/mcp/auth/callback`;
 
@@ -338,22 +437,18 @@ export class MCPServer {
       res.redirect(loginUrl.toString());
     });
 
-    // GET /mcp/auth/callback - Handle callback from web portal after login
-    // Web portal should redirect here with access_token after successful login
     app.get('/mcp/auth/callback', async (req, res) => {
       const pendingId = req.query.pending_id as string;
       const accessToken = req.query.access_token as string;
 
       logger.info('MCP /mcp/auth/callback called', { pendingId, hasToken: !!accessToken });
 
-      // Look up pending auth request
       const pending = pendingAuths.get(pendingId);
       if (!pending) {
         res.status(400).send('Invalid or expired authorization request. Please try again.');
         return;
       }
 
-      // Check expiration
       if (Date.now() > pending.expiresAt) {
         pendingAuths.delete(pendingId);
         res.status(400).send('Authorization request expired. Please try again.');
@@ -366,7 +461,6 @@ export class MCPServer {
       }
 
       try {
-        // Verify the Supabase token and get user
         const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
         const { data: { user }, error: authError } = await supabase.auth.getUser(accessToken);
 
@@ -376,7 +470,6 @@ export class MCPServer {
           return;
         }
 
-        // Look up PCP user by email
         const { data: pcpUser, error: userError } = await supabase
           .from('users')
           .select('id, email')
@@ -389,7 +482,6 @@ export class MCPServer {
           return;
         }
 
-        // Generate authorization code that stores the Supabase token
         const code = `pcp-code-${Date.now()}-${Math.random().toString(36).substring(7)}`;
 
         oauthCodes.set(code, {
@@ -402,10 +494,8 @@ export class MCPServer {
           expiresAt: Date.now() + 10 * 60 * 1000,
         });
 
-        // Clean up pending auth
         pendingAuths.delete(pendingId);
 
-        // Redirect back to Claude Code's callback
         const redirectUrl = new URL(pending.redirectUri);
         redirectUrl.searchParams.set('code', code);
         if (pending.state) {
@@ -424,8 +514,6 @@ export class MCPServer {
       }
     });
 
-    // POST /token - OAuth 2.0 Token Endpoint
-    // Exchange authorization code for access token (with PKCE verification)
     app.post('/token', express.urlencoded({ extended: true }), (req, res) => {
       const { grant_type, code, code_verifier, client_id } = req.body;
 
@@ -436,21 +524,18 @@ export class MCPServer {
         return;
       }
 
-      // Look up the authorization code
       const codeData = oauthCodes.get(code);
       if (!codeData) {
         res.status(400).json({ error: 'invalid_grant', error_description: 'Authorization code not found' });
         return;
       }
 
-      // Check expiration
       if (Date.now() > codeData.expiresAt) {
         oauthCodes.delete(code);
         res.status(400).json({ error: 'invalid_grant', error_description: 'Authorization code expired' });
         return;
       }
 
-      // Verify PKCE code_verifier against stored code_challenge (S256)
       if (codeData.codeChallenge && code_verifier) {
         const computedChallenge = crypto
           .createHash('sha256')
@@ -464,12 +549,9 @@ export class MCPServer {
         }
       }
 
-      // Delete used code
       oauthCodes.delete(code);
 
-      // Return the Supabase JWT directly - it will be validated at /sse
-      // Supabase tokens are typically valid for 1 hour, but can be refreshed
-      const expiresIn = 3600; // 1 hour (Supabase default)
+      const expiresIn = 3600;
 
       logger.info('MCP /token returning Supabase JWT', {
         userId: codeData.userId,
@@ -477,23 +559,23 @@ export class MCPServer {
       });
 
       res.json({
-        access_token: codeData.supabaseToken,  // Return the actual Supabase JWT
+        access_token: codeData.supabaseToken,
         token_type: 'Bearer',
         expires_in: expiresIn,
         scope: 'mcp:tools',
       });
     });
 
-    // Admin API routes (for web dashboard)
+    // ============================================================================
+    // Admin & Agent routes
+    // ============================================================================
     app.use(express.json());
     app.use('/api/admin', adminRouter);
     logger.info('Admin API routes registered at /api/admin');
 
-    // Agent trigger routes (for agent-to-agent communication)
     app.use('/api/agent', agentTriggerRouter);
     logger.info('Agent trigger routes registered at /api/agent');
 
-    // Refresh tools endpoint - notifies connected clients that tools have changed
     app.post('/refresh-tools', async (_req, res) => {
       try {
         await this.notifyToolsChanged();
@@ -511,14 +593,15 @@ export class MCPServer {
       }
     });
 
+    // ============================================================================
+    // Start listening
+    // ============================================================================
     this.httpServer = app.listen(port, () => {
-      logger.info(`MCP Server started with HTTP/SSE transport on port ${port}`);
-      logger.info(`SSE endpoint: http://localhost:${port}/sse`);
-      logger.info(`Message endpoint: http://localhost:${port}/message`);
+      logger.info(`MCP Server started with Streamable HTTP transport on port ${port}`);
+      logger.info(`MCP endpoint: http://localhost:${port}/mcp`);
     });
 
-    // Initialize and start the channel gateway only if a message handler is configured
-    // This allows running MCP Server standalone (for tools only) without starting listeners
+    // Initialize channel gateway if message handler is configured
     if (this.config.messageHandler) {
       await this.startChannelGateway();
     } else {
@@ -528,7 +611,6 @@ export class MCPServer {
 
   /**
    * Initialize and start the channel gateway
-   * This is the central point for all messaging channels
    */
   private async startChannelGateway(): Promise<void> {
     logger.info('Initializing ChannelGateway...');
@@ -538,13 +620,10 @@ export class MCPServer {
       dataComposer: this.dataComposer,
     });
 
-    // Register message handler if provided
     if (this.config.messageHandler) {
       this.channelGateway.setMessageHandler(this.config.messageHandler);
     }
 
-    // Register listeners with admin routes and MCP tools
-    // This is done before start() so the listeners are available immediately after creation
     this.channelGateway.on('telegram:connected', () => {
       const listener = this.channelGateway?.getTelegramListener();
       if (listener) {
@@ -563,7 +642,6 @@ export class MCPServer {
 
     await this.channelGateway.start();
 
-    // Register listeners immediately after start (even before connected events)
     const telegramListener = this.channelGateway.getTelegramListener();
     if (telegramListener) {
       setTelegramListener(telegramListener);
@@ -578,7 +656,7 @@ export class MCPServer {
   }
 
   /**
-   * Get the underlying server instance
+   * Get the primary server instance (for stdio transport)
    */
   getServer(): McpServer {
     return this.server;
@@ -590,24 +668,32 @@ export class MCPServer {
   async shutdown(): Promise<void> {
     logger.info('Shutting down MCP server...');
 
-    // Stop channel gateway first (stops Telegram/WhatsApp listeners)
+    // Stop channel gateway first
     if (this.channelGateway) {
       await this.channelGateway.stop();
       this.channelGateway = null;
     }
 
-    // Close the MCP server (this closes the SSE transport)
+    // Close all active MCP sessions
+    for (const [sessionId, session] of this.sessions) {
+      try {
+        await session.server.close();
+        logger.debug('Closed MCP session', { sessionId });
+      } catch (error) {
+        logger.warn('Error closing MCP session:', { sessionId, error });
+      }
+    }
+    this.sessions.clear();
+
+    // Close the primary server (stdio)
     try {
       await this.server.close();
-      this.sseTransport = null;
     } catch (error) {
-      logger.warn('Error closing MCP server:', error);
+      logger.warn('Error closing primary MCP server:', error);
     }
 
     if (this.httpServer) {
-      // Force close all connections (Node 18.2+)
       this.httpServer.closeAllConnections();
-
       await new Promise<void>((resolve) => {
         this.httpServer!.close(() => resolve());
       });
@@ -617,16 +703,10 @@ export class MCPServer {
     logger.info('MCP server shut down');
   }
 
-  /**
-   * Get the channel gateway instance
-   */
   getChannelGateway(): ChannelGateway | null {
     return this.channelGateway;
   }
 
-  /**
-   * Get the HTTP port if running in HTTP mode
-   */
   getPort(): number | null {
     if (this.httpServer) {
       const addr = this.httpServer.address();
@@ -638,39 +718,39 @@ export class MCPServer {
   }
 
   /**
-   * Notify connected clients that tools have changed.
-   * Clients should re-fetch the tools list.
+   * Notify ALL connected clients that tools have changed.
    */
   async notifyToolsChanged(): Promise<void> {
     this.toolsVersion++;
-    logger.info(`Tools changed, notifying clients (version ${this.toolsVersion})`);
+    logger.info(`Tools changed, notifying ${this.sessions.size} clients (version ${this.toolsVersion})`);
 
-    // The MCP protocol supports notifications/tools/list_changed
-    // This tells clients to re-fetch the tools list
-    try {
-      // Access the underlying Protocol server to send notification
-      const protocol = this.server.server;
+    const errors: string[] = [];
+    for (const [sessionId, session] of this.sessions) {
+      try {
+        await session.server.server.notification({
+          method: 'notifications/tools/list_changed',
+          params: {},
+        });
+      } catch (error) {
+        errors.push(sessionId);
+        logger.debug('Could not send tools notification to session', { sessionId, error });
+      }
+    }
 
-      // Send the list_changed notification
-      // Note: This will only work if a client is connected
-      // The SDK uses 'notification' method with method name and params
-      await protocol.notification({
-        method: 'notifications/tools/list_changed',
-        params: {},
-      });
-
-      logger.info('Tools list_changed notification sent');
-    } catch (error) {
-      // This might fail if no client is connected, which is fine
-      logger.debug('Could not send tools notification (client may not be connected):', error);
+    if (errors.length > 0) {
+      logger.debug(`Tools notification failed for ${errors.length}/${this.sessions.size} sessions`);
+    } else if (this.sessions.size > 0) {
+      logger.info('Tools list_changed notification sent to all sessions');
     }
   }
 
-  /**
-   * Get current tools version
-   */
   getToolsVersion(): number {
     return this.toolsVersion;
+  }
+
+  /** Get count of active MCP sessions */
+  getActiveSessionCount(): number {
+    return this.sessions.size;
   }
 }
 

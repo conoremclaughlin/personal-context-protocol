@@ -5,8 +5,8 @@
       "url": "https://mcp.supabase.com/mcp?project_ref=xzcdodccpjmveubfitvo"
     },
     "pcp": {
-      "type": "sse",
-      "url": "http://localhost:3001/sse"
+      "type": "http",
+      "url": "http://localhost:3001/mcp"
     }
   }
 }
