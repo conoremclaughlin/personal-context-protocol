@@ -108,6 +108,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
     mcpConfigPath,
     defaultModel: model,
     compactionThreshold: config.compactionThreshold || 150000,
+    responseHandler: async (responses) => routeResponses(responses),
   };
   sessionService = createSessionService(dataComposer.getClient(), sessionServiceConfig);
   logger.info('SessionService ready');
