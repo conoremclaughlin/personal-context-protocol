@@ -24,7 +24,8 @@
     "logs:pcp:errors": "tail -n 200 -f $HOME/.pcp/logs/error.log | jq -r '.timestamp + \" [\" + .level + \"]: \" + .message'",
     "status": "pm2 status",
     "pm2": "pm2",
-    "ws": "yarn workspace @personal-context/workspaces cli",
+    "cli": "yarn workspace @personal-context/cli cli",
+    "ws": "yarn workspace @personal-context/cli cli ws",
     "ws:create": "yarn ws create",
     "ws:list": "yarn ws list",
     "ws:status": "yarn ws status",
@@ -54,5 +55,6 @@
   "license": "MIT",
   "devDependencies": {
     "pm2": "^6.0.14"
-  }
+  },
+  "packageManager": "yarn@4.12.0"
 }
