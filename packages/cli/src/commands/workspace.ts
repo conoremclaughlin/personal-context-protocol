@@ -150,13 +150,14 @@ function listWorkspaces(gitRoot: string): WorkspaceInfo[] {
 // Commands
 // ============================================================================
 
-async function createWorkspace(name: string, options: { agent?: string; purpose?: string }): Promise<void> {
+async function createWorkspace(name: string, options: { identity?: string; purpose?: string; branch?: string }): Promise<void> {
   const spinner = ora(`Creating workspace: ${name}`).start();
 
   try {
     const gitRoot = findGitRoot();
     const wsPath = getWorkspacePath(gitRoot, name);
-    const branch = `workspace/${name}`;
+    // Allow custom branch name, default to workspace/<name>
+    const branch = options.branch || `workspace/${name}`;
 
     if (existsSync(wsPath)) {
       spinner.fail(`Workspace already exists at ${wsPath}`);
@@ -175,7 +176,7 @@ async function createWorkspace(name: string, options: { agent?: string; purpose?
     mkdirSync(pcpDir, { recursive: true });
 
     const identity: WorkspaceIdentity = {
-      agentId: options.agent || 'wren',
+      agentId: options.identity || 'wren',
       context: `workspace-${name}`,
       description: options.purpose || `Workspace: ${name}`,
       workspace: name,
@@ -351,8 +352,9 @@ export function registerWorkspaceCommands(program: Command): void {
 
   ws.command('create <name>')
     .description('Create a new workspace with git worktree')
-    .option('-a, --agent <agent>', 'Agent ID for this workspace', 'wren')
+    .option('-i, --identity <agent>', 'Agent ID for this workspace', 'wren')
     .option('-p, --purpose <desc>', 'Description/purpose of the workspace')
+    .option('-b, --branch <branch>', 'Custom branch name (default: workspace/<name>)')
     .action(createWorkspace);
 
   ws.command('list')
