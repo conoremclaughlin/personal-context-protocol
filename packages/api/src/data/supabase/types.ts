@@ -318,80 +318,12 @@ export type Database = {
             foreignKeyName: "agent_inbox_related_session_id_fkey"
             columns: ["related_session_id"]
             isOneToOne: false
-            referencedRelation: "agent_sessions"
+            referencedRelation: "sessions"
             referencedColumns: ["id"]
           },
           {
             foreignKeyName: "agent_inbox_sender_user_id_fkey"
             columns: ["sender_user_id"]
-            isOneToOne: false
-            referencedRelation: "users"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      agent_sessions: {
-        Row: {
-          backend: string
-          created_at: string
-          ended_at: string | null
-          id: string
-          last_activity_at: string
-          mcp_config_path: string | null
-          message_count: number | null
-          model: string | null
-          platform: string | null
-          platform_chat_id: string | null
-          session_id: string
-          session_key: string | null
-          status: string
-          total_cost: number | null
-          updated_at: string
-          user_id: string
-          working_directory: string | null
-        }
-        Insert: {
-          backend?: string
-          created_at?: string
-          ended_at?: string | null
-          id?: string
-          last_activity_at?: string
-          mcp_config_path?: string | null
-          message_count?: number | null
-          model?: string | null
-          platform?: string | null
-          platform_chat_id?: string | null
-          session_id: string
-          session_key?: string | null
-          status?: string
-          total_cost?: number | null
-          updated_at?: string
-          user_id: string
-          working_directory?: string | null
-        }
-        Update: {
-          backend?: string
-          created_at?: string
-          ended_at?: string | null
-          id?: string
-          last_activity_at?: string
-          mcp_config_path?: string | null
-          message_count?: number | null
-          model?: string | null
-          platform?: string | null
-          platform_chat_id?: string | null
-          session_id?: string
-          session_key?: string | null
-          status?: string
-          total_cost?: number | null
-          updated_at?: string
-          user_id?: string
-          working_directory?: string | null
-        }
-        Relationships: [
-          {
-            foreignKeyName: "agent_sessions_user_id_fkey"
-            columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
             referencedColumns: ["id"]
@@ -1726,43 +1658,55 @@ export type Database = {
       sessions: {
         Row: {
           agent_id: string | null
+          backend: string
           claude_session_id: string | null
           compacting_since: string | null
           context: string | null
           ended_at: string | null
           id: string
+          message_count: number
           metadata: Json | null
+          model: string | null
           started_at: string | null
           status: string | null
           summary: string | null
+          token_count: number
           user_id: string
           working_dir: string | null
         }
         Insert: {
           agent_id?: string | null
+          backend?: string
           claude_session_id?: string | null
           compacting_since?: string | null
           context?: string | null
           ended_at?: string | null
           id?: string
+          message_count?: number
           metadata?: Json | null
+          model?: string | null
           started_at?: string | null
           status?: string | null
           summary?: string | null
+          token_count?: number
           user_id: string
           working_dir?: string | null
         }
         Update: {
           agent_id?: string | null
+          backend?: string
           claude_session_id?: string | null
           compacting_since?: string | null
           context?: string | null
           ended_at?: string | null
           id?: string
+          message_count?: number
           metadata?: Json | null
+          model?: string | null
           started_at?: string | null
           status?: string | null
           summary?: string | null
+          token_count?: number
           user_id?: string
           working_dir?: string | null
         }

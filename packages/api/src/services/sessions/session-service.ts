@@ -325,10 +325,15 @@ export class SessionService implements ISessionService {
       });
     }
 
-    // 6. Update session with new Claude session ID and usage
+    // 6. Update session with new Claude session ID, usage, and message count
     if (result.claudeSessionId !== session.claudeSessionId) {
       await this.repository.update(session.id, {
         claudeSessionId: result.claudeSessionId,
+        messageCount: session.messageCount + 1,
+      });
+    } else {
+      await this.repository.update(session.id, {
+        messageCount: session.messageCount + 1,
       });
     }
 
@@ -406,6 +411,10 @@ export class SessionService implements ISessionService {
       contextTokens: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
+      messageCount: 0,
+      tokenCount: 0,
+      backend: 'claude-code',
+      model: this.config.defaultModel,
       lastCompactionAt: null,
       compactionCount: 0,
       endedAt: null,

@@ -58,6 +58,10 @@ describe('SessionService', () => {
     contextTokens: 1000,
     totalInputTokens: 5000,
     totalOutputTokens: 2000,
+    messageCount: 0,
+    tokenCount: 0,
+    backend: 'claude-code',
+    model: 'sonnet',
     lastCompactionAt: null,
     compactionCount: 0,
     taskDescription: undefined,
@@ -435,6 +439,79 @@ describe('SessionService', () => {
       expect(mockRepository.create).not.toHaveBeenCalled();
     });
 
+    it('should set backend and model when creating a new session', async () => {
+      vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(null);
+      vi.mocked(mockRepository.create).mockResolvedValue(createMockSession({ id: 'new-session' }));
+
+      const request = createMockRequest();
+      await sessionService.handleMessage(request);
+
+      expect(mockRepository.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          backend: 'claude-code',
+          model: 'sonnet',
+          messageCount: 0,
+          tokenCount: 0,
+        })
+      );
+    });
+
+    it('should increment messageCount after each processed message', async () => {
+      const session = createMockSession({ messageCount: 5 });
+      vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(session);
+
+      const request = createMockRequest();
+      await sessionService.handleMessage(request);
+
+      expect(mockRepository.update).toHaveBeenCalledWith('session-123',
+        expect.objectContaining({ messageCount: 6 })
+      );
+    });
+
+    it('should accumulate tokenCount via updateTokenUsage', async () => {
+      const session = createMockSession({
+        totalInputTokens: 3000,
+        totalOutputTokens: 1000,
+        tokenCount: 4000,
+      });
+      vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(session);
+
+      // Wire updateTokenUsage to replicate the real repository logic:
+      // it calls findById, computes new totals, then calls update with tokenCount
+      vi.mocked(mockRepository.findById).mockResolvedValue(session);
+      vi.mocked(mockRepository.updateTokenUsage).mockImplementation(async (id, usage) => {
+        const current = await mockRepository.findById(id);
+        if (!current) throw new Error('not found');
+        const newInput = current.totalInputTokens + usage.inputTokens;
+        const newOutput = current.totalOutputTokens + usage.outputTokens;
+        await mockRepository.update(id, {
+          contextTokens: usage.contextTokens,
+          totalInputTokens: newInput,
+          totalOutputTokens: newOutput,
+          tokenCount: newInput + newOutput,
+        });
+      });
+
+      vi.mocked(mockClaudeRunner.run).mockResolvedValue(
+        createMockClaudeResult({
+          usage: { contextTokens: 8000, inputTokens: 2000, outputTokens: 500 },
+        })
+      );
+
+      const request = createMockRequest();
+      await sessionService.handleMessage(request);
+
+      // Verify tokenCount = (3000+2000) + (1000+500) = 6500
+      expect(mockRepository.update).toHaveBeenCalledWith('session-123',
+        expect.objectContaining({
+          contextTokens: 8000,
+          totalInputTokens: 5000,
+          totalOutputTokens: 1500,
+          tokenCount: 6500,
+        })
+      );
+    });
+
     it('should update Claude session ID when it changes', async () => {
       const session = createMockSession({ claudeSessionId: 'old-claude-id' });
       vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(session);
@@ -448,6 +525,7 @@ describe('SessionService', () => {
 
       expect(mockRepository.update).toHaveBeenCalledWith('session-123', {
         claudeSessionId: 'new-claude-id',
+        messageCount: 1,
       });
     });
   });

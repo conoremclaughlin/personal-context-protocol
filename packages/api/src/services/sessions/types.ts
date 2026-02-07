@@ -51,6 +51,14 @@ export interface Session {
   totalInputTokens: number;
   totalOutputTokens: number;
 
+  // Aggregate counters (persisted as columns)
+  messageCount: number;
+  tokenCount: number; // cumulative input+output tokens
+
+  // Runtime context
+  backend: string; // 'claude-code' | 'direct-api'
+  model: string | null; // e.g., 'sonnet', 'opus'
+
   // Compaction tracking
   lastCompactionAt: Date | null;
   compactionCount: number;

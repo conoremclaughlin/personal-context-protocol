@@ -47,6 +47,14 @@ function mapDbToSession(row: DbSession): Session {
     totalInputTokens: (metadata.totalInputTokens as number) || 0,
     totalOutputTokens: (metadata.totalOutputTokens as number) || 0,
 
+    // Aggregate counters (persisted as columns)
+    messageCount: row.message_count || 0,
+    tokenCount: row.token_count || 0,
+
+    // Runtime context
+    backend: row.backend || 'claude-code',
+    model: row.model || null,
+
     // Compaction tracking
     lastCompactionAt: metadata.lastCompactionAt
       ? new Date(metadata.lastCompactionAt as string)
@@ -74,6 +82,10 @@ function mapSessionToDb(
     claude_session_id: session.claudeSessionId,
     status: session.status,
     ended_at: session.endedAt?.toISOString() || null,
+    message_count: session.messageCount,
+    token_count: session.tokenCount,
+    backend: session.backend,
+    model: session.model,
     metadata: {
       type: session.type,
       taskDescription: session.taskDescription,
@@ -243,6 +255,22 @@ export class SessionRepository implements ISessionRepository {
       dbUpdates.ended_at = updates.endedAt?.toISOString() || null;
     }
 
+    if (updates.messageCount !== undefined) {
+      dbUpdates.message_count = updates.messageCount;
+    }
+
+    if (updates.tokenCount !== undefined) {
+      dbUpdates.token_count = updates.tokenCount;
+    }
+
+    if (updates.backend !== undefined) {
+      dbUpdates.backend = updates.backend;
+    }
+
+    if (updates.model !== undefined) {
+      dbUpdates.model = updates.model;
+    }
+
     // Merge metadata updates
     const newMetadata: SessionMetadata = { ...(current.metadata as SessionMetadata) };
 
@@ -300,10 +328,14 @@ export class SessionRepository implements ISessionRepository {
       throw new Error(`Session not found: ${id}`);
     }
 
+    const newInputTokens = current.totalInputTokens + usage.inputTokens;
+    const newOutputTokens = current.totalOutputTokens + usage.outputTokens;
+
     await this.update(id, {
       contextTokens: usage.contextTokens,
-      totalInputTokens: current.totalInputTokens + usage.inputTokens,
-      totalOutputTokens: current.totalOutputTokens + usage.outputTokens,
+      totalInputTokens: newInputTokens,
+      totalOutputTokens: newOutputTokens,
+      tokenCount: newInputTokens + newOutputTokens,
     });
 
     logger.debug('Updated token usage', { id, usage });
