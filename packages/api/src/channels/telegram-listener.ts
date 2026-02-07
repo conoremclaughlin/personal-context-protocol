@@ -2,7 +2,7 @@
  * Telegram Listener Service
  *
  * Listens for incoming Telegram messages via long-polling (getUpdates)
- * and routes them to the MessageHandler for processing.
+ * and routes them to the ChannelGateway for processing.
  *
  * Can be switched to webhook mode for production deployments.
  */

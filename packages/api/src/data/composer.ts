@@ -10,7 +10,6 @@ import { ConversationsRepository } from './repositories/conversations.repository
 import { ContextRepository } from './repositories/context.repository';
 import { ProjectsRepository } from './repositories/projects.repository';
 import { SessionFocusRepository } from './repositories/session-focus.repository';
-import { AgentSessionsRepository } from './repositories/agent-sessions.repository';
 import { ProjectTasksRepository } from './repositories/project-tasks.repository';
 import { MemoryRepository } from './repositories/memory-repository';
 import { ActivityStreamRepository } from './repositories/activity-stream.repository';
@@ -30,7 +29,6 @@ export class DataComposer {
     context: ContextRepository;
     projects: ProjectsRepository;
     sessionFocus: SessionFocusRepository;
-    agentSessions: AgentSessionsRepository;
     projectTasks: ProjectTasksRepository;
     memory: MemoryRepository;
     activityStream: ActivityStreamRepository;
@@ -51,7 +49,6 @@ export class DataComposer {
       context: new ContextRepository(supabaseClient),
       projects: new ProjectsRepository(supabaseClient),
       sessionFocus: new SessionFocusRepository(supabaseClient),
-      agentSessions: new AgentSessionsRepository(supabaseClient),
       projectTasks: new ProjectTasksRepository(supabaseClient),
       memory: new MemoryRepository(supabaseClient),
       activityStream: new ActivityStreamRepository(supabaseClient),

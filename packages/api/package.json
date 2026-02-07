@@ -18,9 +18,6 @@
     "test:coverage": "vitest run --coverage",
     "test:connection": "tsx src/test-connection.ts",
     "test:channels": "tsx src/test-channels.ts",
-    "test:orchestrator": "tsx src/scripts/test-orchestrator.ts",
-    "test:message-flow": "tsx src/scripts/test-message-flow.ts",
-    "sessions": "tsx src/scripts/sessions.ts",
     "lint": "eslint src --ext .ts",
     "type-check": "tsc --noEmit",
     "clean": "rm -rf dist"
