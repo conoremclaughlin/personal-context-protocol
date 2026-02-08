@@ -9,6 +9,7 @@
 
 import { EventEmitter } from 'events';
 import type { InboundMessage, ChannelPlatform } from './types';
+import { MediaGroupBuffer } from './media-group-buffer';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
 import { getAuthorizationService, type AuthorizationService } from '../services/authorization';
@@ -42,6 +43,36 @@ interface TelegramPhotoSize {
   file_size?: number;
 }
 
+interface TelegramDocument {
+  file_id: string;
+  file_unique_id: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
+interface TelegramVideo {
+  file_id: string;
+  file_unique_id: string;
+  width: number;
+  height: number;
+  duration: number;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
+interface TelegramAudio {
+  file_id: string;
+  file_unique_id: string;
+  duration: number;
+  performer?: string;
+  title?: string;
+  file_name?: string;
+  mime_type?: string;
+  file_size?: number;
+}
+
 interface TelegramFile {
   file_id: string;
   file_unique_id: string;
@@ -65,6 +96,10 @@ interface TelegramMessage {
   text?: string;
   caption?: string;
   photo?: TelegramPhotoSize[];
+  document?: TelegramDocument;
+  video?: TelegramVideo;
+  audio?: TelegramAudio;
+  media_group_id?: string;
   entities?: TelegramMessageEntity[];
   caption_entities?: TelegramMessageEntity[];
   reply_to_message?: TelegramMessage;
@@ -116,6 +151,7 @@ export class TelegramListener extends EventEmitter {
   private lastUpdateId = 0;
   private pollTimeout: NodeJS.Timeout | null = null;
   private messageCallback?: MessageCallback;
+  private mediaGroupBuffer: MediaGroupBuffer | null = null;
   private authService: AuthorizationService;
 
   // Ephemeral message cache - keyed by chatId, stores last N messages
@@ -144,6 +180,10 @@ export class TelegramListener extends EventEmitter {
    */
   onMessage(callback: MessageCallback): void {
     this.messageCallback = callback;
+    this.mediaGroupBuffer = new MediaGroupBuffer(
+      (msg) => this.dispatchMessage(msg),
+      { flushDelayMs: 500 },
+    );
   }
 
   /**
@@ -188,6 +228,8 @@ export class TelegramListener extends EventEmitter {
       clearTimeout(this.pollTimeout);
       this.pollTimeout = null;
     }
+
+    this.mediaGroupBuffer?.destroy();
 
     this.emit('disconnected');
   }
@@ -287,12 +329,13 @@ export class TelegramListener extends EventEmitter {
 
     // ========== NORMAL MESSAGE PROCESSING ==========
 
-    // Check if message has text OR photo (with optional caption)
+    // Check if message has text or any media (photo, document, video, audio)
     const hasText = !!telegramMessage.text;
     const hasPhoto = !!telegramMessage.photo && telegramMessage.photo.length > 0;
+    const hasMedia = hasPhoto || !!telegramMessage.document || !!telegramMessage.video || !!telegramMessage.audio;
 
-    if (!hasText && !hasPhoto) {
-      logger.debug('Skipping message without text or photo');
+    if (!hasText && !hasMedia) {
+      logger.debug('Skipping message without text or media');
       return;
     }
 
@@ -302,23 +345,41 @@ export class TelegramListener extends EventEmitter {
       return;
     }
 
-    // Convert to InboundMessage (async due to photo URL fetching)
+    // Convert to InboundMessage (async due to media download)
     const message = await this.convertMessage(telegramMessage);
+
+    // Route media group messages through the buffer for album aggregation
+    if (telegramMessage.media_group_id && this.mediaGroupBuffer) {
+      this.mediaGroupBuffer.add(telegramMessage.media_group_id, message);
+      return;
+    }
+
+    // Dispatch single messages directly
+    await this.dispatchMessage(message);
+  }
+
+  /**
+   * Dispatch a converted InboundMessage: cache, emit, and call callback.
+   * Used by both the direct path (single messages) and MediaGroupBuffer flush.
+   */
+  private async dispatchMessage(message: InboundMessage): Promise<void> {
+    const chatId = message.conversationId || '';
 
     // Cache message for context retrieval (ephemeral, not persisted)
     this.cacheMessage({
-      messageId: telegramMessage.message_id,
+      messageId: Number(message.messageId) || 0,
       chatId,
       from: message.sender.name || message.sender.username || 'Unknown',
       fromId: message.sender.id || chatId,
       text: message.body,
-      timestamp: new Date(telegramMessage.date * 1000),
+      timestamp: new Date(message.timestamp || Date.now()),
     });
 
     logger.info(`Received message from @${message.sender.username || message.sender.id}`, {
       chatId,
       messageId: message.messageId,
       body: message.body.substring(0, 50),
+      mediaCount: message.media?.length ?? 0,
     });
 
     // Emit event
@@ -565,32 +626,70 @@ export class TelegramListener extends EventEmitter {
       groupSubject: msg.chat.title,
     };
 
-    // Handle photo attachments
+    // Handle media attachments (photo, document, video, audio)
+    const mediaAttachments: import('./types').MediaAttachment[] = [];
+
     if (msg.photo && msg.photo.length > 0) {
-      // Get the largest photo (last in array)
       const largestPhoto = msg.photo[msg.photo.length - 1];
-
-      // Download the file locally so Claude can use Read tool on it
       const localPath = await this.downloadFile(largestPhoto.file_id);
-
       if (localPath) {
-        message.media = [{
-          type: 'image',
-          path: localPath, // Local path for Read tool access
-        }];
-
-        // If no caption, add a placeholder body indicating an image was sent
-        if (!textContent) {
-          message.body = '[Image attached]';
-        }
-
+        mediaAttachments.push({ type: 'image', path: localPath });
         logger.info('Photo attachment downloaded', {
-          fileId: largestPhoto.file_id,
-          localPath,
-          width: largestPhoto.width,
-          height: largestPhoto.height,
+          fileId: largestPhoto.file_id, localPath,
+          width: largestPhoto.width, height: largestPhoto.height,
           hasCaption: !!msg.caption,
         });
+      }
+    }
+
+    if (msg.document) {
+      const localPath = await this.downloadFile(msg.document.file_id);
+      if (localPath) {
+        mediaAttachments.push({
+          type: 'document', path: localPath,
+          filename: msg.document.file_name, contentType: msg.document.mime_type,
+        });
+        logger.info('Document attachment downloaded', {
+          fileId: msg.document.file_id, localPath,
+          filename: msg.document.file_name, mimeType: msg.document.mime_type,
+        });
+      }
+    }
+
+    if (msg.video) {
+      const localPath = await this.downloadFile(msg.video.file_id);
+      if (localPath) {
+        mediaAttachments.push({
+          type: 'video', path: localPath,
+          filename: msg.video.file_name, contentType: msg.video.mime_type,
+        });
+        logger.info('Video attachment downloaded', {
+          fileId: msg.video.file_id, localPath, duration: msg.video.duration,
+        });
+      }
+    }
+
+    if (msg.audio) {
+      const localPath = await this.downloadFile(msg.audio.file_id);
+      if (localPath) {
+        mediaAttachments.push({
+          type: 'audio', path: localPath,
+          filename: msg.audio.file_name, contentType: msg.audio.mime_type,
+        });
+        logger.info('Audio attachment downloaded', {
+          fileId: msg.audio.file_id, localPath, duration: msg.audio.duration,
+        });
+      }
+    }
+
+    if (mediaAttachments.length > 0) {
+      message.media = mediaAttachments;
+      if (!textContent) {
+        const type = mediaAttachments[0].type === 'image' ? 'Image'
+          : mediaAttachments[0].type === 'video' ? 'Video'
+          : mediaAttachments[0].type === 'audio' ? 'Audio'
+          : 'File';
+        message.body = `[${type} attached]`;
       }
     }
 
