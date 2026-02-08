@@ -175,11 +175,13 @@ import {
   handleGetCalendarEvent,
   handleRespondToCalendarEvent,
   handleUpdateCalendarEvent,
+  handleCreateCalendarEvent,
   listCalendarsSchema,
   listCalendarEventsSchema,
   getCalendarEventSchema,
   respondToCalendarEventSchema,
   updateCalendarEventSchema,
+  createCalendarEventSchema,
 } from '../../stories/google-calendar/handlers';
 
 import {
@@ -2469,6 +2471,37 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleUpdateCalendarEvent(args, dataComposer);
       } catch (error) {
         logger.error('Error in update_calendar_event:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'create_calendar_event',
+    {
+      description: `Create a new event on the user's Google Calendar.
+
+Supports both timed events and all-day events:
+- Timed events: use "dateTime" in RFC3339 format (e.g., "2026-02-10T10:00:00-08:00")
+- All-day events: use "date" in YYYY-MM-DD format (e.g., "2026-02-10")
+
+Optionally include a timeZone (IANA format, e.g., "America/Los_Angeles") if the dateTime doesn't include an offset.
+
+You can invite attendees by providing their email addresses. Attendees will receive an email notification.
+
+User must have connected their Google account with Calendar write permissions.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: createCalendarEventSchema,
+    },
+    async (args) => {
+      try {
+        return await handleCreateCalendarEvent(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in create_calendar_event:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,

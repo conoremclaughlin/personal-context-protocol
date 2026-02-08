@@ -135,7 +135,7 @@ describe('isCalendarOperationAllowed', () => {
 
   describe('unknown operations', () => {
     it('should block operations not in the allowlist', () => {
-      const result = isCalendarOperationAllowed('create_event' as CalendarOperation);
+      const result = isCalendarOperationAllowed('delete_event' as CalendarOperation);
       expect(result.allowed).toBe(false);
       expect(result.reason).toContain('not permitted');
     });

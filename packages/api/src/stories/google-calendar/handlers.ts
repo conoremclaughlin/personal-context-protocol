@@ -46,8 +46,7 @@ type ToolResult = {
 export const ALLOWED_OPERATIONS: Set<CalendarOperation> = new Set([
   'respond_to_event', // Accept, decline, or tentative response to invites
   'update_event', // Update event details (summary, description, location, times)
-  // Future additions when ready:
-  // 'create_event',  // Creating new events
+  'create_event', // Creating new events
 ]);
 
 /**
@@ -201,6 +200,32 @@ export const updateCalendarEventSchema = userIdentifierBaseSchema.extend({
   end: eventTimeSchema
     .optional()
     .describe('New end time. Use dateTime for timed events, date for all-day events.'),
+});
+
+export const createCalendarEventSchema = userIdentifierBaseSchema.extend({
+  summary: z.string().describe('Event title/summary'),
+  description: z
+    .string()
+    .optional()
+    .describe('Event description or notes'),
+  location: z
+    .string()
+    .optional()
+    .describe('Event location (address, room name, or virtual meeting URL)'),
+  start: eventTimeSchema.describe(
+    'Event start time. Use dateTime for timed events (e.g., "2026-02-10T10:00:00-08:00"), date for all-day events (e.g., "2026-02-10").'
+  ),
+  end: eventTimeSchema.describe(
+    'Event end time. Use dateTime for timed events, date for all-day events.'
+  ),
+  calendarId: z
+    .string()
+    .optional()
+    .describe('Calendar ID to create the event in (default: "primary")'),
+  attendees: z
+    .array(z.string().email())
+    .optional()
+    .describe('Email addresses of attendees to invite'),
 });
 
 // ============================================================================
@@ -701,6 +726,121 @@ export async function handleUpdateCalendarEvent(
                     : message.includes('403') || message.includes('forbidden')
                       ? 'You may not have edit access to this event. Only the organizer or users with writer access can modify events.'
                       : undefined,
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+}
+
+/**
+ * Create a new calendar event.
+ *
+ * Creates an event on the user's Google Calendar with optional attendees,
+ * location, and description. Supports both timed and all-day events.
+ */
+export async function handleCreateCalendarEvent(
+  args: unknown,
+  dataComposer: DataComposer
+): Promise<ToolResult> {
+  // Validate operation is allowed
+  const operationCheck = isCalendarOperationAllowed('create_event');
+  if (!operationCheck.allowed) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              success: false,
+              error: operationCheck.reason,
+              allowedOperations: Array.from(ALLOWED_OPERATIONS),
+            },
+            null,
+            2
+          ),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const params = createCalendarEventSchema.parse(args);
+  const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
+
+  const calendarService = getGoogleCalendarService();
+
+  try {
+    const event = await calendarService.createEvent(user.id, {
+      summary: params.summary,
+      description: params.description,
+      location: params.location,
+      start: params.start,
+      end: params.end,
+      calendarId: params.calendarId,
+      attendees: params.attendees,
+    });
+
+    logger.info('Created calendar event', {
+      userId: user.id,
+      eventId: event.id,
+      summary: event.summary,
+      attendeeCount: params.attendees?.length ?? 0,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              success: true,
+              user: { id: user.id, resolvedBy },
+              message: `Successfully created event: "${event.summary}"`,
+              event: {
+                id: event.id,
+                summary: event.summary,
+                description: event.description,
+                start: event.start,
+                end: event.end,
+                location: event.location,
+                attendees: event.attendees,
+                organizer: event.organizer,
+                htmlLink: event.htmlLink,
+              },
+            },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    logger.error('Failed to create calendar event', {
+      userId: user.id,
+      summary: params.summary,
+      error: message,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            {
+              success: false,
+              error: message,
+              hint:
+                message.includes('No active google account')
+                  ? 'User needs to connect their Google account in the web dashboard'
+                  : message.includes('calendar.events')
+                    ? 'User needs to re-authorize Google with Calendar write permissions'
+                    : undefined,
             },
             null,
             2

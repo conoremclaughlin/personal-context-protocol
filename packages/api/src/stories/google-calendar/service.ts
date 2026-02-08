@@ -15,6 +15,7 @@ import type {
   GetEventOptions,
   RespondToEventOptions,
   UpdateEventOptions,
+  CreateEventOptions,
 } from './types';
 
 export class GoogleCalendarService {
@@ -245,6 +246,52 @@ export class GoogleCalendarService {
       eventId,
       eventSummary: response.data.summary,
       updatedFields: Object.keys(fields),
+    });
+
+    return this.mapEvent(response.data);
+  }
+
+  /**
+   * Create a new calendar event.
+   */
+  async createEvent(
+    userId: string,
+    options: CreateEventOptions
+  ): Promise<CalendarEvent> {
+    const calendar = await this.getClient(userId);
+
+    const { calendarId = 'primary', summary, description, location, start, end, attendees } = options;
+
+    logger.info('Creating calendar event', {
+      userId,
+      calendarId,
+      summary,
+      hasAttendees: !!attendees?.length,
+    });
+
+    const requestBody: calendar_v3.Schema$Event = {
+      summary,
+      start: { dateTime: start.dateTime, date: start.date, timeZone: start.timeZone },
+      end: { dateTime: end.dateTime, date: end.date, timeZone: end.timeZone },
+    };
+
+    if (description !== undefined) requestBody.description = description;
+    if (location !== undefined) requestBody.location = location;
+    if (attendees && attendees.length > 0) {
+      requestBody.attendees = attendees.map((email) => ({ email }));
+    }
+
+    const response = await calendar.events.insert({
+      calendarId,
+      requestBody,
+      sendUpdates: attendees?.length ? 'all' : 'none',
+    });
+
+    logger.info('Created calendar event', {
+      userId,
+      eventId: response.data.id,
+      summary: response.data.summary,
+      attendeeCount: attendees?.length ?? 0,
     });
 
     return this.mapEvent(response.data);

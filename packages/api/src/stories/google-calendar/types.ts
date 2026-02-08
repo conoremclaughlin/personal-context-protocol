@@ -103,6 +103,16 @@ export interface UpdateEventOptions {
   fields: UpdateEventFields;
 }
 
+export interface CreateEventOptions {
+  calendarId?: string;
+  summary: string;
+  description?: string;
+  location?: string;
+  start: { dateTime?: string; date?: string; timeZone?: string };
+  end: { dateTime?: string; date?: string; timeZone?: string };
+  attendees?: string[];
+}
+
 /**
  * Calendar operations that can be validated against whitelist/blocklist.
  */
