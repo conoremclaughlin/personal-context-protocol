@@ -4,9 +4,12 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, renameSync } from 'fs';
+import { join, basename } from 'path';
 import { tmpdir } from 'os';
+import { planInit, getWorktreePaths, type InitResult } from './workspace.js';
+
+type Move = InitResult['moves'][number];
 
 // Create a temporary test directory
 const TEST_DIR = join(tmpdir(), 'pcp-cli-test-' + Date.now());
@@ -165,10 +168,179 @@ describe('Workspace Commands', () => {
   });
 });
 
-describe('CLI argument parsing', () => {
-  it('should have correct default values', () => {
-    // These are tested by checking the help output
-    // In a real test, we'd import and test the command directly
-    expect(true).toBe(true); // Placeholder
+describe('Workspace init', () => {
+  // macOS resolves /var -> /private/var, so we need the real path
+  let realTestDir: string;
+  let realTestRepo: string;
+
+  beforeEach(() => {
+    mkdirSync(TEST_REPO, { recursive: true });
+    git('init', TEST_REPO);
+    git('config user.email "test@test.com"', TEST_REPO);
+    git('config user.name "Test User"', TEST_REPO);
+    writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo');
+    git('add .', TEST_REPO);
+    git('commit -m "Initial commit"', TEST_REPO);
+
+    // Get the real resolved path (handles /var -> /private/var on macOS)
+    realTestRepo = git('rev-parse --show-toplevel', TEST_REPO);
+    realTestDir = join(realTestRepo, '..');
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(TEST_DIR, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  describe('planInit', () => {
+    it('should plan moving main repo into parent directory', () => {
+      const result = planInit(realTestRepo, 'myproject');
+
+      expect(result.parentDir).toBe(join(realTestDir, 'myproject'));
+      expect(result.moves).toHaveLength(1);
+      expect(result.moves[0].from).toBe(realTestRepo);
+      expect(result.moves[0].to).toBe(join(realTestDir, 'myproject', 'test-repo'));
+    });
+
+    it('should include existing worktrees in the plan', () => {
+      const wtPath = join(realTestDir, 'test-repo--myra');
+      git(`worktree add -b workspace/myra "${wtPath}"`, realTestRepo);
+
+      const result = planInit(realTestRepo, 'pcp');
+
+      expect(result.moves).toHaveLength(2);
+      expect(result.moves[0].from).toBe(realTestRepo);
+      expect(result.moves[1].from).toBe(wtPath);
+      expect(result.moves[1].to).toBe(join(realTestDir, 'pcp', 'test-repo--myra'));
+    });
+
+    it('should ignore worktrees that do not follow naming convention', () => {
+      // Create a worktree with a non-standard name
+      const wtPath = join(realTestDir, 'unrelated-worktree');
+      git(`worktree add -b feature/unrelated "${wtPath}"`, realTestRepo);
+
+      const result = planInit(realTestRepo, 'pcp');
+
+      // Should only have the main repo move, not the unrelated worktree
+      expect(result.moves).toHaveLength(1);
+      expect(result.moves[0].from).toBe(realTestRepo);
+    });
+  });
+
+  describe('getWorktreePaths', () => {
+    it('should return empty array when no worktrees exist', () => {
+      const paths = getWorktreePaths(realTestRepo);
+      expect(paths).toHaveLength(0);
+    });
+
+    it('should return worktree paths excluding main', () => {
+      const wt1 = join(realTestDir, 'test-repo--alpha');
+      const wt2 = join(realTestDir, 'test-repo--beta');
+      git(`worktree add -b workspace/alpha "${wt1}"`, realTestRepo);
+      git(`worktree add -b workspace/beta "${wt2}"`, realTestRepo);
+
+      const paths = getWorktreePaths(realTestRepo);
+      expect(paths).toHaveLength(2);
+      expect(paths).toContain(wt1);
+      expect(paths).toContain(wt2);
+    });
+  });
+
+  describe('full init workflow', () => {
+    it('should move repo and worktrees into parent directory', () => {
+      // Create a worktree
+      const wtPath = join(realTestDir, 'test-repo--wren');
+      git(`worktree add -b workspace/wren "${wtPath}"`, realTestRepo);
+
+      // Plan the init
+      const { parentDir, moves } = planInit(realTestRepo, 'pcp');
+
+      // Execute the moves (same logic as initWorkspace but without spinner/process.exit)
+      mkdirSync(parentDir, { recursive: true });
+
+      // Move worktrees first
+      const worktreeMoves = moves.filter((m: Move) => m.from !== realTestRepo);
+      for (const move of worktreeMoves) {
+        renameSync(move.from, move.to);
+      }
+
+      // Move main repo
+      const mainMove = moves.find((m: Move) => m.from === realTestRepo)!;
+      renameSync(mainMove.from, mainMove.to);
+
+      // Repair
+      const newWtPaths = worktreeMoves.map((m: Move) => `"${m.to}"`).join(' ');
+      git(`worktree repair ${newWtPaths}`, mainMove.to);
+
+      // Verify old paths are gone
+      expect(existsSync(realTestRepo)).toBe(false);
+      expect(existsSync(wtPath)).toBe(false);
+
+      // Verify new paths exist
+      expect(existsSync(mainMove.to)).toBe(true);
+      expect(existsSync(worktreeMoves[0].to)).toBe(true);
+
+      // Verify git still works from new main location
+      const branches = git('branch', mainMove.to);
+      expect(branches).toContain('main');
+      expect(branches).toContain('workspace/wren');
+
+      // Verify worktree list shows correct new paths
+      const worktreeList = git('worktree list', mainMove.to);
+      expect(worktreeList).toContain(mainMove.to);
+      expect(worktreeList).toContain(worktreeMoves[0].to);
+    });
+
+    it('should handle repo with no worktrees', () => {
+      const { parentDir, moves } = planInit(realTestRepo, 'solo');
+
+      expect(moves).toHaveLength(1);
+
+      // Execute
+      mkdirSync(parentDir, { recursive: true });
+      renameSync(moves[0].from, moves[0].to);
+
+      // Verify
+      expect(existsSync(realTestRepo)).toBe(false);
+      expect(existsSync(moves[0].to)).toBe(true);
+
+      const branches = git('branch', moves[0].to);
+      expect(branches).toContain('main');
+    });
+
+    it('should handle multiple worktrees', () => {
+      const wt1 = join(realTestDir, 'test-repo--alpha');
+      const wt2 = join(realTestDir, 'test-repo--beta');
+      const wt3 = join(realTestDir, 'test-repo--gamma');
+      git(`worktree add -b workspace/alpha "${wt1}"`, realTestRepo);
+      git(`worktree add -b workspace/beta "${wt2}"`, realTestRepo);
+      git(`worktree add -b workspace/gamma "${wt3}"`, realTestRepo);
+
+      const { parentDir, moves } = planInit(realTestRepo, 'multi');
+
+      // 1 main + 3 worktrees = 4 moves
+      expect(moves).toHaveLength(4);
+
+      // Execute
+      mkdirSync(parentDir, { recursive: true });
+      const worktreeMoves = moves.filter((m: Move) => m.from !== realTestRepo);
+      for (const move of worktreeMoves) {
+        renameSync(move.from, move.to);
+      }
+      const mainMove = moves.find((m: Move) => m.from === realTestRepo)!;
+      renameSync(mainMove.from, mainMove.to);
+      const newWtPaths = worktreeMoves.map((m: Move) => `"${m.to}"`).join(' ');
+      git(`worktree repair ${newWtPaths}`, mainMove.to);
+
+      // Verify all worktrees are accessible
+      const worktreeList = git('worktree list', mainMove.to);
+      expect(worktreeList).toContain(mainMove.to);
+      for (const wm of worktreeMoves) {
+        expect(worktreeList).toContain(wm.to);
+      }
+    });
   });
 });

@@ -4,6 +4,7 @@
  * Manage git worktrees for parallel development with PCP identity.
  *
  * Commands:
+ *   ws init [name]     Initialize parent directory structure
  *   ws create <name>   Create a new workspace
  *   ws list            List all workspaces
  *   ws remove <name>   Remove a workspace (keeps branch)
@@ -17,7 +18,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, readdirSync, renameSync } from 'fs';
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 
@@ -146,9 +147,156 @@ function listWorkspaces(gitRoot: string): WorkspaceInfo[] {
   return workspaces;
 }
 
+/**
+ * Get all worktree paths registered with git (excluding the main worktree).
+ */
+function getWorktreePaths(gitRoot: string): string[] {
+  const output = git('worktree list --porcelain', gitRoot);
+  const paths: string[] = [];
+
+  for (const line of output.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      const path = line.substring(9);
+      if (path !== gitRoot) {
+        paths.push(path);
+      }
+    }
+  }
+
+  return paths;
+}
+
 // ============================================================================
 // Commands
 // ============================================================================
+
+interface InitResult {
+  parentDir: string;
+  moves: Array<{ from: string; to: string }>;
+}
+
+/**
+ * Plan the init migration: figure out what needs to move where.
+ */
+function planInit(gitRoot: string, parentName: string): InitResult {
+  const grandparent = getWorkspaceParent(gitRoot);
+  const repoName = basename(gitRoot);
+  const parentDir = join(grandparent, parentName);
+
+  const moves: Array<{ from: string; to: string }> = [];
+
+  // Main repo move
+  moves.push({ from: gitRoot, to: join(parentDir, repoName) });
+
+  // Find existing worktrees that are siblings of the main repo
+  const prefix = getWorkspacePrefix(gitRoot);
+  const worktreePaths = getWorktreePaths(gitRoot);
+
+  for (const wtPath of worktreePaths) {
+    const wtName = basename(wtPath);
+    // Only move worktrees that follow our naming convention (siblings with prefix)
+    if (wtName.startsWith(prefix) && dirname(wtPath) === grandparent) {
+      moves.push({ from: wtPath, to: join(parentDir, wtName) });
+    }
+  }
+
+  return { parentDir, moves };
+}
+
+async function initWorkspace(parentName: string | undefined, options: { dryRun?: boolean }): Promise<void> {
+  if (!parentName) {
+    console.error(chalk.red('Error: Parent directory name is required.'));
+    console.error(chalk.dim('Usage: pcp ws init <parent-name>'));
+    console.error(chalk.dim('Example: pcp ws init pcp'));
+    process.exit(1);
+  }
+
+  const gitRoot = findGitRoot();
+  const { parentDir, moves } = planInit(gitRoot, parentName);
+
+  // Validate: parent directory must not already exist
+  if (existsSync(parentDir)) {
+    console.error(chalk.red(`Error: Directory already exists: ${parentDir}`));
+    console.error(chalk.dim('Choose a different name or remove the existing directory.'));
+    process.exit(1);
+  }
+
+  // Validate: no target paths should exist
+  for (const move of moves) {
+    if (existsSync(move.to)) {
+      console.error(chalk.red(`Error: Target path already exists: ${move.to}`));
+      process.exit(1);
+    }
+  }
+
+  if (options.dryRun) {
+    console.log(chalk.bold('\nDry run — planned moves:\n'));
+    console.log(chalk.dim(`  Create: ${parentDir}/`));
+    console.log('');
+    for (const move of moves) {
+      console.log(chalk.dim(`  ${move.from}`));
+      console.log(chalk.cyan(`    → ${move.to}`));
+      console.log('');
+    }
+    console.log(chalk.yellow('No changes made (--dry-run).'));
+    return;
+  }
+
+  const spinner = ora('Initializing parent directory structure').start();
+
+  try {
+    // Create parent directory
+    spinner.text = `Creating ${parentDir}`;
+    mkdirSync(parentDir, { recursive: true });
+
+    // Move worktrees first (before moving the main repo, since git refs point to main)
+    const worktreeMoves = moves.filter((m) => m.from !== gitRoot);
+    for (const move of worktreeMoves) {
+      spinner.text = `Moving ${basename(move.from)}`;
+      renameSync(move.from, move.to);
+    }
+
+    // Move main repo last
+    const mainMove = moves.find((m) => m.from === gitRoot)!;
+    spinner.text = `Moving ${basename(mainMove.from)}`;
+    renameSync(mainMove.from, mainMove.to);
+
+    // Repair git worktree cross-references
+    spinner.text = 'Repairing git worktree references';
+    const newWorktreePaths = worktreeMoves.map((m) => `"${m.to}"`).join(' ');
+    if (newWorktreePaths) {
+      git(`worktree repair ${newWorktreePaths}`, mainMove.to);
+    }
+
+    spinner.succeed('Parent directory initialized');
+    console.log('');
+    console.log(chalk.bold('Moves:'));
+    for (const move of moves) {
+      console.log(chalk.dim(`  ${move.from}`));
+      console.log(chalk.cyan(`    → ${move.to}`));
+    }
+    console.log('');
+    console.log(chalk.cyan('Next steps:'));
+    console.log(chalk.dim(`  cd ${mainMove.to}`));
+    console.log('');
+    console.log(chalk.dim('Note: Claude Code sessions from the old path will not carry over.'));
+    console.log(chalk.dim('PCP memories persist automatically via bootstrap.'));
+  } catch (error) {
+    spinner.fail(`Failed to initialize: ${error}`);
+    console.error('');
+    console.error(chalk.yellow('Some moves may have partially completed.'));
+    console.error(chalk.yellow('Check the state of these directories:'));
+    console.error(chalk.dim(`  ${parentDir}`));
+    for (const move of moves) {
+      console.error(chalk.dim(`  ${move.from}`));
+      console.error(chalk.dim(`  ${move.to}`));
+    }
+    console.error('');
+    console.error(chalk.yellow('If worktree references are broken, run from the main repo:'));
+    console.error(chalk.dim('  git worktree repair <worktree-paths...>'));
+    process.exit(1);
+  }
+}
 
 async function createWorkspace(name: string, options: { identity?: string; purpose?: string; branch?: string }): Promise<void> {
   const spinner = ora(`Creating workspace: ${name}`).start();
@@ -344,11 +492,20 @@ function cdCommand(name: string): void {
 // Register Commands
 // ============================================================================
 
+// Exported for testing
+export { findGitRoot, getWorkspaceParent, getWorkspacePrefix, getWorkspacePath, getWorktreePaths, planInit, git };
+export type { InitResult };
+
 export function registerWorkspaceCommands(program: Command): void {
   const ws = program
     .command('ws')
     .alias('workspace')
     .description('Workspace management for parallel development');
+
+  ws.command('init [parent-name]')
+    .description('Initialize parent directory structure (groups repo + worktrees)')
+    .option('-n, --dry-run', 'Show planned moves without making changes')
+    .action(initWorkspace);
 
   ws.command('create <name>')
     .description('Create a new workspace with git worktree')
