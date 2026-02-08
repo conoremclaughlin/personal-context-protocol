@@ -1,149 +1,124 @@
-# @personal-context/cli
+# sb
 
-Command-line interface for Personal Context Protocol (PCP).
+A lightweight CLI that wraps AI coding tools with persistent identity. Type `sb` to start a session — your SB (Synthetically-born Being) knows who it is, who you are, and what you've been working on.
 
-## Installation
+Unrecognized flags are passed through to the underlying tool (Claude Code today, others in the future).
 
-```bash
-# From the monorepo root
-yarn install
-
-# Use via yarn
-yarn cli <command>
-yarn ws <command>
-```
-
-## Commands
-
-### Workspace Management (`ws` / `workspace`)
-
-Manage git worktrees for parallel development with PCP identity.
+## Global Install
 
 ```bash
-# Create a workspace
-yarn ws create <name> [options]
-  -i, --identity <agent>  Agent ID for this workspace (default: wren)
-  -p, --purpose <desc>    Description/purpose of the workspace
-  -b, --branch <branch>   Custom branch name (default: workspace/<name>)
+# Build and symlink into PATH (one-time)
+yarn workspace @personal-context/cli build
+yarn workspace @personal-context/cli install:cli
 
-# Examples
-yarn ws create feat-auth                                  # Creates workspace/feat-auth branch
-yarn ws create myra --identity myra --branch myra/main   # Custom agent and branch
-yarn ws create bugfix --purpose "Fix login issue"
+# Now available globally
+sb
 
-# List all workspaces
-yarn ws list
-yarn ws ls
-
-# Show git status of all workspaces
-yarn ws status
-yarn ws st
-
-# Remove workspace (keeps branch for PR)
-yarn ws remove <name>
-yarn ws rm <name>
-
-# Remove workspace AND delete branch
-yarn ws clean <name>
-
-# Get workspace path
-yarn ws path <name>
-
-# Change to workspace directory
-eval $(yarn ws cd <name>)
+# Auto-rebuild on changes during development
+yarn workspace @personal-context/cli dev   # tsc --watch in another terminal
 ```
 
-### Workspace Naming Convention
+To remove: `yarn workspace @personal-context/cli uninstall:cli`
 
-Workspaces are created as sibling directories to the main repo:
-
-```
-~/ws/
-  personal-context-protocol/          # Main repo
-  personal-context-protocol--feat-x/  # Workspace for feat-x
-  personal-context-protocol--myra/    # Myra's workspace
-```
-
-The prefix is derived from the repo folder name, so it works regardless of how users clone the repo.
-
-### Agent Commands (`agent`)
-
-Interact with PCP agents.
+## Usage
 
 ```bash
-# Trigger an agent to wake up
-yarn cli agent trigger <id> [options]
-  -m, --message <msg>      Message to include
-  -p, --priority <level>   Priority (low, normal, high, urgent)
+# Interactive session (default)
+sb                              # Launch Claude Code as wren
+sb -a myra                      # Launch as myra
+sb -m opus                      # Use opus model
 
-# Check agent status
-yarn cli agent status [id]   # All agents if no ID
+# Prompt mode (one-shot)
+sb "fix the login bug"
+sb -m opus "refactor auth"
 
-# Check agent inbox
-yarn cli agent inbox [id]
+# Passthrough flags to Claude Code
+sb --resume abc123              # Resume a session
+sb --continue                   # Continue last session
+sb --allowedTools "Read,Write"  # Restrict tools
 
-# List known agents
-yarn cli agent list
-yarn cli agent ls
+# Explicit passthrough with --
+sb -- --some-future-flag
+
+# Pipe input
+echo "explain this" | sb
+
+# Subcommands
+sb ws create feat-auth          # Create workspace
+sb agent status                 # Check agent status
+sb session list                 # List sessions
+sb --help                       # Full help
 ```
 
-### Session Commands (`session`)
+### SB Options
 
-Manage PCP sessions.
+| Flag | Description | Default |
+|------|-------------|---------|
+| `-a, --agent <id>` | Agent identity | `wren` (or from `.pcp/identity.json`) |
+| `-m, --model <model>` | Model (sonnet, opus, haiku) | `sonnet` |
+| `--no-session` | Disable session tracking | enabled |
+| `-v, --verbose` | Show debug output | off |
+
+Any flag not listed above is forwarded to Claude Code.
+
+### Identity Resolution
+
+The agent ID is resolved in order:
+1. `-a` / `--agent` flag
+2. `.pcp/identity.json` in current directory
+3. `~/.pcp/config.json` → `agentMapping.claude-code`
+4. Default: `wren`
+
+## Subcommands
+
+### Workspaces (`sb ws`)
+
+Git worktree management with per-workspace identity.
 
 ```bash
-# List recent sessions
-yarn cli session list [options]
-  -a, --agent <id>   Filter by agent
-  -l, --limit <n>    Number of sessions (default: 10)
-
-# Show session details
-yarn cli session show <id>
-
-# Resume a session
-yarn cli session resume <id>
-
-# End a session
-yarn cli session end [id]
+sb ws create <name>             # Create workspace with git worktree
+sb ws list                      # List all workspaces
+sb ws status                    # Git status across all workspaces
+sb ws remove <name>             # Remove workspace (keeps branch)
+sb ws clean <name>              # Remove workspace + delete branch
+sb ws path <name>               # Print workspace path
+eval $(sb ws cd <name>)         # cd to workspace
 ```
 
-## Workspace Identity
+Options for `create`:
+- `-i, --identity <agent>` — Agent ID for this workspace (default: wren)
+- `-p, --purpose <desc>` — Description
+- `-b, --branch <branch>` — Custom branch (default: `workspace/<name>`)
 
-Each workspace has a `.pcp/identity.json` file:
+### Agents (`sb agent`)
 
-```json
-{
-  "agentId": "wren",
-  "context": "workspace-feat-auth",
-  "description": "Implementing authentication",
-  "workspace": "feat-auth",
-  "branch": "workspace/feat-auth",
-  "createdAt": "2026-02-05T...",
-  "createdBy": "user@example.com"
-}
+```bash
+sb agent status [id]            # Check agent status
+sb agent trigger <id>           # Wake up an agent
+sb agent inbox [id]             # Check inbox
+sb agent list                   # List known agents
 ```
 
-This identity is used by the PCP CLI to:
-- Inject agent identity into Claude Code sessions
-- Track which agent is working in which workspace
-- Enable parallel development with multiple agents
+### Sessions (`sb session`)
+
+```bash
+sb session list                 # Recent sessions
+sb session show <id>            # Session details
+sb session resume <id>          # Resume a session
+sb session end [id]             # End a session
+```
 
 ## Environment Variables
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `PCP_SERVER_URL` | PCP server URL | `http://localhost:3001` |
-| `AGENT_ID` | Override agent identity | (from identity.json) |
+| `AGENT_ID` | Override agent identity | (from identity resolution) |
 
 ## Development
 
 ```bash
-# Build
-yarn workspace @personal-context/cli build
-
-# Test
-yarn workspace @personal-context/cli test
-
-# Type check
-yarn workspace @personal-context/cli type-check
+yarn workspace @personal-context/cli build      # Build
+yarn workspace @personal-context/cli dev         # Watch mode
+yarn workspace @personal-context/cli test        # Run tests
 ```

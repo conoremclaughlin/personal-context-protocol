@@ -1,19 +1,19 @@
 /**
  * Claude Command
  *
- * Wraps Claude Code CLI with PCP integration:
+ * Wraps Claude Code CLI with SB integration:
  * - Identity injection via --append-system-prompt
+ * - Passthrough of unrecognized flags to claude
  * - Session tracking via PCP API
- * - Passthrough of all Claude Code args
  */
 
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { homedir, tmpdir } from 'os';
 import chalk from 'chalk';
 
-interface ClaudeOptions {
+export interface SbOptions {
   agent: string;
   model: string;
   session: boolean;
@@ -33,13 +33,13 @@ interface IdentityJson {
 
 /**
  * Resolve agent ID from multiple sources:
- * 1. CLI --agent flag
+ * 1. CLI --agent flag (if explicitly changed from default)
  * 2. .pcp/identity.json in current directory
  * 3. ~/.pcp/config.json agentMapping
  * 4. Default: 'wren'
  */
 function resolveAgentId(cliAgent?: string): string {
-  // 1. CLI flag takes precedence
+  // 1. CLI flag takes precedence (if explicitly set, not default)
   if (cliAgent && cliAgent !== 'wren') {
     return cliAgent;
   }
@@ -100,124 +100,122 @@ PCP tools persist across sessions and are shared with the user and other agents.
 }
 
 /**
- * Run Claude Code with PCP integration
+ * Create a temp file with the identity prompt. Returns the path and a cleanup fn.
  */
-export async function runClaude(prompt: string, options: ClaudeOptions): Promise<void> {
+function createIdentityPromptFile(agentId: string): { promptFile: string; cleanup: () => void } {
+  const identityPrompt = buildIdentityPrompt(agentId);
+  const tempDir = mkdtempSync(join(tmpdir(), 'sb-'));
+  const promptFile = join(tempDir, 'identity-prompt.md');
+  writeFileSync(promptFile, identityPrompt);
+
+  return {
+    promptFile,
+    cleanup: () => {
+      try { rmSync(tempDir, { recursive: true }); } catch { /* ignore */ }
+    },
+  };
+}
+
+/**
+ * Build the base claude args (model, identity, mcp config).
+ * Passthrough args are spliced in by the caller.
+ */
+function buildBaseArgs(options: SbOptions, promptFile: string): string[] {
+  const args: string[] = [
+    '--model', options.model,
+    '--append-system-prompt', promptFile,
+  ];
+
+  // Find MCP config in current directory
+  const mcpConfig = join(process.cwd(), '.mcp.json');
+  if (existsSync(mcpConfig)) {
+    args.push('--mcp-config', mcpConfig);
+  }
+
+  return args;
+}
+
+/**
+ * Run Claude Code with a prompt (one-shot mode with -p flag).
+ */
+export async function runClaude(
+  prompt: string,
+  options: SbOptions,
+  passthroughArgs: string[] = [],
+): Promise<void> {
   const agentId = resolveAgentId(options.agent);
 
   if (options.verbose) {
     console.log(chalk.dim(`Agent: ${agentId}`));
     console.log(chalk.dim(`Model: ${options.model}`));
     console.log(chalk.dim(`Session tracking: ${options.session}`));
+    if (passthroughArgs.length) {
+      console.log(chalk.dim(`Passthrough: ${passthroughArgs.join(' ')}`));
+    }
   }
 
-  // Build identity prompt and write to temp file
-  const identityPrompt = buildIdentityPrompt(agentId);
-  const tempDir = mkdtempSync(join(tmpdir(), 'pcp-'));
-  const promptFile = join(tempDir, 'identity-prompt.md');
-  writeFileSync(promptFile, identityPrompt);
+  const { promptFile, cleanup } = createIdentityPromptFile(agentId);
 
-  // Build Claude Code args
-  const args: string[] = [
+  const args = [
     '-p',
-    '--model', options.model,
-    '--append-system-prompt', promptFile,
+    ...buildBaseArgs(options, promptFile),
+    ...passthroughArgs,
+    prompt,
   ];
-
-  // Find MCP config
-  const mcpConfig = join(process.cwd(), '.mcp.json');
-  if (existsSync(mcpConfig)) {
-    args.push('--mcp-config', mcpConfig);
-  }
-
-  // Add prompt
-  args.push(prompt);
 
   if (options.verbose) {
     console.log(chalk.dim(`Running: claude ${args.join(' ')}`));
   }
 
-  // Spawn Claude Code
   const claude = spawn('claude', args, {
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      AGENT_ID: agentId,
-    },
+    env: { ...process.env, AGENT_ID: agentId },
   });
 
-  // Cleanup on exit
   claude.on('close', (code) => {
-    try {
-      rmSync(tempDir, { recursive: true });
-    } catch {
-      // Ignore cleanup errors
-    }
-
-    if (code !== 0) {
-      process.exit(code || 1);
-    }
+    cleanup();
+    if (code !== 0) process.exit(code || 1);
   });
 
-  // Handle signals
-  process.on('SIGINT', () => {
-    claude.kill('SIGINT');
-  });
-
-  process.on('SIGTERM', () => {
-    claude.kill('SIGTERM');
-  });
+  process.on('SIGINT', () => claude.kill('SIGINT'));
+  process.on('SIGTERM', () => claude.kill('SIGTERM'));
 }
 
 /**
- * Run Claude Code interactively (no -p flag)
+ * Run Claude Code interactively (no -p flag).
  */
-export async function runClaudeInteractive(options: ClaudeOptions): Promise<void> {
+export async function runClaudeInteractive(
+  options: SbOptions,
+  passthroughArgs: string[] = [],
+): Promise<void> {
   const agentId = resolveAgentId(options.agent);
 
   if (options.verbose) {
     console.log(chalk.dim(`Agent: ${agentId}`));
     console.log(chalk.dim(`Model: ${options.model}`));
+    if (passthroughArgs.length) {
+      console.log(chalk.dim(`Passthrough: ${passthroughArgs.join(' ')}`));
+    }
   }
 
-  // Build identity prompt and write to temp file
-  const identityPrompt = buildIdentityPrompt(agentId);
-  const tempDir = mkdtempSync(join(tmpdir(), 'pcp-'));
-  const promptFile = join(tempDir, 'identity-prompt.md');
-  writeFileSync(promptFile, identityPrompt);
+  const { promptFile, cleanup } = createIdentityPromptFile(agentId);
 
-  // Build Claude Code args (no -p for interactive)
-  const args: string[] = [
-    '--model', options.model,
-    '--append-system-prompt', promptFile,
+  const args = [
+    ...buildBaseArgs(options, promptFile),
+    ...passthroughArgs,
   ];
-
-  // Find MCP config
-  const mcpConfig = join(process.cwd(), '.mcp.json');
-  if (existsSync(mcpConfig)) {
-    args.push('--mcp-config', mcpConfig);
-  }
 
   if (options.verbose) {
     console.log(chalk.dim(`Running: claude ${args.join(' ')}`));
   }
 
-  // Spawn Claude Code interactively
   const claude = spawn('claude', args, {
     stdio: 'inherit',
-    env: {
-      ...process.env,
-      AGENT_ID: agentId,
-    },
+    env: { ...process.env, AGENT_ID: agentId },
   });
 
-  // Cleanup on exit
   claude.on('close', (code) => {
-    try {
-      rmSync(tempDir, { recursive: true });
-    } catch {
-      // Ignore cleanup errors
-    }
+    cleanup();
     process.exit(code || 0);
   });
 }

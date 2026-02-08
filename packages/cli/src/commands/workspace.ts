@@ -11,7 +11,7 @@
  *   ws clean <name>    Remove workspace and delete branch
  *   ws status          Show status of all workspaces
  *   ws path <name>     Output workspace path (for cd)
- *   ws cd <name>       Print cd command (use with: eval $(pcp ws cd foo))
+ *   ws cd <name>       Print cd command (use with: eval $(sb ws cd foo))
  */
 
 import { Command } from 'commander';
@@ -206,8 +206,8 @@ function planInit(gitRoot: string, parentName: string): InitResult {
 async function initWorkspace(parentName: string | undefined, options: { dryRun?: boolean }): Promise<void> {
   if (!parentName) {
     console.error(chalk.red('Error: Parent directory name is required.'));
-    console.error(chalk.dim('Usage: pcp ws init <parent-name>'));
-    console.error(chalk.dim('Example: pcp ws init pcp'));
+    console.error(chalk.dim('Usage: sb ws init <parent-name>'));
+    console.error(chalk.dim('Example: sb ws init pcp'));
     process.exit(1);
   }
 
@@ -342,10 +342,10 @@ async function createWorkspace(name: string, options: { identity?: string; purpo
     console.log(chalk.dim('  Agent:  ') + identity.agentId);
     console.log('');
     console.log(chalk.cyan('To start working:'));
-    console.log(chalk.dim(`  cd ${wsPath} && pcp`));
+    console.log(chalk.dim(`  cd ${wsPath} && sb`));
     console.log('');
     console.log(chalk.cyan('Or use:'));
-    console.log(chalk.dim(`  eval $(pcp ws cd ${name})`));
+    console.log(chalk.dim(`  eval $(sb ws cd ${name})`));
   } catch (error) {
     spinner.fail(`Failed to create workspace: ${error}`);
     process.exit(1);
@@ -358,7 +358,7 @@ function listCommand(): void {
 
   if (workspaces.length === 0) {
     console.log(chalk.yellow('No workspaces found.'));
-    console.log(chalk.dim('Create one with: pcp ws create <name>'));
+    console.log(chalk.dim('Create one with: sb ws create <name>'));
     return;
   }
 
@@ -392,7 +392,7 @@ async function removeWorkspace(name: string): Promise<void> {
 
     git(`worktree remove "${wsPath}"`, gitRoot);
     spinner.succeed(`Workspace removed: ${name}`);
-    console.log(chalk.dim('  Branch kept for PR. Use "pcp ws clean" to also delete branch.'));
+    console.log(chalk.dim('  Branch kept for PR. Use "sb ws clean" to also delete branch.'));
   } catch (error) {
     spinner.fail(`Failed to remove workspace: ${error}`);
     process.exit(1);
@@ -538,6 +538,6 @@ export function registerWorkspaceCommands(program: Command): void {
     .action(pathCommand);
 
   ws.command('cd <name>')
-    .description('Output cd command (use with: eval $(pcp ws cd <name>))')
+    .description('Output cd command (use with: eval $(sb ws cd <name>))')
     .action(cdCommand);
 }

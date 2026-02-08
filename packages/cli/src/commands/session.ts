@@ -74,7 +74,7 @@ async function fetchPcp(path: string, options?: RequestInit): Promise<Response> 
 async function listCommand(options: { agent?: string; limit?: string }): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: pcp init'));
+    console.error(chalk.red('PCP not configured. Run: sb init'));
     process.exit(1);
   }
 
@@ -139,7 +139,7 @@ async function listCommand(options: { agent?: string; limit?: string }): Promise
 async function showCommand(sessionId: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: pcp init'));
+    console.error(chalk.red('PCP not configured. Run: sb init'));
     process.exit(1);
   }
 
@@ -201,7 +201,7 @@ async function showCommand(sessionId: string): Promise<void> {
 async function resumeCommand(sessionId: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: pcp init'));
+    console.error(chalk.red('PCP not configured. Run: sb init'));
     process.exit(1);
   }
 
@@ -244,13 +244,13 @@ async function resumeCommand(sessionId: string): Promise<void> {
 async function endCommand(sessionId?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: pcp init'));
+    console.error(chalk.red('PCP not configured. Run: sb init'));
     process.exit(1);
   }
 
   if (!sessionId) {
     // Find active session
-    console.log(chalk.yellow('No session ID provided. Use: pcp session end <id>'));
+    console.log(chalk.yellow('No session ID provided. Use: sb session end <id>'));
     return;
   }
 

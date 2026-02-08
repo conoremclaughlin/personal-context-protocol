@@ -24,6 +24,7 @@
     "logs:pcp:errors": "tail -n 200 -f $HOME/.pcp/logs/error.log | jq -r '.timestamp + \" [\" + .level + \"]: \" + .message'",
     "status": "pm2 status",
     "pm2": "pm2",
+    "sb": "yarn workspace @personal-context/cli cli",
     "cli": "yarn workspace @personal-context/cli cli",
     "ws": "yarn workspace @personal-context/cli cli ws",
     "ws:create": "yarn ws create",

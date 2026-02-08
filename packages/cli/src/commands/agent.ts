@@ -86,7 +86,7 @@ async function triggerAgent(agentId: string, options: { message?: string; priori
   try {
     const config = getPcpConfig();
     if (!config?.email) {
-      spinner.fail('PCP not configured. Run: pcp init');
+      spinner.fail('PCP not configured. Run: sb init');
       process.exit(1);
     }
 
@@ -131,7 +131,7 @@ async function triggerAgent(agentId: string, options: { message?: string; priori
 async function statusCommand(agentId?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: pcp init'));
+    console.error(chalk.red('PCP not configured. Run: sb init'));
     process.exit(1);
   }
 
@@ -187,7 +187,7 @@ async function statusCommand(agentId?: string): Promise<void> {
 async function inboxCommand(agentId?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: pcp init'));
+    console.error(chalk.red('PCP not configured. Run: sb init'));
     process.exit(1);
   }
 
