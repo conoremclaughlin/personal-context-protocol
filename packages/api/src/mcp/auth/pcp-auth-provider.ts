@@ -60,6 +60,9 @@ export interface AuthCallbackResult {
 // Constants
 // ============================================================================
 
+// TODO: Consider extending Supabase JWT expiry to 30 days (2592000s) in dashboard
+// and updating this constant to match. Current 1-hour expiry works via refresh
+// tokens, but a longer JWT reduces refresh frequency for MCP clients.
 const ACCESS_TOKEN_LIFETIME = 3600; // 1 hour (Supabase JWT default)
 const REFRESH_TOKEN_LIFETIME_DAYS = 90;
 const REFRESH_TOKEN_LIFETIME_MS = REFRESH_TOKEN_LIFETIME_DAYS * 24 * 60 * 60 * 1000;
@@ -175,7 +178,7 @@ export class PcpAuthProvider {
   async exchangeAuthorizationCode(params: {
     code: string;
     codeVerifier: string;
-    clientId: string;
+    clientId?: string;
   }): Promise<OAuthTokenResponse | OAuthErrorResponse> {
     const codeData = this.authCodes.get(params.code);
     if (!codeData) {
@@ -186,6 +189,10 @@ export class PcpAuthProvider {
       this.authCodes.delete(params.code);
       return { error: 'invalid_grant', error_description: 'Authorization code expired' };
     }
+
+    // Fall back to the client_id stored in the auth code (from /authorize).
+    // Some clients (e.g. Codex) don't send client_id in the token exchange body.
+    const clientId = params.clientId || codeData.clientId;
 
     // Verify PKCE
     if (codeData.codeChallenge && params.codeVerifier) {
@@ -212,7 +219,7 @@ export class PcpAuthProvider {
       .from('mcp_tokens')
       .insert({
         user_id: codeData.userId,
-        client_id: params.clientId,
+        client_id: clientId,
         refresh_token: refreshToken,
         supabase_refresh_token: codeData.supabaseRefreshToken,
         scopes: ['mcp:tools'],
@@ -230,7 +237,7 @@ export class PcpAuthProvider {
     logger.info('MCP tokens issued', {
       userId: codeData.userId,
       email: codeData.userEmail,
-      clientId: params.clientId,
+      clientId,
       refreshTokenExpires: expiresAt.toISOString(),
     });
 
