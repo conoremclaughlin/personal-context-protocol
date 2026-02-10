@@ -142,18 +142,41 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
   const params = rememberSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
 
+  // If there's an active session, attach its ID to the memory metadata for traceability.
+  // Never require a session — memories are too important to lose.
+  let sessionId: string | undefined;
+  try {
+    const activeSession = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+    );
+    sessionId = activeSession?.id;
+  } catch {
+    // Session lookup failed — save the memory anyway
+  }
+
+  const metadata = {
+    ...params.metadata,
+    ...(sessionId ? { sessionId } : {}),
+  };
+
   const memory = await dataComposer.repositories.memory.remember({
     userId: user.id,
     content: params.content,
     source: params.source as MemorySource,
     salience: params.salience as Salience,
     topics: params.topics,
-    metadata: params.metadata,
+    metadata,
     expiresAt: params.expiresAt ? new Date(params.expiresAt) : undefined,
     agentId: params.agentId,
   });
 
-  logger.info(`Memory created for user ${user.id}`, { memoryId: memory.id, source: memory.source, agentId: params.agentId });
+  logger.info(`Memory created for user ${user.id}`, {
+    memoryId: memory.id,
+    source: memory.source,
+    agentId: params.agentId,
+    sessionId: sessionId || 'none',
+  });
 
   return {
     content: [
@@ -170,6 +193,7 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
               salience: memory.salience,
               topics: memory.topics,
               agentId: memory.agentId,
+              sessionId: sessionId || null,
               createdAt: memory.createdAt.toISOString(),
             },
           },
