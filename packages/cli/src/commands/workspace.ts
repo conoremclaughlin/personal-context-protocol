@@ -298,7 +298,7 @@ async function initWorkspace(parentName: string | undefined, options: { dryRun?:
   }
 }
 
-async function createWorkspace(name: string, options: { identity?: string; purpose?: string; branch?: string }): Promise<void> {
+async function createWorkspace(name: string, options: { agent?: string; purpose?: string; branch?: string }): Promise<void> {
   const spinner = ora(`Creating workspace: ${name}`).start();
 
   try {
@@ -324,7 +324,7 @@ async function createWorkspace(name: string, options: { identity?: string; purpo
     mkdirSync(pcpDir, { recursive: true });
 
     const identity: WorkspaceIdentity = {
-      agentId: options.identity || 'wren',
+      agentId: options.agent || 'wren',
       context: `workspace-${name}`,
       description: options.purpose || `Workspace: ${name}`,
       workspace: name,
@@ -509,7 +509,7 @@ export function registerWorkspaceCommands(program: Command): void {
 
   ws.command('create <name>')
     .description('Create a new workspace with git worktree')
-    .option('-i, --identity <agent>', 'Agent ID for this workspace', 'wren')
+    .option('-a, --agent <agent>', 'Agent ID for this workspace', 'wren')
     .option('-p, --purpose <desc>', 'Description/purpose of the workspace')
     .option('-b, --branch <branch>', 'Custom branch name (default: workspace/<name>)')
     .action(createWorkspace);
