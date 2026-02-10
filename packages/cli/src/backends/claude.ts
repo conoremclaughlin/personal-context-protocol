@@ -24,8 +24,12 @@ export class ClaudeAdapter implements BackendAdapter {
       args.push('-p');
     }
 
-    // Model + identity
-    args.push('--model', config.model);
+    // Model (only if explicitly specified)
+    if (config.model) {
+      args.push('--model', config.model);
+    }
+
+    // Identity
     args.push('--append-system-prompt', promptFile);
 
     // MCP config (if present in CWD)

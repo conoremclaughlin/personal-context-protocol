@@ -50,7 +50,7 @@ interface ParsedArgs {
   sbOptions: {
     agent: string;
     backend: string;
-    model: string;
+    model: string | undefined;  // undefined = use backend's default
     session: boolean;
     verbose: boolean;
   };
@@ -65,10 +65,10 @@ interface ParsedArgs {
  * (e.g. --resume abc123) so we do this ourselves for the root command.
  */
 function extractArgs(argv: string[]): ParsedArgs {
-  const sbOptions = {
+  const sbOptions: ParsedArgs['sbOptions'] = {
     agent: 'wren',
     backend: 'claude',
-    model: 'sonnet',
+    model: undefined,  // undefined = use backend's default
     session: true,
     verbose: false,
   };
@@ -130,7 +130,7 @@ program
   .allowExcessArguments(true)
   .option('-a, --agent <id>', 'Agent identity to use', 'wren')
   .option('-b, --backend <name>', 'AI backend (claude, codex, gemini)', 'claude')
-  .option('-m, --model <model>', 'Model to use', 'sonnet')
+  .option('-m, --model <model>', 'Model to use (defaults to backend-specific)')
   .option('--no-session', 'Disable session tracking')
   .option('-v, --verbose', 'Verbose output')
   .argument('[prompt...]', 'Prompt to send (omit for interactive)')
