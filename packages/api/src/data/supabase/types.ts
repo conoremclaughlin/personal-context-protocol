@@ -336,6 +336,74 @@ export type Database = {
           },
         ]
       }
+      agent_sessions: {
+        Row: {
+          backend: string
+          created_at: string
+          ended_at: string | null
+          id: string
+          last_activity_at: string
+          mcp_config_path: string | null
+          message_count: number | null
+          model: string | null
+          platform: string | null
+          platform_chat_id: string | null
+          session_id: string
+          session_key: string | null
+          status: string
+          total_cost: number | null
+          updated_at: string
+          user_id: string
+          working_directory: string | null
+        }
+        Insert: {
+          backend?: string
+          created_at?: string
+          ended_at?: string | null
+          id?: string
+          last_activity_at?: string
+          mcp_config_path?: string | null
+          message_count?: number | null
+          model?: string | null
+          platform?: string | null
+          platform_chat_id?: string | null
+          session_id: string
+          session_key?: string | null
+          status?: string
+          total_cost?: number | null
+          updated_at?: string
+          user_id: string
+          working_directory?: string | null
+        }
+        Update: {
+          backend?: string
+          created_at?: string
+          ended_at?: string | null
+          id?: string
+          last_activity_at?: string
+          mcp_config_path?: string | null
+          message_count?: number | null
+          model?: string | null
+          platform?: string | null
+          platform_chat_id?: string | null
+          session_id?: string
+          session_key?: string | null
+          status?: string
+          total_cost?: number | null
+          updated_at?: string
+          user_id?: string
+          working_directory?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_sessions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       artifact_history: {
         Row: {
           artifact_id: string
@@ -970,40 +1038,40 @@ export type Database = {
       }
       mcp_tokens: {
         Row: {
-          id: string
-          user_id: string
           client_id: string
-          refresh_token: string
-          supabase_refresh_token: string
-          scopes: string[] | null
+          created_at: string | null
           expires_at: string
-          created_at: string
-          updated_at: string
+          id: string
           last_used_at: string | null
+          refresh_token: string
+          scopes: string[] | null
+          supabase_refresh_token: string
+          updated_at: string | null
+          user_id: string
         }
         Insert: {
-          id?: string
-          user_id: string
           client_id: string
-          refresh_token: string
-          supabase_refresh_token: string
-          scopes?: string[] | null
+          created_at?: string | null
           expires_at: string
-          created_at?: string
-          updated_at?: string
+          id?: string
           last_used_at?: string | null
+          refresh_token: string
+          scopes?: string[] | null
+          supabase_refresh_token: string
+          updated_at?: string | null
+          user_id: string
         }
         Update: {
-          id?: string
-          user_id?: string
           client_id?: string
-          refresh_token?: string
-          supabase_refresh_token?: string
-          scopes?: string[] | null
+          created_at?: string | null
           expires_at?: string
-          created_at?: string
-          updated_at?: string
+          id?: string
           last_used_at?: string | null
+          refresh_token?: string
+          scopes?: string[] | null
+          supabase_refresh_token?: string
+          updated_at?: string | null
+          user_id?: string
         }
         Relationships: [
           {
@@ -1711,57 +1779,69 @@ export type Database = {
       sessions: {
         Row: {
           agent_id: string | null
-          backend: string
+          backend: string | null
+          backend_session_id: string | null
           claude_session_id: string | null
           compacting_since: string | null
           context: string | null
+          current_phase: string | null
           ended_at: string | null
           id: string
-          message_count: number
+          message_count: number | null
           metadata: Json | null
           model: string | null
           started_at: string | null
           status: string | null
           summary: string | null
-          token_count: number
+          token_count: number | null
+          updated_at: string | null
           user_id: string
           working_dir: string | null
+          workspace_id: string | null
         }
         Insert: {
           agent_id?: string | null
-          backend?: string
+          backend?: string | null
+          backend_session_id?: string | null
           claude_session_id?: string | null
           compacting_since?: string | null
           context?: string | null
+          current_phase?: string | null
           ended_at?: string | null
           id?: string
-          message_count?: number
+          message_count?: number | null
           metadata?: Json | null
           model?: string | null
           started_at?: string | null
           status?: string | null
           summary?: string | null
-          token_count?: number
+          token_count?: number | null
+          updated_at?: string | null
           user_id: string
           working_dir?: string | null
+          workspace_id?: string | null
         }
         Update: {
           agent_id?: string | null
-          backend?: string
+          backend?: string | null
+          backend_session_id?: string | null
           claude_session_id?: string | null
           compacting_since?: string | null
           context?: string | null
+          current_phase?: string | null
           ended_at?: string | null
           id?: string
-          message_count?: number
+          message_count?: number | null
           metadata?: Json | null
           model?: string | null
           started_at?: string | null
           status?: string | null
           summary?: string | null
-          token_count?: number
+          token_count?: number | null
+          updated_at?: string | null
           user_id?: string
           working_dir?: string | null
+          workspace_id?: string | null
         }
         Relationships: [
           {
@@ -1769,6 +1849,13 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sessions_workspace_id_fkey"
+            columns: ["workspace_id"]
+            isOneToOne: false
+            referencedRelation: "workspaces"
             referencedColumns: ["id"]
           },
         ]
@@ -2117,6 +2204,7 @@ export type Database = {
         Row: {
           created_at: string | null
           id: string
+          process_md: string | null
           shared_values_md: string | null
           updated_at: string | null
           user_id: string
@@ -2126,6 +2214,7 @@ export type Database = {
         Insert: {
           created_at?: string | null
           id?: string
+          process_md?: string | null
           shared_values_md?: string | null
           updated_at?: string | null
           user_id: string
@@ -2135,6 +2224,7 @@ export type Database = {
         Update: {
           created_at?: string | null
           id?: string
+          process_md?: string | null
           shared_values_md?: string | null
           updated_at?: string | null
           user_id?: string
@@ -2158,6 +2248,7 @@ export type Database = {
           created_at: string
           id: string
           identity_id: string
+          process_md: string | null
           shared_values_md: string | null
           user_id: string
           user_profile_md: string | null
@@ -2169,6 +2260,7 @@ export type Database = {
           created_at: string
           id?: string
           identity_id: string
+          process_md?: string | null
           shared_values_md?: string | null
           user_id: string
           user_profile_md?: string | null
@@ -2180,6 +2272,7 @@ export type Database = {
           created_at?: string
           id?: string
           identity_id?: string
+          process_md?: string | null
           shared_values_md?: string | null
           user_id?: string
           user_profile_md?: string | null
