@@ -15,6 +15,7 @@ vi.mock('../config/env', () => ({
   env: {
     MCP_TRANSPORT: 'http',
     MCP_HTTP_PORT: 0, // will be overridden
+    MCP_REQUIRE_OAUTH: false,
     SUPABASE_URL: 'http://localhost:54321',
     SUPABASE_SECRET_KEY: 'test-key',
     SUPABASE_ANON_KEY: 'test-anon-key',
@@ -74,6 +75,7 @@ vi.mock('@supabase/supabase-js', () => ({
 // ---------------------------------------------------------------------------
 
 import { MCPServer } from './server';
+import { env } from '../config/env';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -176,6 +178,22 @@ describe('MCP StreamableHTTP Transport', () => {
     const result = parseSSEResult(res.body) as any;
     expect(result.result.serverInfo.name).toBe('personal-context-protocol');
     expect(result.result.protocolVersion).toBe('2025-03-26');
+  });
+
+  it('should challenge unauthenticated initialize requests when OAuth is required', async () => {
+    (env as any).MCP_REQUIRE_OAUTH = true;
+
+    const res = await mcpPost(baseUrl, INITIALIZE_REQUEST);
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get('www-authenticate')).toContain('Bearer');
+    expect(res.headers.get('www-authenticate')).toContain('resource_metadata=');
+
+    const body = JSON.parse(res.body);
+    expect(body.error.code).toBe(-32001);
+    expect(body.error.message).toContain('Authentication required');
+
+    (env as any).MCP_REQUIRE_OAUTH = false;
   });
 
   // =========================================================================

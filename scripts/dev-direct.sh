@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Force Yarn to operate against this worktree (avoids cross-worktree PROJECT_CWD bleed).
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PROJECT_CWD="${ROOT_DIR}"
+export INIT_CWD="${ROOT_DIR}"
+
+# Run API + web directly (no PM2), useful for parallel worktrees.
+BASE_PORT="${PCP_PORT_BASE:-3001}"
+WEB_PORT="${WEB_PORT:-$((BASE_PORT + 1))}"
+MYRA_PORT="${MYRA_HTTP_PORT:-$((BASE_PORT + 2))}"
+
+echo "Starting direct dev mode"
+echo "  PCP_PORT_BASE=${BASE_PORT}"
+echo "  WEB_PORT=${WEB_PORT}"
+echo "  MYRA_HTTP_PORT=${MYRA_PORT}"
+
+cleanup() {
+  if [[ -n "${API_PID:-}" ]]; then kill "${API_PID}" 2>/dev/null || true; fi
+  if [[ -n "${WEB_PID:-}" ]]; then kill "${WEB_PID}" 2>/dev/null || true; fi
+}
+trap cleanup EXIT INT TERM
+
+(
+  PCP_PORT_BASE="${BASE_PORT}" \
+  MYRA_HTTP_PORT="${MYRA_PORT}" \
+  ENABLE_WHATSAPP="${ENABLE_WHATSAPP:-false}" \
+  ENABLE_DISCORD="${ENABLE_DISCORD:-false}" \
+  yarn --cwd "${ROOT_DIR}" workspace @personal-context/api server
+) &
+API_PID=$!
+
+(
+  yarn --cwd "${ROOT_DIR}" workspace @personal-context/web exec next dev -p "${WEB_PORT}"
+) &
+WEB_PID=$!
+
+wait "${API_PID}" "${WEB_PID}"

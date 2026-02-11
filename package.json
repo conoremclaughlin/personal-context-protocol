@@ -8,6 +8,8 @@
   ],
   "scripts": {
     "dev": "pm2 start ecosystem.config.cjs",
+    "dev:isolated": "PM2_HOME=.pm2 pm2 start ecosystem.config.cjs",
+    "dev:direct": "./scripts/dev-direct.sh",
     "dev:mcp": "yarn workspace @personal-context/api dev:mcp",
     "dev:myra:deprecated": "echo 'DEPRECATED: Myra is now triggered via heartbeat reminders through the PCP server. Use yarn dev instead.'",
     "dev:web": "yarn workspace @personal-context/web dev",
