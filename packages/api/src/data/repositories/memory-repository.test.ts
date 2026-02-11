@@ -513,6 +513,205 @@ describe('MemoryRepository', () => {
     });
   });
 
+  // =====================================================
+  // updateSession (unified session state management)
+  // =====================================================
+
+  describe('updateSession', () => {
+    const mockSessionRow = {
+      id: 'session-123',
+      user_id: 'user-123',
+      agent_id: 'wren',
+      workspace_id: null,
+      current_phase: 'implementing',
+      started_at: '2026-02-10T10:00:00Z',
+      ended_at: null,
+      summary: null,
+      metadata: {},
+      status: 'active',
+      backend_session_id: null,
+      claude_session_id: null,
+      context: null,
+      working_dir: null,
+    };
+
+    it('should update current_phase', async () => {
+      mockSupabase._setReturnData({ ...mockSessionRow, current_phase: 'reviewing' });
+
+      const result = await repo.updateSession('session-123', {
+        currentPhase: 'reviewing',
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.currentPhase).toBe('reviewing');
+
+      expect(mockSupabase.from).toHaveBeenCalledWith('sessions');
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBe('reviewing');
+      // updated_at is handled by DB trigger, not the repository
+      expect(updateCall).not.toHaveProperty('updated_at');
+    });
+
+    it('should update backendSessionId and also set claude_session_id for backward compat', async () => {
+      mockSupabase._setReturnData({
+        ...mockSessionRow,
+        backend_session_id: 'claude-abc123',
+        claude_session_id: 'claude-abc123',
+      });
+
+      await repo.updateSession('session-123', {
+        backendSessionId: 'claude-abc123',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.backend_session_id).toBe('claude-abc123');
+      expect(updateCall.claude_session_id).toBe('claude-abc123');
+    });
+
+    it('should update status', async () => {
+      mockSupabase._setReturnData({ ...mockSessionRow, status: 'resumable' });
+
+      await repo.updateSession('session-123', { status: 'resumable' });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.status).toBe('resumable');
+    });
+
+    it('should update context and workingDir', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-123', {
+        context: 'Working on tests',
+        workingDir: '/Users/test/project',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.context).toBe('Working on tests');
+      expect(updateCall.working_dir).toBe('/Users/test/project');
+    });
+
+    it('should update multiple fields at once', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-123', {
+        currentPhase: 'implementing',
+        status: 'active',
+        backendSessionId: 'abc',
+        context: 'Building feature',
+        workingDir: '/tmp',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBe('implementing');
+      expect(updateCall.status).toBe('active');
+      expect(updateCall.backend_session_id).toBe('abc');
+      expect(updateCall.claude_session_id).toBe('abc');
+      expect(updateCall.context).toBe('Building feature');
+      expect(updateCall.working_dir).toBe('/tmp');
+      // updated_at is handled by DB trigger, not the repository
+      expect(updateCall).not.toHaveProperty('updated_at');
+    });
+
+    it('should only include provided fields in update (no undefined pollution)', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-123', {
+        currentPhase: 'investigating',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBe('investigating');
+      // updated_at is handled by DB trigger, not the repository
+      expect(updateCall).not.toHaveProperty('updated_at');
+      expect(updateCall).not.toHaveProperty('status');
+      expect(updateCall).not.toHaveProperty('backend_session_id');
+      expect(updateCall).not.toHaveProperty('claude_session_id');
+      expect(updateCall).not.toHaveProperty('context');
+      expect(updateCall).not.toHaveProperty('working_dir');
+    });
+
+    it('should allow setting phase to null (clearing phase)', async () => {
+      mockSupabase._setReturnData({ ...mockSessionRow, current_phase: null });
+
+      await repo.updateSession('session-123', {
+        currentPhase: null,
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBeNull();
+    });
+
+    it('should return null when session not found', async () => {
+      mockSupabase._setReturnData(null, { code: 'PGRST116' });
+
+      const result = await repo.updateSession('nonexistent', {
+        currentPhase: 'implementing',
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it('should throw on database error', async () => {
+      mockSupabase._setReturnData(null, { message: 'Connection failed' });
+
+      await expect(
+        repo.updateSession('session-123', { currentPhase: 'implementing' })
+      ).rejects.toThrow('Failed to update session: Connection failed');
+    });
+
+    it('should filter update by session ID', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-456', { currentPhase: 'reviewing' });
+
+      expect(mockSupabase._queryBuilder.eq).toHaveBeenCalledWith('id', 'session-456');
+    });
+  });
+
+  // =====================================================
+  // rowToSession mapping (current_phase)
+  // =====================================================
+
+  describe('rowToSession current_phase mapping', () => {
+    it('should map current_phase from row', async () => {
+      mockSupabase._setReturnData({
+        id: 'session-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        workspace_id: 'workspace-abc',
+        current_phase: 'blocked:awaiting-input',
+        started_at: '2026-02-10T10:00:00Z',
+        ended_at: null,
+        summary: null,
+        metadata: {},
+      });
+
+      const session = await repo.getSession('session-123');
+
+      expect(session).not.toBeNull();
+      expect(session!.currentPhase).toBe('blocked:awaiting-input');
+    });
+
+    it('should map null current_phase to undefined', async () => {
+      mockSupabase._setReturnData({
+        id: 'session-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        workspace_id: null,
+        current_phase: null,
+        started_at: '2026-02-10T10:00:00Z',
+        ended_at: null,
+        summary: null,
+        metadata: {},
+      });
+
+      const session = await repo.getSession('session-123');
+
+      expect(session).not.toBeNull();
+      expect(session!.currentPhase).toBeUndefined();
+    });
+  });
+
   describe('Session Logs', () => {
     describe('addSessionLog', () => {
       it('should add a log entry', async () => {
