@@ -241,6 +241,7 @@ describe('updateSessionPhaseSchema', () => {
       context: 'Working on session phase tests',
       workingDir: '/Users/test/project',
       agentId: 'wren',
+      workspaceId: '550e8400-e29b-41d4-a716-446655440099',
     });
 
     expect(result.success).toBe(true);
@@ -355,7 +356,7 @@ describe('handleUpdateSessionPhase', () => {
       expect(parsed.session.currentPhase).toBe('implementing');
 
       // Verify repo calls
-      expect(mockDataComposer.repositories.memory.getActiveSession).toHaveBeenCalledWith('user-123', undefined);
+      expect(mockDataComposer.repositories.memory.getActiveSession).toHaveBeenCalledWith('user-123', undefined, undefined);
       expect(mockDataComposer.repositories.memory.updateSession).toHaveBeenCalledWith(
         'session-123',
         expect.objectContaining({ currentPhase: 'implementing' })
@@ -386,7 +387,38 @@ describe('handleUpdateSessionPhase', () => {
         mockDataComposer as never
       );
 
-      expect(mockDataComposer.repositories.memory.getActiveSession).toHaveBeenCalledWith('user-123', 'wren');
+      expect(mockDataComposer.repositories.memory.getActiveSession).toHaveBeenCalledWith('user-123', 'wren', undefined);
+    });
+
+    it('should resolve session by workspaceId when sessionId not provided', async () => {
+      mockDataComposer.repositories.memory.getActiveSession.mockResolvedValue(mockSession);
+      mockDataComposer.repositories.memory.updateSession.mockResolvedValue(mockUpdatedSession);
+
+      const workspaceId = '550e8400-e29b-41d4-a716-446655440099';
+      await handleUpdateSessionPhase(
+        { email: 'test@test.com', phase: 'implementing', agentId: 'wren', workspaceId },
+        mockDataComposer as never
+      );
+
+      expect(mockDataComposer.repositories.memory.getActiveSession).toHaveBeenCalledWith('user-123', 'wren', workspaceId);
+    });
+
+    it('should prefer sessionId over workspaceId for resolution', async () => {
+      mockDataComposer.repositories.memory.updateSession.mockResolvedValue(mockUpdatedSession);
+
+      const sessionId = '550e8400-e29b-41d4-a716-446655440000';
+      const workspaceId = '550e8400-e29b-41d4-a716-446655440099';
+      await handleUpdateSessionPhase(
+        { email: 'test@test.com', phase: 'reviewing', sessionId, workspaceId },
+        mockDataComposer as never
+      );
+
+      // When sessionId is provided, getActiveSession should NOT be called
+      expect(mockDataComposer.repositories.memory.getActiveSession).not.toHaveBeenCalled();
+      expect(mockDataComposer.repositories.memory.updateSession).toHaveBeenCalledWith(
+        sessionId,
+        expect.objectContaining({ currentPhase: 'reviewing' })
+      );
     });
   });
 

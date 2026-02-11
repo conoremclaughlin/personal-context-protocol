@@ -1069,6 +1069,9 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Update your session state — work phase, status, backend session ID, context. This is the primary tool for managing session state.
 
+Session resolution: sessionId (explicit) > workspaceId (scoped lookup) > most recent active session.
+For parallel worktrees, pass workspaceId to target the correct session.
+
 Phase: Communicates real-time work status to other agents.
 - Active work phases (no auto-memory): investigating, implementing, reviewing
 - Significant transitions (auto-creates memory): blocked:<reason>, waiting:<reason>, complete
@@ -1079,7 +1082,8 @@ Also sets: backendSessionId (for resume), status (active/paused/resumable/comple
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
         ...userIdentifierFields,
-        sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+        sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided). Most reliable for targeting a specific session.'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId is not provided. Useful for parallel worktree scenarios.'),
         phase: z.string().optional().describe('Work phase (e.g., "implementing", "blocked:awaiting-input", "waiting:build")'),
         note: z.string().optional().describe('Context for the phase transition (included in auto-created memory for blocked/waiting)'),
         agentId: z.string().optional().describe('Agent identity for memory attribution'),

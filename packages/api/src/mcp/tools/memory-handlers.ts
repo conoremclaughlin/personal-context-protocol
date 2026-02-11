@@ -101,7 +101,8 @@ export const listSessionsSchema = userIdentifierBaseSchema.extend({
 // =====================================================
 
 export const updateSessionPhaseSchema = userIdentifierBaseSchema.extend({
-  sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+  sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided). Most reliable way to target a specific session.'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution. When sessionId is not provided, finds the active session in this workspace. Useful for parallel worktree scenarios.'),
   phase: z.string().optional().describe('Work phase. Core phases: investigating, implementing, reviewing, paused, complete. Use blocked:<reason> or waiting:<reason> for transitions that auto-create memories.'),
   note: z.string().optional().describe('Optional note explaining the phase (e.g., what you\'re blocked on). Included in auto-created memory for blocked/waiting phases.'),
   agentId: z.string().optional().describe('Agent identity for memory attribution'),
@@ -682,10 +683,14 @@ export async function handleUpdateSessionPhase(args: unknown, dataComposer: Data
     };
   }
 
-  // Get session ID (use provided or find active)
+  // Resolve session: sessionId > workspaceId-scoped lookup > most recent active
   let sessionId = params.sessionId;
   if (!sessionId) {
-    const session = await dataComposer.repositories.memory.getActiveSession(user.id, params.agentId);
+    const session = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId, // undefined = no workspace filter (backward compat)
+    );
     if (!session) {
       return {
         content: [
