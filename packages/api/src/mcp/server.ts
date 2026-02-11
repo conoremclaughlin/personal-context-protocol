@@ -8,7 +8,7 @@ import { MCP_SERVER_NAME, MCP_SERVER_VERSION, MCP_SERVER_DESCRIPTION } from '../
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
 import type { DataComposer } from '../data/composer';
-import { registerAllTools, setMiniAppsRegistry, setTelegramListener } from './tools';
+import { registerAllTools, setMiniAppsRegistry, setTelegramListener, registerChannelListener } from './tools';
 import { loadMiniApps, registerMiniAppTools, getMiniAppsInfo, type LoadedMiniApp } from '../mini-apps';
 import adminRouter, { setWhatsAppListener } from '../routes/admin';
 import agentTriggerRouter, { getAgentGateway } from '../routes/agent-trigger';
@@ -323,6 +323,11 @@ export class MCPServer {
           ...(gatewayStatus.whatsapp.enabled && !gatewayStatus.whatsapp.connected && { error: 'Not connected' }),
           ...(!gatewayStatus.whatsapp.enabled && { error: 'Disabled' }),
         };
+        checks.discord = {
+          status: gatewayStatus.discord.enabled && gatewayStatus.discord.connected ? 'ok' : 'error',
+          ...(gatewayStatus.discord.enabled && !gatewayStatus.discord.connected && { error: 'Not connected' }),
+          ...(!gatewayStatus.discord.enabled && { error: 'Disabled' }),
+        };
       }
 
       checks.mcp = {
@@ -609,6 +614,14 @@ export class MCPServer {
       }
     });
 
+    this.channelGateway.on('discord:connected', () => {
+      const listener = this.channelGateway?.getDiscordListener();
+      if (listener) {
+        registerChannelListener('discord', listener);
+        logger.info('Discord listener registered with MCP tools');
+      }
+    });
+
     await this.channelGateway.start();
 
     const telegramListener = this.channelGateway.getTelegramListener();
@@ -619,6 +632,11 @@ export class MCPServer {
     const whatsAppListener = this.channelGateway.getWhatsAppListener();
     if (whatsAppListener) {
       setWhatsAppListener(whatsAppListener);
+    }
+
+    const discordListener = this.channelGateway.getDiscordListener();
+    if (discordListener) {
+      registerChannelListener('discord', discordListener);
     }
 
     logger.info('ChannelGateway started', this.channelGateway.getStatus());

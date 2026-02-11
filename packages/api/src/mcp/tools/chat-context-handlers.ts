@@ -12,9 +12,9 @@ import type { DataComposer } from '../../data/composer';
 import type { TelegramListener } from '../../channels/telegram-listener';
 import { logger } from '../../utils/logger';
 
-// Type for the ephemeral message from TelegramListener
+// Type for the ephemeral message from channel listeners
 interface EphemeralMessage {
-  messageId: number;
+  messageId: number | string;
   chatId: string;
   from: string;
   fromId: string;

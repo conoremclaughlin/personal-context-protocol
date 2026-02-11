@@ -44,6 +44,7 @@ import {
   handleEndSession,
   handleGetSession,
   handleListSessions,
+  handleUpdateSessionPhase,
   handleGetMemoryHistory,
   handleGetUserHistory,
   handleRestoreMemory,
@@ -825,6 +826,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
         expiresAt: z.string().datetime().optional().describe('Optional expiration date (ISO 8601)'),
         agentId: z.string().optional().describe('Which AI being created this memory (e.g., "wren", "benson"). Null = shared memory.'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID — helps auto-attach the correct session in parallel worktree scenarios. Stored in metadata.'),
       },
     },
     async (args) => {
@@ -937,10 +939,15 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Start a new AI session. Sessions track work done across a conversation and can be logged to.
 
+If workspaceId is provided, the session is scoped to that workspace — allowing multiple active sessions per agent (one per workspace). Read workspaceId from .pcp/identity.json if available.
+
+If an active session already exists for this agent+workspace, it is returned instead of creating a new one.
+
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
         ...userIdentifierFields,
         agentId: z.string().optional().describe('Agent identifier (e.g., "claude-code", "telegram-myra")'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID to scope this session to. Allows multiple active sessions per agent (one per workspace). Read from .pcp/identity.json.'),
         metadata: z.record(z.unknown()).optional().describe('Session metadata'),
       },
     },
@@ -961,12 +968,14 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'log_session',
     {
-      description: `Add an entry to the current session log. Use this to record important events, decisions, or progress.
+      description: `[DEPRECATED] Add an entry to the current session log. Prefer update_session_phase for work status and remember for important decisions/events.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
         ...userIdentifierFields,
         sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+        agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
         content: z.string().describe('Log entry content'),
         salience: z.enum(['low', 'medium', 'high', 'critical']).optional().describe('Importance (default: medium)'),
       },
@@ -990,10 +999,14 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `End a session with an optional summary. The summary is automatically saved as a high-salience memory.
 
+Session resolution: sessionId (explicit) > agentId+workspaceId (scoped) > most recent active (fallback).
+
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
         ...userIdentifierFields,
         sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+        agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
         summary: z.string().optional().describe('End-of-session summary (saved as memory)'),
       },
     },
@@ -1020,6 +1033,8 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       inputSchema: {
         ...userIdentifierFields,
         sessionId: z.string().uuid().optional().describe('Session ID (returns active session if not provided)'),
+        agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
         includeLogs: z.boolean().optional().describe('Include session logs (default: false)'),
       },
     },
@@ -1046,6 +1061,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       inputSchema: {
         ...userIdentifierFields,
         agentId: z.string().optional().describe('Filter by agent'),
+        workspaceId: z.string().uuid().optional().describe('Filter by workspace'),
         limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
       },
     },
@@ -1054,6 +1070,50 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleListSessions(args, dataComposer);
       } catch (error) {
         logger.error('Error in list_sessions:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Register update_session_phase tool
+  server.registerTool(
+    'update_session_phase',
+    {
+      description: `Update your session state — work phase, status, backend session ID, context. This is the primary tool for managing session state.
+
+Session resolution: sessionId (explicit) > workspaceId (scoped lookup) > most recent active session.
+For parallel worktrees, pass workspaceId to target the correct session.
+
+Phase: Communicates real-time work status to other agents.
+- Active work phases (no auto-memory): investigating, implementing, reviewing
+- Significant transitions (auto-creates memory): blocked:<reason>, waiting:<reason>, complete
+- Optional: paused
+
+Also sets: backendSessionId (for resume), status (active/paused/resumable/completed), context, workingDir.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: {
+        ...userIdentifierFields,
+        sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided). Most reliable for targeting a specific session.'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId is not provided. Useful for parallel worktree scenarios.'),
+        phase: z.string().optional().describe('Work phase (e.g., "implementing", "blocked:awaiting-input", "waiting:build")'),
+        note: z.string().optional().describe('Context for the phase transition (included in auto-created memory for blocked/waiting)'),
+        agentId: z.string().optional().describe('Agent identity for memory attribution'),
+        createTask: z.boolean().optional().describe('Create a PCP task for blocked/waiting phases (default: false)'),
+        backendSessionId: z.string().optional().describe('Backend-specific session ID for resumption (e.g., Claude Code session ID, Codex session ID)'),
+        status: z.enum(['active', 'paused', 'resumable', 'completed']).optional().describe('Session status'),
+        context: z.string().optional().describe('Brief context of current work state'),
+        workingDir: z.string().optional().describe('Working directory'),
+      },
+    },
+    async (args) => {
+      try {
+        return await handleUpdateSessionPhase(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in update_session_phase:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,
@@ -1201,6 +1261,8 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       inputSchema: {
         ...userIdentifierFields,
         sessionId: z.string().uuid().optional().describe('Session ID to compact (uses active session if not provided)'),
+        agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
         minSalience: z.enum(['low', 'medium', 'high', 'critical']).optional()
           .describe('Minimum salience to include (default: medium)'),
         preserveLogs: z.boolean().optional().describe('Keep original logs visible after compaction (default: false). Note: Logs are always soft-deleted for audit trail.'),
@@ -2060,12 +2122,9 @@ Example workflow for Myra:
   server.registerTool(
     'update_session_status',
     {
-      description: `Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.
+      description: `[DEPRECATED] Use update_session_phase instead, which combines phase, status, backendSessionId, context, and workingDir in one tool.
 
-Call this before going idle so other agents can find and resume your session:
-- Set status to 'resumable' when waiting for external input
-- Set status to 'completed' when work is done
-- Include context describing current state`,
+Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.`,
       inputSchema: updateSessionStatusSchema,
     },
     async (args) => {

@@ -31,6 +31,7 @@ interface ResumableSession {
   agentId: string;
   claudeSessionId: string | null;
   status: string;
+  currentPhase: string | null;
   workingDir: string | null;
   context: string | null;
   startedAt: string;
@@ -81,6 +82,7 @@ export async function handleGetResumableSessions(
       agentId: s.agent_id,
       claudeSessionId: s.claude_session_id,
       status: s.status || 'active',
+      currentPhase: s.current_phase || null,
       workingDir: s.working_dir,
       context: s.context,
       startedAt: s.started_at,

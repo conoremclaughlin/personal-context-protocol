@@ -23,6 +23,7 @@ import { getDataComposer, DataComposer } from './data/composer';
 import { createSessionService, SessionService, type SessionServiceConfig } from './services/sessions';
 import type { SessionRequest, ChannelResponse, ChannelType } from './services/sessions';
 import { createMCPServer, MCPServer, type IncomingMessageHandler, type ChannelGateway } from './mcp/server';
+import type { GatewayChannel } from './channels/gateway';
 import { initHeartbeatService, processHeartbeat, type DueReminder } from './services/heartbeat';
 import { setResponseCallback, hasExplicitResponse } from './mcp/tools/response-handlers';
 import { getAgentGateway, type AgentTriggerPayload } from './channels/agent-gateway';
@@ -169,7 +170,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
 
     // For external channels (telegram/whatsapp), ensure the conversation is released
     // and auto-route the text response if no explicit send_response was called
-    const isExternalChannel = channel === 'telegram' || channel === 'whatsapp';
+    const isExternalChannel = channel === 'telegram' || channel === 'whatsapp' || channel === 'discord';
     if (isExternalChannel && channelGateway) {
       // Check if send_response was called via MCP (tracked in response-handlers)
       const hadExplicitResponse = hasExplicitResponse(channel, conversationId);
@@ -182,7 +183,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
           responseLength: result.finalTextResponse.length,
         });
         await channelGateway.releaseConversation(
-          channel as 'telegram' | 'whatsapp',
+          channel as GatewayChannel,
           conversationId,
           { content: result.finalTextResponse, format: 'markdown' }
         );
@@ -194,7 +195,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
           hadExplicitResponse,
         });
         await channelGateway.releaseConversation(
-          channel as 'telegram' | 'whatsapp',
+          channel as GatewayChannel,
           conversationId
         );
       }
@@ -218,6 +219,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       enableWhatsApp: config.enableWhatsApp ?? (process.env.ENABLE_WHATSAPP === 'true'),
       whatsappAccountId: config.whatsappAccountId || 'default',
       printWhatsAppQr: true,
+      enableDiscord: process.env.ENABLE_DISCORD === 'true',
     },
     messageHandler,
   });
@@ -420,6 +422,7 @@ If you need to message a user, use send_response with the appropriate channel an
   const enabledChannels: string[] = [];
   if (status?.telegram.enabled) enabledChannels.push('Telegram');
   if (status?.whatsapp.enabled) enabledChannels.push('WhatsApp');
+  if (status?.discord.enabled) enabledChannels.push('Discord');
 
   if (enabledChannels.length > 0) {
     logger.info(`Send a message via ${enabledChannels.join(' or ')} to start a conversation.`);
@@ -471,6 +474,19 @@ async function resolveUserId(
       }
 
       return user.id;
+    } else if (channel === 'discord') {
+      let user = await dataComposer.repositories.users.findByDiscordId(senderId);
+
+      if (!user) {
+        user = await dataComposer.repositories.users.create({
+          discord_id: senderId,
+          first_name: senderName?.split(' ')[0],
+          last_name: senderName?.split(' ').slice(1).join(' ') || undefined,
+        });
+        logger.info(`Created new Discord user: ${user.id}`);
+      }
+
+      return user.id;
     }
   } catch (error) {
     logger.error('Failed to resolve user:', error);
@@ -495,6 +511,7 @@ function printStatus(): void {
   if (status) {
     logger.info(`  Telegram: ${status.telegram.enabled ? (status.telegram.connected ? 'Connected' : 'Enabled') : 'Disabled'}`);
     logger.info(`  WhatsApp: ${status.whatsapp.enabled ? (status.whatsapp.connected ? 'Connected' : 'Awaiting QR') : 'Disabled'}`);
+    logger.info(`  Discord: ${status.discord.enabled ? (status.discord.connected ? 'Connected' : 'Enabled') : 'Disabled'}`);
   }
 
   logger.info('='.repeat(60));

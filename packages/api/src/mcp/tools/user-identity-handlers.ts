@@ -27,6 +27,7 @@ export const saveUserIdentitySchema = z.object({
   ...userIdentifierFields,
   userProfileMd: z.string().optional().describe('USER.md content - who the human is'),
   sharedValuesMd: z.string().optional().describe('VALUES.md content - shared values across all SBs'),
+  processMd: z.string().optional().describe('PROCESS.md content - shared team operational process'),
 });
 
 export const getUserIdentitySchema = z.object({
@@ -73,6 +74,9 @@ export async function handleSaveUserIdentity(args: unknown, dataComposer: DataCo
     if (params.sharedValuesMd !== undefined) {
       updateData.shared_values_md = params.sharedValuesMd;
     }
+    if (params.processMd !== undefined) {
+      updateData.process_md = params.processMd;
+    }
 
     const { data, error } = await supabase
       .from('user_identity')
@@ -91,6 +95,7 @@ export async function handleSaveUserIdentity(args: unknown, dataComposer: DataCo
         user_id: user.id,
         user_profile_md: params.userProfileMd || null,
         shared_values_md: params.sharedValuesMd || null,
+        process_md: params.processMd || null,
       })
       .select()
       .single();
@@ -103,6 +108,7 @@ export async function handleSaveUserIdentity(args: unknown, dataComposer: DataCo
     version: result.version,
     hasUserProfile: !!result.user_profile_md,
     hasSharedValues: !!result.shared_values_md,
+    hasProcess: !!result.process_md,
   });
 
   return {
@@ -119,6 +125,7 @@ export async function handleSaveUserIdentity(args: unknown, dataComposer: DataCo
               version: result.version,
               hasUserProfile: !!result.user_profile_md,
               hasSharedValues: !!result.shared_values_md,
+              hasProcess: !!result.process_md,
               updatedAt: result.updated_at,
             },
           },
@@ -184,6 +191,7 @@ export async function handleGetUserIdentity(args: unknown, dataComposer: DataCom
               version: data.version,
               userProfileMd: data.user_profile_md,
               sharedValuesMd: data.shared_values_md,
+              processMd: data.process_md,
               createdAt: data.created_at,
               updatedAt: data.updated_at,
             },
@@ -243,6 +251,7 @@ export async function handleGetUserIdentityHistory(args: unknown, dataComposer: 
                   version: current.version,
                   userProfileMd: current.user_profile_md,
                   sharedValuesMd: current.shared_values_md,
+                  processMd: current.process_md,
                   updatedAt: current.updated_at,
                 }
               : null,
@@ -251,6 +260,7 @@ export async function handleGetUserIdentityHistory(args: unknown, dataComposer: 
               version: h.version,
               userProfileMd: h.user_profile_md,
               sharedValuesMd: h.shared_values_md,
+              processMd: h.process_md,
               changeType: h.change_type,
               archivedAt: h.archived_at,
             })),
@@ -290,6 +300,7 @@ export async function handleRestoreUserIdentity(args: unknown, dataComposer: Dat
     .update({
       user_profile_md: versionToRestore.user_profile_md,
       shared_values_md: versionToRestore.shared_values_md,
+      process_md: versionToRestore.process_md,
     })
     .eq('user_id', user.id)
     .select()

@@ -59,10 +59,14 @@ export interface MemorySearchOptions {
   includeShared?: boolean; // Include shared memories (agentId=null) when filtering. Default true.
 }
 
+export type SessionPhase = 'investigating' | 'implementing' | 'reviewing' | 'paused' | 'complete' | string;
+
 export interface Session {
   id: string;
   userId: string;
   agentId?: string;
+  workspaceId?: string;
+  currentPhase?: string;
   startedAt: Date;
   endedAt?: Date;
   summary?: string;
@@ -72,6 +76,7 @@ export interface Session {
 export interface SessionCreateInput {
   userId: string;
   agentId?: string;
+  workspaceId?: string;
   metadata?: Record<string, unknown>;
 }
 
@@ -124,6 +129,8 @@ export interface SessionRow {
   id: string;
   user_id: string;
   agent_id: string | null;
+  workspace_id: string | null;
+  current_phase: string | null;
   started_at: string;
   ended_at: string | null;
   summary: string | null;

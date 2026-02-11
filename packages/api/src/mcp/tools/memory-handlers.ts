@@ -40,6 +40,7 @@ export const rememberSchema = userIdentifierBaseSchema.extend({
   metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
   expiresAt: z.string().datetime().optional().describe('Optional expiration date (ISO 8601)'),
   agentId: z.string().optional().describe('Which AI being created this memory (e.g., "wren", "benson"). Null = shared memory.'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID — used to auto-attach the correct session in parallel worktree scenarios. Stored in metadata, not as a first-class field.'),
 });
 
 export const recallSchema = userIdentifierBaseSchema.extend({
@@ -70,28 +71,54 @@ export const updateMemorySchema = userIdentifierBaseSchema.extend({
 
 export const startSessionSchema = userIdentifierBaseSchema.extend({
   agentId: z.string().optional().describe('Identifier for the agent (e.g., "claude-code", "telegram-myra")'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID to scope this session to. Allows multiple active sessions per agent (one per workspace).'),
   metadata: z.record(z.unknown()).optional().describe('Additional session metadata'),
 });
 
 export const logSessionSchema = userIdentifierBaseSchema.extend({
   sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+  agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
   content: z.string().describe('Log entry content'),
   salience: salienceSchema.optional().describe('Importance level (default: medium)'),
 });
 
 export const endSessionSchema = userIdentifierBaseSchema.extend({
   sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+  agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
   summary: z.string().optional().describe('End-of-session summary'),
 });
 
 export const getSessionSchema = userIdentifierBaseSchema.extend({
   sessionId: z.string().uuid().optional().describe('Session ID (returns active session if not provided)'),
+  agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
   includeLogs: z.boolean().optional().describe('Include session logs (default: false)'),
 });
 
 export const listSessionsSchema = userIdentifierBaseSchema.extend({
   agentId: z.string().optional().describe('Filter by agent'),
+  workspaceId: z.string().uuid().optional().describe('Filter by workspace'),
   limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
+});
+
+// =====================================================
+// SESSION PHASE SCHEMA
+// =====================================================
+
+export const updateSessionPhaseSchema = userIdentifierBaseSchema.extend({
+  sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided). Most reliable way to target a specific session.'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution. When sessionId is not provided, finds the active session in this workspace. Useful for parallel worktree scenarios.'),
+  phase: z.string().optional().describe('Work phase. Core phases: investigating, implementing, reviewing, paused, complete. Use blocked:<reason> or waiting:<reason> for transitions that auto-create memories.'),
+  note: z.string().optional().describe('Optional note explaining the phase (e.g., what you\'re blocked on). Included in auto-created memory for blocked/waiting phases.'),
+  agentId: z.string().optional().describe('Agent identity for memory attribution'),
+  createTask: z.boolean().optional().describe('Create a PCP task for blocked/waiting phases (default: false)'),
+  // Session metadata fields (absorbed from update_session_status)
+  backendSessionId: z.string().optional().describe('Backend session ID for resumption (e.g., Claude Code session ID, Codex session ID)'),
+  status: z.enum(['active', 'paused', 'resumable', 'completed']).optional().describe('Session status'),
+  context: z.string().optional().describe('Brief context of current work state'),
+  workingDir: z.string().optional().describe('Working directory'),
 });
 
 // =====================================================
@@ -128,6 +155,8 @@ export const bootstrapSchema = userIdentifierBaseSchema.extend({
 
 export const compactSessionSchema = userIdentifierBaseSchema.extend({
   sessionId: z.string().uuid().optional().describe('Session ID to compact (uses active session if not provided)'),
+  agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
   groupByTopics: z.boolean().optional().describe('Group logs by inferred topics (default: true)'),
   minSalience: z.enum(['low', 'medium', 'high', 'critical']).optional()
     .describe('Minimum salience to include in compaction (default: medium)'),
@@ -149,6 +178,7 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
     const activeSession = await dataComposer.repositories.memory.getActiveSession(
       user.id,
       params.agentId,
+      params.workspaceId,
     );
     sessionId = activeSession?.id;
   } catch {
@@ -158,6 +188,7 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
   const metadata = {
     ...params.metadata,
     ...(sessionId ? { sessionId } : {}),
+    ...(params.workspaceId ? { workspaceId: params.workspaceId } : {}),
   };
 
   const memory = await dataComposer.repositories.memory.remember({
@@ -331,10 +362,11 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
   const params = startSessionSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
 
-  // Check if there's already an active session for this agent
+  // Check if there's already an active session for this agent (scoped by workspace if provided)
   const existingSession = await dataComposer.repositories.memory.getActiveSession(
     user.id,
-    params.agentId
+    params.agentId,
+    params.workspaceId,
   );
 
   if (existingSession) {
@@ -350,6 +382,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
               session: {
                 id: existingSession.id,
                 agentId: existingSession.agentId,
+                workspaceId: existingSession.workspaceId,
                 startedAt: existingSession.startedAt.toISOString(),
                 isExisting: true,
               },
@@ -365,10 +398,11 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
   const session = await dataComposer.repositories.memory.startSession({
     userId: user.id,
     agentId: params.agentId,
+    workspaceId: params.workspaceId,
     metadata: params.metadata,
   });
 
-  logger.info(`Session started for user ${user.id}`, { sessionId: session.id, agentId: session.agentId });
+  logger.info(`Session started for user ${user.id}`, { sessionId: session.id, agentId: session.agentId, workspaceId: session.workspaceId });
 
   return {
     content: [
@@ -382,6 +416,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
             session: {
               id: session.id,
               agentId: session.agentId,
+              workspaceId: session.workspaceId,
               startedAt: session.startedAt.toISOString(),
             },
           },
@@ -397,10 +432,14 @@ export async function handleLogSession(args: unknown, dataComposer: DataComposer
   const params = logSessionSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
 
-  // Get session ID (use provided or find active)
+  // Get session ID (use provided or find active, scoped by agent+workspace)
   let sessionId = params.sessionId;
   if (!sessionId) {
-    const activeSession = await dataComposer.repositories.memory.getActiveSession(user.id);
+    const activeSession = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId,
+    );
     if (!activeSession) {
       return {
         content: [
@@ -434,6 +473,7 @@ export async function handleLogSession(args: unknown, dataComposer: DataComposer
           {
             success: true,
             message: 'Session log added',
+            deprecation: 'log_session is deprecated. Use update_session_phase for work status, and remember for important decisions/events. Session logs will be removed in a future version.',
             user: { id: user.id, resolvedBy },
             log: {
               id: log.id,
@@ -454,10 +494,14 @@ export async function handleEndSession(args: unknown, dataComposer: DataComposer
   const params = endSessionSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
 
-  // Get session ID (use provided or find active)
+  // Get session ID (use provided or find active, scoped by agent+workspace)
   let sessionId = params.sessionId;
   if (!sessionId) {
-    const activeSession = await dataComposer.repositories.memory.getActiveSession(user.id);
+    const activeSession = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId,
+    );
     if (!activeSession) {
       return {
         content: [
@@ -510,6 +554,8 @@ export async function handleEndSession(args: unknown, dataComposer: DataComposer
             session: {
               id: session.id,
               agentId: session.agentId,
+              workspaceId: session.workspaceId,
+              currentPhase: session.currentPhase || null,
               startedAt: session.startedAt.toISOString(),
               endedAt: session.endedAt?.toISOString(),
               summary: session.summary,
@@ -531,7 +577,11 @@ export async function handleGetSession(args: unknown, dataComposer: DataComposer
   if (params.sessionId) {
     session = await dataComposer.repositories.memory.getSession(params.sessionId);
   } else {
-    session = await dataComposer.repositories.memory.getActiveSession(user.id);
+    session = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId,
+    );
   }
 
   if (!session) {
@@ -565,6 +615,8 @@ export async function handleGetSession(args: unknown, dataComposer: DataComposer
             session: {
               id: session.id,
               agentId: session.agentId,
+              workspaceId: session.workspaceId,
+              currentPhase: session.currentPhase || null,
               startedAt: session.startedAt.toISOString(),
               endedAt: session.endedAt?.toISOString(),
               summary: session.summary,
@@ -591,6 +643,7 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
 
   const sessions = await dataComposer.repositories.memory.listSessions(user.id, {
     agentId: params.agentId,
+    workspaceId: params.workspaceId,
     limit: params.limit,
   });
 
@@ -606,6 +659,8 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
             sessions: sessions.map((s) => ({
               id: s.id,
               agentId: s.agentId,
+              workspaceId: s.workspaceId,
+              currentPhase: s.currentPhase || null,
               startedAt: s.startedAt.toISOString(),
               endedAt: s.endedAt?.toISOString(),
               summary: s.summary,
@@ -614,6 +669,192 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
           null,
           2
         ),
+      },
+    ],
+  };
+}
+
+// =====================================================
+// SESSION PHASE HANDLER
+// =====================================================
+
+/**
+ * Determines whether a phase transition should auto-create a memory.
+ * Blocked and waiting phases create memories; active work phases don't.
+ */
+function isSignificantPhaseTransition(phase: string): boolean {
+  return phase.startsWith('blocked:') || phase.startsWith('waiting:') || phase === 'complete';
+}
+
+export async function handleUpdateSessionPhase(args: unknown, dataComposer: DataComposer) {
+  const params = updateSessionPhaseSchema.parse(args);
+  const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
+
+  // Require at least one field to update
+  if (!params.phase && !params.backendSessionId && !params.status && !params.context && !params.workingDir) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify(
+            { success: false, error: 'At least one field must be provided (phase, backendSessionId, status, context, workingDir).' },
+            null,
+            2
+          ),
+        },
+      ],
+    };
+  }
+
+  // Resolve session: sessionId > workspaceId-scoped lookup > most recent active
+  let sessionId = params.sessionId;
+  if (!sessionId) {
+    const session = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId, // undefined = no workspace filter (backward compat)
+    );
+    if (!session) {
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify(
+              { success: false, error: 'No active session found. Start a session first.' },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+    sessionId = session.id;
+  }
+
+  // Build update object
+  const updates: {
+    currentPhase?: string | null;
+    status?: string;
+    backendSessionId?: string;
+    context?: string;
+    workingDir?: string;
+  } = {};
+
+  if (params.phase !== undefined) {
+    updates.currentPhase = params.phase;
+  }
+  if (params.status !== undefined) {
+    updates.status = params.status;
+  }
+  if (params.backendSessionId !== undefined) {
+    updates.backendSessionId = params.backendSessionId;
+  }
+  if (params.context !== undefined) {
+    updates.context = params.context;
+  }
+  if (params.workingDir !== undefined) {
+    updates.workingDir = params.workingDir;
+  }
+
+  const updated = await dataComposer.repositories.memory.updateSession(sessionId, updates);
+
+  if (!updated) {
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({ success: false, error: 'Session not found.' }, null, 2),
+        },
+      ],
+    };
+  }
+
+  const messageParts: string[] = [];
+  if (params.phase) messageParts.push(`phase → ${params.phase}`);
+  if (params.status) messageParts.push(`status → ${params.status}`);
+  if (params.backendSessionId) messageParts.push('backendSessionId set');
+  if (params.context) messageParts.push('context updated');
+  if (params.workingDir) messageParts.push('workingDir updated');
+
+  const result: Record<string, unknown> = {
+    success: true,
+    message: `Session updated: ${messageParts.join(', ')}`,
+    user: { id: user.id, resolvedBy },
+    session: {
+      id: updated.id,
+      agentId: updated.agentId,
+      workspaceId: updated.workspaceId,
+      currentPhase: updated.currentPhase || null,
+    },
+  };
+
+  // Auto-create memory for significant phase transitions
+  if (params.phase && isSignificantPhaseTransition(params.phase)) {
+    const memoryContent = params.note
+      ? `[${params.phase}] ${params.note}`
+      : `Session entered phase: ${params.phase}`;
+
+    const memory = await dataComposer.repositories.memory.remember({
+      userId: user.id,
+      content: memoryContent,
+      source: 'session',
+      salience: 'high',
+      topics: ['session-phase', params.phase.split(':')[0]],
+      metadata: { sessionId, phase: params.phase },
+      agentId: params.agentId || updated.agentId,
+    });
+
+    result.memoryCreated = {
+      id: memory.id,
+      content: memoryContent,
+    };
+
+    logger.info(`Phase transition auto-created memory`, {
+      sessionId,
+      phase: params.phase,
+      memoryId: memory.id,
+    });
+  }
+
+  // Optionally create a task for blockers
+  if (params.createTask && params.phase && (params.phase.startsWith('blocked:') || params.phase.startsWith('waiting:'))) {
+    try {
+      const projects = await dataComposer.repositories.projects.findAllByUser(user.id, 'active');
+      if (projects.length > 0) {
+        const task = await dataComposer.repositories.projectTasks.create({
+          project_id: projects[0].id,
+          user_id: user.id,
+          title: `[${params.phase}] ${params.note || 'Agent needs attention'}`,
+          description: params.note || `Session ${sessionId} entered ${params.phase}`,
+          priority: 'high',
+          tags: ['agent-orchestration', 'session-phase', params.agentId || updated.agentId || 'unknown'],
+          created_by: params.agentId || updated.agentId || 'system',
+        });
+
+        result.taskCreated = {
+          id: task.id,
+          title: task.title,
+        };
+
+        logger.info(`Phase transition auto-created task`, {
+          sessionId,
+          phase: params.phase,
+          taskId: task.id,
+        });
+      }
+    } catch (taskError) {
+      logger.warn('Failed to auto-create task for phase transition:', taskError);
+      result.taskError = 'Failed to create task (non-fatal)';
+    }
+  }
+
+  logger.info(`Session updated`, { sessionId, phase: params.phase, status: params.status });
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify(result, null, 2),
       },
     ],
   };
@@ -772,6 +1013,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     agentId: string;
     values: string | null;
     user: string | null;
+    process: string | null;
     self: string | null;
     heartbeat: string | null;
     soul: string | null;
@@ -780,10 +1022,11 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
   if (agentId) {
     // Load identity files from local filesystem
     // Path: ~/.pcp/individuals/{agentId}/IDENTITY.md for agent-specific
-    // Path: ~/.pcp/shared/VALUES.md and USER.md for shared files
-    const [valuesContent, userContent, selfContent, heartbeatContent, soulContent] = await Promise.all([
+    // Path: ~/.pcp/shared/VALUES.md, USER.md, PROCESS.md for shared files
+    const [valuesContent, userContent, processContent, selfContent, heartbeatContent, soulContent] = await Promise.all([
       safeReadFile(path.join(basePath, 'shared', 'VALUES.md')),
       safeReadFile(path.join(basePath, 'shared', 'USER.md')),
+      safeReadFile(path.join(basePath, 'shared', 'PROCESS.md')),
       safeReadFile(path.join(basePath, 'individuals', agentId, 'IDENTITY.md')),
       safeReadFile(path.join(basePath, 'individuals', agentId, 'HEARTBEAT.md')),
       safeReadFile(path.join(basePath, 'individuals', agentId, 'SOUL.md')),
@@ -793,6 +1036,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
       agentId,
       values: valuesContent,
       user: userContent,
+      process: processContent,
       self: selfContent,
       heartbeat: heartbeatContent,
       soul: soulContent,
@@ -802,15 +1046,15 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
   // Fetch all context in parallel (including timezone and skills)
   const cloudSkillsService = getCloudSkillsService(dataComposer.getClient());
 
-  const [contexts, projects, focus, activeSession, recentMemories, dbIdentity, userTimezone, userSkills] = await Promise.all([
+  const [contexts, projects, focus, activeSessions, recentMemories, dbIdentity, dbUserIdentity, userTimezone, userSkills] = await Promise.all([
     // Identity Core: all context summaries
     dataComposer.repositories.context.findAllByUser(user.id),
     // Active projects
     dataComposer.repositories.projects.findAllByUser(user.id, 'active'),
     // Current focus
     dataComposer.repositories.sessionFocus.findLatestByUser(user.id),
-    // Active session (filter by agentId if provided)
-    dataComposer.repositories.memory.getActiveSession(user.id, agentId),
+    // All active sessions (filter by agentId if provided) — client picks the right one
+    dataComposer.repositories.memory.getActiveSessions(user.id, agentId),
     // Recent high-salience memories (filter by agentId if provided, include shared)
     includeMemories
       ? dataComposer.repositories.memory.recall(user.id, undefined, {
@@ -830,6 +1074,13 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
           .single()
           .then(({ data }) => data)
       : Promise.resolve(null),
+    // Shared user identity (PROCESS.md from DB for cloud sync)
+    dataComposer.getClient()
+      .from('user_identity')
+      .select('process_md')
+      .eq('user_id', user.id)
+      .single()
+      .then(({ data }) => data || null),
     // User timezone for timestamp conversion
     dataComposer.getClient()
       .from('users')
@@ -880,11 +1131,13 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
   }
 
   // Merge identity: prioritize Supabase over local files
-  // dbIdentity has: name, role, description, heartbeat, soul
-  // identityFiles has: values, user, self, heartbeat, soul
+  // dbIdentity has: name, role, description, heartbeat, soul (per-agent)
+  // dbUserIdentity has: process_md (shared across all SBs)
+  // identityFiles has: values, user, process, self, heartbeat, soul (from filesystem)
   const mergedIdentity = identityFiles ? {
     ...identityFiles,
     // Override local files with Supabase content if available
+    process: (dbUserIdentity?.process_md as string | null) || identityFiles.process,
     self: (dbIdentity?.description as string | null) || identityFiles.self,
     heartbeat: (dbIdentity?.heartbeat as string | null) || identityFiles.heartbeat,
     soul: (dbIdentity?.soul as string | null) || identityFiles.soul,
@@ -903,7 +1156,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     projectCount: projects.length,
     memoryCount: recentMemories.length,
     skillCount: userSkills.length,
-    hasActiveSession: !!activeSession,
+    activeSessionCount: activeSessions.length,
     hasIdentityFiles: !!identityFiles,
     hasDbIdentity: !!dbIdentity,
     identitySource: dbIdentity?.description ? 'supabase' : (identityFiles?.self ? 'local' : 'none'),
@@ -972,14 +1225,27 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
                 : null,
             },
 
-            // Active session
-            session: activeSession
+            // [DEPRECATED] Single active session (most recent) — use activeSessions array instead.
+            // Will be removed in a future PR once all agents read activeSessions.
+            session: activeSessions[0]
               ? {
-                  id: activeSession.id,
-                  agentId: activeSession.agentId,
-                  startedAt: activeSession.startedAt.toISOString(),
+                  id: activeSessions[0].id,
+                  agentId: activeSessions[0].agentId,
+                  workspaceId: activeSessions[0].workspaceId || null,
+                  currentPhase: activeSessions[0].currentPhase || null,
+                  startedAt: activeSessions[0].startedAt.toISOString(),
                 }
               : null,
+
+            // All active sessions — use workspaceId to pick the right one
+            // Match against .pcp/identity.json workspaceId in your local environment
+            activeSessions: activeSessions.map((s) => ({
+              id: s.id,
+              agentId: s.agentId,
+              workspaceId: s.workspaceId || null,
+              currentPhase: s.currentPhase || null,
+              startedAt: s.startedAt.toISOString(),
+            })),
 
             // Recent high-salience memories (filtered by agent if provided)
             recentMemories: recentMemories.map((m) => ({
@@ -1061,7 +1327,11 @@ export async function handleCompactSession(args: unknown, dataComposer: DataComp
   if (sessionId) {
     session = await dataComposer.repositories.memory.getSession(sessionId);
   } else {
-    session = await dataComposer.repositories.memory.getActiveSession(user.id);
+    session = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId,
+    );
     sessionId = session?.id;
   }
 

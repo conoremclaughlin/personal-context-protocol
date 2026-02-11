@@ -259,6 +259,7 @@ describe('MemoryRepository', () => {
           id: 'session-123',
           user_id: 'user-456',
           agent_id: 'claude-code',
+          workspace_id: null,
           started_at: '2026-01-26T12:00:00Z',
           ended_at: null,
           summary: null,
@@ -275,7 +276,60 @@ describe('MemoryRepository', () => {
         expect(result.id).toBe('session-123');
         expect(result.userId).toBe('user-456');
         expect(result.agentId).toBe('claude-code');
+        expect(result.workspaceId).toBeUndefined();
         expect(result.endedAt).toBeUndefined();
+      });
+
+      it('should include workspace_id in insert when workspaceId is provided', async () => {
+        const mockSessionRow = {
+          id: 'session-ws',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: 'ws-abc-123',
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        const result = await repo.startSession({
+          userId: 'user-456',
+          agentId: 'wren',
+          workspaceId: 'ws-abc-123',
+        });
+
+        expect(result.workspaceId).toBe('ws-abc-123');
+
+        // Verify insert was called with workspace_id
+        expect(mockSupabase._queryBuilder.insert).toHaveBeenCalledWith(
+          expect.objectContaining({ workspace_id: 'ws-abc-123' }),
+        );
+      });
+
+      it('should not include workspace_id in insert when workspaceId is omitted', async () => {
+        const mockSessionRow = {
+          id: 'session-no-ws',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: null,
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        await repo.startSession({
+          userId: 'user-456',
+          agentId: 'wren',
+        });
+
+        // Verify insert was called WITHOUT workspace_id key
+        const insertCall = mockSupabase._queryBuilder.insert.mock.calls[0][0];
+        expect(insertCall).not.toHaveProperty('workspace_id');
       });
     });
 
@@ -285,6 +339,7 @@ describe('MemoryRepository', () => {
           id: 'session-123',
           user_id: 'user-456',
           agent_id: 'claude-code',
+          workspace_id: null,
           started_at: '2026-01-26T12:00:00Z',
           ended_at: '2026-01-26T14:00:00Z',
           summary: 'Session summary here',
@@ -306,6 +361,7 @@ describe('MemoryRepository', () => {
           id: 'session-123',
           user_id: 'user-456',
           agent_id: 'claude-code',
+          workspace_id: null,
           started_at: '2026-01-26T12:00:00Z',
           ended_at: null,
           summary: null,
@@ -328,6 +384,331 @@ describe('MemoryRepository', () => {
 
         expect(result).toBeNull();
       });
+
+      it('should not filter by workspace when workspaceId is undefined (backward compat)', async () => {
+        const mockSessionRow = {
+          id: 'session-any-ws',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: 'ws-something',
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        const result = await repo.getActiveSession('user-456', 'wren');
+
+        expect(result).not.toBeNull();
+        // workspace_id should not have been used as a filter
+        // eq should have been called for user_id and agent_id but NOT workspace_id
+        const eqCalls = mockSupabase._queryBuilder.eq.mock.calls;
+        const wsEqCalls = eqCalls.filter(([col]: [string]) => col === 'workspace_id');
+        expect(wsEqCalls).toHaveLength(0);
+
+        const isCalls = mockSupabase._queryBuilder.is.mock.calls;
+        const wsIsCalls = isCalls.filter(([col]: [string]) => col === 'workspace_id');
+        expect(wsIsCalls).toHaveLength(0);
+      });
+
+      it('should filter for null workspace when workspaceId is explicitly null', async () => {
+        const mockSessionRow = {
+          id: 'session-no-ws',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: null,
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        await repo.getActiveSession('user-456', 'wren', null);
+
+        // Should have called is('workspace_id', null)
+        expect(mockSupabase._queryBuilder.is).toHaveBeenCalledWith('workspace_id', null);
+      });
+
+      it('should filter for specific workspace when workspaceId is a string', async () => {
+        const mockSessionRow = {
+          id: 'session-specific-ws',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: 'ws-xyz',
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        await repo.getActiveSession('user-456', 'wren', 'ws-xyz');
+
+        // Should have called eq('workspace_id', 'ws-xyz')
+        expect(mockSupabase._queryBuilder.eq).toHaveBeenCalledWith('workspace_id', 'ws-xyz');
+      });
+    });
+
+    describe('listSessions', () => {
+      it('should filter by workspaceId when provided', async () => {
+        mockSupabase._setArrayData([]);
+
+        await repo.listSessions('user-456', { workspaceId: 'ws-filter' });
+
+        expect(mockSupabase._queryBuilder.eq).toHaveBeenCalledWith('workspace_id', 'ws-filter');
+      });
+
+      it('should not filter by workspace when workspaceId is omitted', async () => {
+        mockSupabase._setArrayData([]);
+
+        await repo.listSessions('user-456', { agentId: 'wren' });
+
+        const eqCalls = mockSupabase._queryBuilder.eq.mock.calls;
+        const wsEqCalls = eqCalls.filter(([col]: [string]) => col === 'workspace_id');
+        expect(wsEqCalls).toHaveLength(0);
+      });
+    });
+
+    describe('rowToSession mapping', () => {
+      it('should map workspace_id to workspaceId', async () => {
+        const mockSessionRow = {
+          id: 'session-map',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: 'ws-mapped',
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        const result = await repo.getSession('session-map');
+        expect(result!.workspaceId).toBe('ws-mapped');
+      });
+
+      it('should map null workspace_id to undefined', async () => {
+        const mockSessionRow = {
+          id: 'session-null-ws',
+          user_id: 'user-456',
+          agent_id: 'wren',
+          workspace_id: null,
+          started_at: '2026-02-10T00:00:00Z',
+          ended_at: null,
+          summary: null,
+          metadata: {},
+        };
+
+        mockSupabase._setReturnData(mockSessionRow);
+
+        const result = await repo.getSession('session-null-ws');
+        expect(result!.workspaceId).toBeUndefined();
+      });
+    });
+  });
+
+  // =====================================================
+  // updateSession (unified session state management)
+  // =====================================================
+
+  describe('updateSession', () => {
+    const mockSessionRow = {
+      id: 'session-123',
+      user_id: 'user-123',
+      agent_id: 'wren',
+      workspace_id: null,
+      current_phase: 'implementing',
+      started_at: '2026-02-10T10:00:00Z',
+      ended_at: null,
+      summary: null,
+      metadata: {},
+      status: 'active',
+      backend_session_id: null,
+      claude_session_id: null,
+      context: null,
+      working_dir: null,
+    };
+
+    it('should update current_phase', async () => {
+      mockSupabase._setReturnData({ ...mockSessionRow, current_phase: 'reviewing' });
+
+      const result = await repo.updateSession('session-123', {
+        currentPhase: 'reviewing',
+      });
+
+      expect(result).not.toBeNull();
+      expect(result!.currentPhase).toBe('reviewing');
+
+      expect(mockSupabase.from).toHaveBeenCalledWith('sessions');
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBe('reviewing');
+      // updated_at is handled by DB trigger, not the repository
+      expect(updateCall).not.toHaveProperty('updated_at');
+    });
+
+    it('should update backendSessionId and also set claude_session_id for backward compat', async () => {
+      mockSupabase._setReturnData({
+        ...mockSessionRow,
+        backend_session_id: 'claude-abc123',
+        claude_session_id: 'claude-abc123',
+      });
+
+      await repo.updateSession('session-123', {
+        backendSessionId: 'claude-abc123',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.backend_session_id).toBe('claude-abc123');
+      expect(updateCall.claude_session_id).toBe('claude-abc123');
+    });
+
+    it('should update status', async () => {
+      mockSupabase._setReturnData({ ...mockSessionRow, status: 'resumable' });
+
+      await repo.updateSession('session-123', { status: 'resumable' });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.status).toBe('resumable');
+    });
+
+    it('should update context and workingDir', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-123', {
+        context: 'Working on tests',
+        workingDir: '/Users/test/project',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.context).toBe('Working on tests');
+      expect(updateCall.working_dir).toBe('/Users/test/project');
+    });
+
+    it('should update multiple fields at once', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-123', {
+        currentPhase: 'implementing',
+        status: 'active',
+        backendSessionId: 'abc',
+        context: 'Building feature',
+        workingDir: '/tmp',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBe('implementing');
+      expect(updateCall.status).toBe('active');
+      expect(updateCall.backend_session_id).toBe('abc');
+      expect(updateCall.claude_session_id).toBe('abc');
+      expect(updateCall.context).toBe('Building feature');
+      expect(updateCall.working_dir).toBe('/tmp');
+      // updated_at is handled by DB trigger, not the repository
+      expect(updateCall).not.toHaveProperty('updated_at');
+    });
+
+    it('should only include provided fields in update (no undefined pollution)', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-123', {
+        currentPhase: 'investigating',
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBe('investigating');
+      // updated_at is handled by DB trigger, not the repository
+      expect(updateCall).not.toHaveProperty('updated_at');
+      expect(updateCall).not.toHaveProperty('status');
+      expect(updateCall).not.toHaveProperty('backend_session_id');
+      expect(updateCall).not.toHaveProperty('claude_session_id');
+      expect(updateCall).not.toHaveProperty('context');
+      expect(updateCall).not.toHaveProperty('working_dir');
+    });
+
+    it('should allow setting phase to null (clearing phase)', async () => {
+      mockSupabase._setReturnData({ ...mockSessionRow, current_phase: null });
+
+      await repo.updateSession('session-123', {
+        currentPhase: null,
+      });
+
+      const updateCall = (mockSupabase._queryBuilder.update as ReturnType<typeof vi.fn>).mock.calls[0][0];
+      expect(updateCall.current_phase).toBeNull();
+    });
+
+    it('should return null when session not found', async () => {
+      mockSupabase._setReturnData(null, { code: 'PGRST116' });
+
+      const result = await repo.updateSession('nonexistent', {
+        currentPhase: 'implementing',
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it('should throw on database error', async () => {
+      mockSupabase._setReturnData(null, { message: 'Connection failed' });
+
+      await expect(
+        repo.updateSession('session-123', { currentPhase: 'implementing' })
+      ).rejects.toThrow('Failed to update session: Connection failed');
+    });
+
+    it('should filter update by session ID', async () => {
+      mockSupabase._setReturnData(mockSessionRow);
+
+      await repo.updateSession('session-456', { currentPhase: 'reviewing' });
+
+      expect(mockSupabase._queryBuilder.eq).toHaveBeenCalledWith('id', 'session-456');
+    });
+  });
+
+  // =====================================================
+  // rowToSession mapping (current_phase)
+  // =====================================================
+
+  describe('rowToSession current_phase mapping', () => {
+    it('should map current_phase from row', async () => {
+      mockSupabase._setReturnData({
+        id: 'session-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        workspace_id: 'workspace-abc',
+        current_phase: 'blocked:awaiting-input',
+        started_at: '2026-02-10T10:00:00Z',
+        ended_at: null,
+        summary: null,
+        metadata: {},
+      });
+
+      const session = await repo.getSession('session-123');
+
+      expect(session).not.toBeNull();
+      expect(session!.currentPhase).toBe('blocked:awaiting-input');
+    });
+
+    it('should map null current_phase to undefined', async () => {
+      mockSupabase._setReturnData({
+        id: 'session-123',
+        user_id: 'user-123',
+        agent_id: 'wren',
+        workspace_id: null,
+        current_phase: null,
+        started_at: '2026-02-10T10:00:00Z',
+        ended_at: null,
+        summary: null,
+        metadata: {},
+      });
+
+      const session = await repo.getSession('session-123');
+
+      expect(session).not.toBeNull();
+      expect(session!.currentPhase).toBeUndefined();
     });
   });
 
