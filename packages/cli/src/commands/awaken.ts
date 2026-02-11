@@ -268,6 +268,10 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
     process.exit(1);
   }
 
+  // Gemini displays the system prompt at startup — auto-enable verbose
+  // so the human sees the awakening text too. A magic moment.
+  const verbose = options.verbose || backendName === 'gemini';
+
   console.log(chalk.bold(`\nAwakening a new SB on ${chalk.cyan(backendName)}...\n`));
 
   // 1. Fetch context: cloud first, local fallback
@@ -299,7 +303,7 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
   // 2. Build the awakening prompt
   const awakeningPrompt = buildAwakeningPrompt(sharedValues, siblings);
 
-  if (options.verbose) {
+  if (verbose) {
     console.log(chalk.dim('\n--- Awakening prompt ---'));
     console.log(chalk.dim(awakeningPrompt));
     console.log(chalk.dim('--- End prompt ---\n'));
@@ -346,7 +350,7 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
     }
   }
 
-  if (options.verbose) {
+  if (verbose) {
     console.log(chalk.dim(`Running: ${prepared.binary} ${prepared.args.join(' ')}`));
   }
 
