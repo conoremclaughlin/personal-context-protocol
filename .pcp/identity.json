@@ -1,0 +1,9 @@
+{
+  "agentId": "wren",
+  "context": "workspace-wren",
+  "description": "Workspace: wren",
+  "workspace": "wren",
+  "branch": "wren/feat/workspace-sessions",
+  "createdAt": "2026-02-10T23:35:52.277Z",
+  "createdBy": "conoremclaughlin@gmail.com"
+}
