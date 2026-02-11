@@ -13,7 +13,7 @@
  */
 
 import { Command } from 'commander';
-import { spawn } from 'child_process';
+import { spawn, execFileSync } from 'child_process';
 import chalk from 'chalk';
 import ora from 'ora';
 import { existsSync, readFileSync, writeFileSync, mkdtempSync, rmSync } from 'fs';
@@ -237,6 +237,37 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
   }
 
   const backendName = options.backend;
+
+  // 0. Pre-flight: check that the backend CLI is installed and accessible
+  const adapter = getBackend(backendName);
+  try {
+    execFileSync(adapter.binary, ['--version'], { stdio: 'ignore', timeout: 5000 });
+  } catch {
+    console.error(chalk.red(`\n  Backend CLI not found: ${chalk.bold(adapter.binary)}\n`));
+    console.error(chalk.dim('  Make sure it\'s installed and authenticated:\n'));
+
+    const loginHints: Record<string, string[]> = {
+      gemini: [
+        'npm install -g @anthropic-ai/gemini-cli   # or: brew install gemini',
+        'gemini                                     # first run will prompt for auth',
+      ],
+      claude: [
+        'npm install -g @anthropic-ai/claude-code',
+        'claude                                     # first run will prompt for auth',
+      ],
+      codex: [
+        'npm install -g @openai/codex',
+        'codex                                      # first run will prompt for auth',
+      ],
+    };
+
+    for (const hint of (loginHints[backendName] || [`Install and authenticate ${adapter.binary}`])) {
+      console.error(chalk.dim(`    ${hint}`));
+    }
+    console.error('');
+    process.exit(1);
+  }
+
   console.log(chalk.bold(`\nAwakening a new SB on ${chalk.cyan(backendName)}...\n`));
 
   // 1. Fetch context: cloud first, local fallback
@@ -284,7 +315,6 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
   };
 
   // 4. Prepare and spawn the backend
-  const adapter = getBackend(backendName);
   const prepared = adapter.prepare({
     agentId: 'nascent',
     promptParts: [],

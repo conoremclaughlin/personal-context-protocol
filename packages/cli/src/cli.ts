@@ -127,6 +127,7 @@ program
   .name('sb')
   .description('SB CLI — launch AI coding sessions with persistent identity')
   .version(VERSION)
+  .enablePositionalOptions()
   .allowUnknownOption(true)
   .allowExcessArguments(true)
   .option('-a, --agent <id>', 'Agent identity to use', 'wren')
