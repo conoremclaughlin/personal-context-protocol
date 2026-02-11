@@ -1,7 +1,7 @@
 /**
  * Channel Gateway
  *
- * Centralized management of messaging channel listeners (Telegram, WhatsApp).
+ * Centralized management of messaging channel listeners (Telegram, WhatsApp, Discord).
  * The gateway is owned by the MCP Server, enabling direct message routing
  * from any agent via the send_response tool without HTTP round-trips.
  *
@@ -15,12 +15,16 @@
 import { EventEmitter } from 'events';
 import { createTelegramListener, TelegramListener } from './telegram-listener';
 import { createWhatsAppListener, WhatsAppListener } from './whatsapp-listener';
+import { createDiscordListener, DiscordListener } from './discord-listener';
 import { setResponseCallback, type ResponseCallback } from '../mcp/tools/response-handlers';
 import type { AgentResponse } from '../agent/types';
 import type { DataComposer } from '../data/composer';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
 import telegramifyMarkdown from 'telegramify-markdown';
+
+// Supported messaging channels
+export type GatewayChannel = 'telegram' | 'whatsapp' | 'discord';
 
 // Activity stream - conversation to user mapping for outbound message logging
 const conversationUserMap = new Map<string, string>(); // conversationId -> userId
@@ -40,6 +44,8 @@ export interface ChannelGatewayConfig {
   printWhatsAppQr?: boolean;
   /** Callback when WhatsApp QR code is available */
   onWhatsAppQr?: (qr: string) => void;
+  /** Whether to enable Discord listener */
+  enableDiscord?: boolean;
   /** Message buffer delay in ms (default: 2000). Set to 0 to disable buffering. */
   messageBufferDelayMs?: number;
   /** Data composer for activity stream logging */
@@ -47,7 +53,7 @@ export interface ChannelGatewayConfig {
 }
 
 export type IncomingMessageHandler = (
-  channel: 'telegram' | 'whatsapp',
+  channel: GatewayChannel,
   conversationId: string,
   sender: { id: string; name?: string },
   content: string,
@@ -76,7 +82,7 @@ interface BufferedMessage {
 }
 
 interface MessageBuffer {
-  channel: 'telegram' | 'whatsapp';
+  channel: GatewayChannel;
   conversationId: string;
   sender: { id: string; name?: string };
   messages: BufferedMessage[];
@@ -92,6 +98,7 @@ interface MessageBuffer {
 export class ChannelGateway extends EventEmitter {
   private telegramListener: TelegramListener | null = null;
   private whatsappListener: WhatsAppListener | null = null;
+  private discordListener: DiscordListener | null = null;
   private config: ChannelGatewayConfig;
   private messageHandler: IncomingMessageHandler | null = null;
   private dataComposer: DataComposer | null = null;
@@ -113,6 +120,7 @@ export class ChannelGateway extends EventEmitter {
       enableWhatsApp: config.enableWhatsApp ?? (process.env.ENABLE_WHATSAPP === 'true'),
       whatsappAccountId: config.whatsappAccountId ?? 'default',
       printWhatsAppQr: config.printWhatsAppQr ?? true,
+      enableDiscord: config.enableDiscord ?? (process.env.ENABLE_DISCORD === 'true'),
       messageBufferDelayMs: config.messageBufferDelayMs ?? DEFAULT_BUFFER_DELAY_MS,
       ...config,
     };
@@ -156,10 +164,18 @@ export class ChannelGateway extends EventEmitter {
       logger.info('WhatsApp listener disabled (set ENABLE_WHATSAPP=true to enable)');
     }
 
+    // Start Discord listener
+    if (this.config.enableDiscord) {
+      await this.startDiscord();
+    } else {
+      logger.info('Discord listener disabled (set ENABLE_DISCORD=true to enable)');
+    }
+
     this.started = true;
     logger.info('ChannelGateway started', {
       telegram: !!this.telegramListener,
       whatsapp: !!this.whatsappListener,
+      discord: !!this.discordListener,
     });
   }
 
@@ -199,6 +215,11 @@ export class ChannelGateway extends EventEmitter {
       this.whatsappListener = null;
     }
 
+    if (this.discordListener) {
+      await this.discordListener.stop();
+      this.discordListener = null;
+    }
+
     this.started = false;
     logger.info('ChannelGateway stopped');
   }
@@ -210,7 +231,7 @@ export class ChannelGateway extends EventEmitter {
   /**
    * Generate a buffer key for a conversation
    */
-  private getBufferKey(channel: 'telegram' | 'whatsapp', conversationId: string): string {
+  private getBufferKey(channel: GatewayChannel, conversationId: string): string {
     return `${channel}:${conversationId}`;
   }
 
@@ -218,7 +239,7 @@ export class ChannelGateway extends EventEmitter {
    * Buffer an incoming message, batching rapid messages together
    */
   private bufferMessage(
-    channel: 'telegram' | 'whatsapp',
+    channel: GatewayChannel,
     conversationId: string,
     sender: { id: string; name?: string },
     content: string,
@@ -367,7 +388,7 @@ export class ChannelGateway extends EventEmitter {
    * Forward a message to the handler (after buffering)
    */
   private async forwardToHandler(
-    channel: 'telegram' | 'whatsapp',
+    channel: GatewayChannel,
     conversationId: string,
     sender: { id: string; name?: string },
     content: string,
@@ -454,6 +475,11 @@ export class ChannelGateway extends EventEmitter {
             conversationId,
             'Sorry, I encountered an error processing your message. Please try again.'
           );
+        } else if (channel === 'discord' && this.discordListener) {
+          await this.discordListener.sendMessage(
+            conversationId,
+            'Sorry, I encountered an error processing your message. Please try again.'
+          );
         }
       } catch (sendError) {
         logger.error('Failed to send error message:', sendError);
@@ -517,6 +543,32 @@ export class ChannelGateway extends EventEmitter {
         }
         break;
 
+      case 'discord':
+        if (!this.discordListener) {
+          throw new Error('Discord listener not available');
+        }
+        await this.discordListener.sendMessage(conversationId, content);
+        // Log outgoing Discord message to activity stream
+        {
+          const userId = conversationUserMap.get(conversationId);
+          if (this.dataComposer && userId) {
+            try {
+              await this.dataComposer.repositories.activityStream.logMessage({
+                userId,
+                agentId: 'benson',
+                direction: 'out',
+                content,
+                platform: 'discord',
+                platformChatId: conversationId,
+                isDm: true,
+              });
+            } catch (activityError) {
+              logger.warn('Failed to log outgoing Discord message to activity stream:', activityError);
+            }
+          }
+        }
+        break;
+
       default:
         logger.warn(`Channel not supported by gateway: ${channel}`);
         throw new Error(`Channel not supported: ${channel}`);
@@ -525,7 +577,7 @@ export class ChannelGateway extends EventEmitter {
     logger.info(`Response sent via gateway to ${channel}:${conversationId}`);
 
     // Check for pending messages that arrived while processing
-    await this.processPendingMessages(channel as 'telegram' | 'whatsapp', conversationId);
+    await this.processPendingMessages(channel as GatewayChannel, conversationId);
   }
 
   /**
@@ -533,7 +585,7 @@ export class ChannelGateway extends EventEmitter {
    * This ensures messages that arrived during Claude Code processing are handled as a batch.
    */
   private async processPendingMessages(
-    channel: 'telegram' | 'whatsapp',
+    channel: GatewayChannel,
     conversationId: string
   ): Promise<void> {
     const key = this.getBufferKey(channel, conversationId);
@@ -583,7 +635,7 @@ export class ChannelGateway extends EventEmitter {
    * This prevents conversations from getting stuck.
    */
   async releaseConversation(
-    channel: 'telegram' | 'whatsapp',
+    channel: GatewayChannel,
     conversationId: string,
     autoResponse?: { content: string; format?: 'text' | 'markdown' }
   ): Promise<void> {
@@ -792,26 +844,76 @@ export class ChannelGateway extends EventEmitter {
   }
 
   /**
-   * Start a typing indicator that refreshes every 4s
+   * Start Discord listener
    */
-  private startTypingIndicator(conversationId: string, channel: 'telegram' | 'whatsapp'): void {
-    this.stopTypingIndicator(conversationId);
-
-    // Send immediately
-    if (channel === 'telegram' && this.telegramListener) {
-      this.telegramListener.sendTypingIndicator(conversationId);
-    } else if (channel === 'whatsapp' && this.whatsappListener) {
-      this.whatsappListener.sendTypingIndicator(conversationId);
+  private async startDiscord(): Promise<void> {
+    if (!env.DISCORD_BOT_TOKEN) {
+      logger.warn('DISCORD_BOT_TOKEN not set - Discord listener disabled');
+      return;
     }
 
-    // Refresh every 4 seconds
-    const interval = setInterval(() => {
+    logger.info('Creating Discord listener...');
+    this.discordListener = createDiscordListener();
+
+    // Wire up message handling
+    this.discordListener.onMessage(async (message) => {
+      const senderId = message.sender.id || 'unknown';
+      const conversationId = message.conversationId || senderId;
+
+      // Bot mention check already handled inside DiscordListener
+      // Start typing indicator
+      this.startTypingIndicator(conversationId, 'discord');
+
+      // Buffer the message
+      this.bufferMessage(
+        'discord',
+        conversationId,
+        { id: senderId, name: message.sender.name || message.sender.username },
+        message.body,
+        {
+          media: message.media,
+          chatType: message.chatType,
+          mentions: message.mentions,
+        }
+      );
+    });
+
+    // Forward events
+    this.discordListener.on('connected', (bot: { username: string; id: string }) => {
+      logger.info(`Discord bot connected: @${bot.username}`);
+      this.emit('discord:connected', bot);
+    });
+
+    this.discordListener.on('error', (error: Error) => {
+      logger.error('Discord listener error:', error);
+      this.emit('discord:error', error);
+    });
+
+    await this.discordListener.start();
+    logger.info('Discord listener started');
+  }
+
+  /**
+   * Start a typing indicator that refreshes every 4s
+   */
+  private startTypingIndicator(conversationId: string, channel: GatewayChannel): void {
+    this.stopTypingIndicator(conversationId);
+
+    const sendTyping = () => {
       if (channel === 'telegram' && this.telegramListener) {
         this.telegramListener.sendTypingIndicator(conversationId);
       } else if (channel === 'whatsapp' && this.whatsappListener) {
         this.whatsappListener.sendTypingIndicator(conversationId);
+      } else if (channel === 'discord' && this.discordListener) {
+        this.discordListener.sendTypingIndicator(conversationId);
       }
-    }, TYPING_INTERVAL_MS);
+    };
+
+    // Send immediately
+    sendTyping();
+
+    // Refresh every 4 seconds
+    const interval = setInterval(sendTyping, TYPING_INTERVAL_MS);
 
     activeTypingIntervals.set(conversationId, interval);
 
@@ -856,6 +958,10 @@ export class ChannelGateway extends EventEmitter {
     return this.whatsappListener;
   }
 
+  getDiscordListener(): DiscordListener | null {
+    return this.discordListener;
+  }
+
   isStarted(): boolean {
     return this.started;
   }
@@ -864,6 +970,7 @@ export class ChannelGateway extends EventEmitter {
     started: boolean;
     telegram: { enabled: boolean; connected: boolean };
     whatsapp: { enabled: boolean; connected: boolean };
+    discord: { enabled: boolean; connected: boolean };
   } {
     return {
       started: this.started,
@@ -874,6 +981,10 @@ export class ChannelGateway extends EventEmitter {
       whatsapp: {
         enabled: this.config.enableWhatsApp ?? false,
         connected: this.whatsappListener?.connected ?? false,
+      },
+      discord: {
+        enabled: this.config.enableDiscord ?? false,
+        connected: this.discordListener?.connected ?? false,
       },
     };
   }

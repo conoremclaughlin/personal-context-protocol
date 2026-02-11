@@ -53,6 +53,7 @@ module.exports = {
         MCP_HTTP_PORT: String(mcpPort),
         MYRA_HTTP_PORT: String(myraPort),
         ENABLE_WHATSAPP: 'true',
+        ENABLE_DISCORD: 'false',
         AGENT_ID: 'myra',  // Identity for the Claude Code backend
       },
       max_restarts: 10,

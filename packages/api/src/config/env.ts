@@ -62,6 +62,10 @@ const envSchema = z.object({
   // Agent Configuration
   DEFAULT_MODEL: z.string().default('sonnet'),
 
+  // Discord Bot
+  DISCORD_BOT_TOKEN: optionalString,
+  DISCORD_APPLICATION_ID: optionalString,
+
   // OAuth - Google
   GOOGLE_CLIENT_ID: optionalString,
   GOOGLE_CLIENT_SECRET: optionalString,
