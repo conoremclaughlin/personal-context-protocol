@@ -155,6 +155,8 @@ export const bootstrapSchema = userIdentifierBaseSchema.extend({
 
 export const compactSessionSchema = userIdentifierBaseSchema.extend({
   sessionId: z.string().uuid().optional().describe('Session ID to compact (uses active session if not provided)'),
+  agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+  workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
   groupByTopics: z.boolean().optional().describe('Group logs by inferred topics (default: true)'),
   minSalience: z.enum(['low', 'medium', 'high', 'critical']).optional()
     .describe('Minimum salience to include in compaction (default: medium)'),
@@ -1325,7 +1327,11 @@ export async function handleCompactSession(args: unknown, dataComposer: DataComp
   if (sessionId) {
     session = await dataComposer.repositories.memory.getSession(sessionId);
   } else {
-    session = await dataComposer.repositories.memory.getActiveSession(user.id);
+    session = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      params.workspaceId,
+    );
     sessionId = session?.id;
   }
 

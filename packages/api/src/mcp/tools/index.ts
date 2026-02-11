@@ -1061,6 +1061,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       inputSchema: {
         ...userIdentifierFields,
         agentId: z.string().optional().describe('Filter by agent'),
+        workspaceId: z.string().uuid().optional().describe('Filter by workspace'),
         limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
       },
     },
@@ -1260,6 +1261,8 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       inputSchema: {
         ...userIdentifierFields,
         sessionId: z.string().uuid().optional().describe('Session ID to compact (uses active session if not provided)'),
+        agentId: z.string().optional().describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
+        workspaceId: z.string().uuid().optional().describe('Workspace ID for session resolution when sessionId not provided'),
         minSalience: z.enum(['low', 'medium', 'high', 'critical']).optional()
           .describe('Minimum salience to include (default: medium)'),
         preserveLogs: z.boolean().optional().describe('Keep original logs visible after compaction (default: false). Note: Logs are always soft-deleted for audit trail.'),
