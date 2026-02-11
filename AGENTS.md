@@ -60,3 +60,7 @@ In the PR body, use the standard format:
 ```
 
 Replace "Claude Code" with the appropriate tool if the SB used a different interface (e.g., Gemini CLI, Codex).
+
+### Merging
+
+**Do not squash commits.** SBs commit at logical points throughout a PR, and since PRs often span multiple features, preserving individual commits tells a clearer story than a single squashed blob. Use **merge commit** (not squash or rebase) when merging PRs.
