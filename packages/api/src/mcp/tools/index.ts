@@ -44,6 +44,7 @@ import {
   handleEndSession,
   handleGetSession,
   handleListSessions,
+  handleUpdateSessionPhase,
   handleGetMemoryHistory,
   handleGetUserHistory,
   handleRestoreMemory,
@@ -961,7 +962,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'log_session',
     {
-      description: `Add an entry to the current session log. Use this to record important events, decisions, or progress.
+      description: `[DEPRECATED] Add an entry to the current session log. Prefer update_session_phase for work status and remember for important decisions/events.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
@@ -1054,6 +1055,46 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleListSessions(args, dataComposer);
       } catch (error) {
         logger.error('Error in list_sessions:', error);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // Register update_session_phase tool
+  server.registerTool(
+    'update_session_phase',
+    {
+      description: `Update your session state — work phase, status, backend session ID, context. This is the primary tool for managing session state.
+
+Phase: Communicates real-time work status to other agents.
+- Active work phases (no auto-memory): investigating, implementing, reviewing
+- Significant transitions (auto-creates memory): blocked:<reason>, waiting:<reason>, complete
+- Optional: paused
+
+Also sets: backendSessionId (for resume), status (active/paused/resumable/completed), context, workingDir.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: {
+        ...userIdentifierFields,
+        sessionId: z.string().uuid().optional().describe('Session ID (uses active session if not provided)'),
+        phase: z.string().optional().describe('Work phase (e.g., "implementing", "blocked:awaiting-input", "waiting:build")'),
+        note: z.string().optional().describe('Context for the phase transition (included in auto-created memory for blocked/waiting)'),
+        agentId: z.string().optional().describe('Agent identity for memory attribution'),
+        createTask: z.boolean().optional().describe('Create a PCP task for blocked/waiting phases (default: false)'),
+        backendSessionId: z.string().optional().describe('Backend-specific session ID for resumption (e.g., Claude Code session ID, Codex session ID)'),
+        status: z.enum(['active', 'paused', 'resumable', 'completed']).optional().describe('Session status'),
+        context: z.string().optional().describe('Brief context of current work state'),
+        workingDir: z.string().optional().describe('Working directory'),
+      },
+    },
+    async (args) => {
+      try {
+        return await handleUpdateSessionPhase(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in update_session_phase:', error);
         return {
           content: [{ type: 'text' as const, text: JSON.stringify({ success: false, error: error instanceof Error ? error.message : 'Unknown error' }) }],
           isError: true,
@@ -2060,12 +2101,9 @@ Example workflow for Myra:
   server.registerTool(
     'update_session_status',
     {
-      description: `Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.
+      description: `[DEPRECATED] Use update_session_phase instead, which combines phase, status, backendSessionId, context, and workingDir in one tool.
 
-Call this before going idle so other agents can find and resume your session:
-- Set status to 'resumable' when waiting for external input
-- Set status to 'completed' when work is done
-- Include context describing current state`,
+Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.`,
       inputSchema: updateSessionStatusSchema,
     },
     async (args) => {

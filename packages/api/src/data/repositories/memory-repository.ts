@@ -238,6 +238,53 @@ export class MemoryRepository {
   }
 
   /**
+   * Update a session's state (phase, status, backend session ID, etc.)
+   */
+  async updateSession(sessionId: string, updates: {
+    currentPhase?: string | null;
+    status?: string;
+    backendSessionId?: string;
+    context?: string;
+    workingDir?: string;
+  }): Promise<Session | null> {
+    const dbUpdates: Record<string, unknown> = {};
+    // Note: updated_at is handled by the database trigger (update_sessions_updated_at)
+
+    if (updates.currentPhase !== undefined) {
+      dbUpdates.current_phase = updates.currentPhase;
+    }
+    if (updates.status !== undefined) {
+      dbUpdates.status = updates.status;
+    }
+    if (updates.backendSessionId !== undefined) {
+      dbUpdates.backend_session_id = updates.backendSessionId;
+      // Also write to claude_session_id for backward compatibility with SessionService
+      dbUpdates.claude_session_id = updates.backendSessionId;
+    }
+    if (updates.context !== undefined) {
+      dbUpdates.context = updates.context;
+    }
+    if (updates.workingDir !== undefined) {
+      dbUpdates.working_dir = updates.workingDir;
+    }
+
+    const { data, error } = await this.supabase
+      .from('sessions')
+      .update(dbUpdates)
+      .eq('id', sessionId)
+      .select()
+      .single();
+
+    if (error) {
+      if (error.code === 'PGRST116') return null;
+      logger.error('Failed to update session:', error);
+      throw new Error(`Failed to update session: ${error.message}`);
+    }
+
+    return data ? this.rowToSession(data) : null;
+  }
+
+  /**
    * Get a session by ID
    */
   async getSession(id: string): Promise<Session | null> {
@@ -623,6 +670,7 @@ export class MemoryRepository {
       userId: row.user_id,
       agentId: row.agent_id || undefined,
       workspaceId: row.workspace_id || undefined,
+      currentPhase: row.current_phase || undefined,
       startedAt: new Date(row.started_at),
       endedAt: row.ended_at ? new Date(row.ended_at) : undefined,
       summary: row.summary || undefined,
