@@ -125,6 +125,7 @@ export class MCPServer {
    */
   private async startHttp(): Promise<void> {
     const port = env.MCP_HTTP_PORT;
+    const baseUrl = env.MCP_BASE_URL || `http://localhost:${port}`;
     const app = express();
 
     // Enable CORS for web portal, MCP clients, and agents
@@ -168,19 +169,41 @@ export class MCPServer {
         // New client - create session
         logger.info('New MCP client connecting (Streamable HTTP)');
 
-        // Validate auth if provided
-        const userData = await this.authProvider.verifyAccessToken(req.headers.authorization);
-        if (!userData && req.headers.authorization) {
-          // Token was provided but invalid/expired — signal client to refresh
+        const authHeader = req.headers.authorization;
+        const userData = await this.authProvider.verifyAccessToken(authHeader);
+
+        // OAuth challenge for MCP clients (e.g. Gemini) when auth is required.
+        const isMissingAuth = !authHeader;
+        const isInvalidAuth = !!authHeader && !userData;
+        const shouldChallenge = isInvalidAuth || (env.MCP_REQUIRE_OAUTH && isMissingAuth);
+
+        if (shouldChallenge) {
+          const challengeParts = [
+            'Bearer realm="pcp"',
+            'scope="mcp:tools"',
+            `authorization_uri="${baseUrl}/authorize"`,
+            `resource_metadata="${baseUrl}/.well-known/oauth-protected-resource"`,
+          ];
+
+          if (isInvalidAuth) {
+            challengeParts.push('error="invalid_token"');
+          }
+
           res.status(401)
-            .set('WWW-Authenticate', 'Bearer error="invalid_token"')
+            .set('WWW-Authenticate', challengeParts.join(', '))
             .json({
               jsonrpc: '2.0',
-              error: { code: -32001, message: 'Invalid or expired access token' },
+              error: {
+                code: -32001,
+                message: isInvalidAuth
+                  ? 'Invalid or expired access token'
+                  : 'Authentication required',
+              },
               id: null,
             });
           return;
         }
+
         if (userData) {
           setSessionContext({
             userId: userData.userId,
@@ -393,7 +416,6 @@ export class MCPServer {
       });
 
       const webPortalUrl = process.env.WEB_PORTAL_URL || 'http://localhost:3002';
-      const baseUrl = env.MCP_BASE_URL || `http://localhost:${port}`;
       const mcpCallback = `${baseUrl}/mcp/auth/callback`;
 
       const loginUrl = new URL(`${webPortalUrl}/login`);
@@ -505,8 +527,6 @@ export class MCPServer {
 
     // OAuth Authorization Server Metadata (RFC 8414)
     app.get('/.well-known/oauth-authorization-server', (_req, res) => {
-      const baseUrl = env.MCP_BASE_URL || `http://localhost:${port}`;
-
       res.json({
         issuer: baseUrl,
         authorization_endpoint: `${baseUrl}/authorize`,
@@ -517,6 +537,16 @@ export class MCPServer {
         grant_types_supported: ['authorization_code', 'refresh_token'],
         token_endpoint_auth_methods_supported: ['client_secret_post'],
         code_challenge_methods_supported: ['S256'],
+      });
+    });
+
+    // OAuth Protected Resource Metadata (RFC 9728)
+    app.get('/.well-known/oauth-protected-resource', (_req, res) => {
+      res.json({
+        resource: `${baseUrl}/mcp`,
+        authorization_servers: [baseUrl],
+        bearer_methods_supported: ['header'],
+        scopes_supported: ['mcp:tools'],
       });
     });
 
