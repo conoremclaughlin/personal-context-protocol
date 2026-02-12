@@ -8,6 +8,7 @@ import { z } from 'zod';
 import type { DataComposer } from '../../data/composer';
 import { resolveUserOrThrow, userIdentifierBaseSchema } from '../../services/user-resolver';
 import type { WorkspaceContainerType } from '../../data/repositories/workspace-containers.repository';
+import type { Json } from '../../data/supabase/types';
 
 const workspaceContainerTypeSchema = z.enum(['personal', 'team']);
 
@@ -57,6 +58,10 @@ function successResponse(data: Record<string, unknown>) {
   };
 }
 
+function toJsonObject(value: Record<string, unknown> | undefined): Json | undefined {
+  return value as Json | undefined;
+}
+
 export async function handleCreateWorkspaceContainer(args: unknown, dataComposer: DataComposer) {
   const params = createWorkspaceContainerSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
@@ -67,7 +72,7 @@ export async function handleCreateWorkspaceContainer(args: unknown, dataComposer
     slug: params.slug || slugify(params.name),
     type: (params.type || 'personal') as WorkspaceContainerType,
     description: params.description,
-    metadata: params.metadata,
+    metadata: toJsonObject(params.metadata),
   });
 
   await dataComposer.repositories.workspaceContainers.addMember(workspace.id, user.id, 'owner');
@@ -168,7 +173,7 @@ export async function handleUpdateWorkspaceContainer(args: unknown, dataComposer
     slug: params.slug,
     type: params.type as WorkspaceContainerType | undefined,
     description: params.description,
-    metadata: params.metadata,
+    metadata: toJsonObject(params.metadata),
     archivedAt: params.archived === undefined ? undefined : (params.archived ? new Date().toISOString() : null),
   });
 
@@ -188,4 +193,3 @@ export async function handleUpdateWorkspaceContainer(args: unknown, dataComposer
     },
   });
 }
-

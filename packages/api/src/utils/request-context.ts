@@ -33,6 +33,8 @@ export interface RequestContextData {
   agentId?: string;
   /** Session ID if in a session */
   sessionId?: string;
+  /** Active product workspace container ID */
+  workspaceId?: string;
   /** Conversation ID for channel routing */
   conversationId?: string;
   /** Request timestamp */
@@ -143,18 +145,22 @@ export function hasUserContext(): boolean {
  */
 export function mergeWithContext<T extends Record<string, unknown>>(
   args: T
-): T & { userId?: string; email?: string; platform?: string; platformId?: string } {
+): T & { userId?: string; email?: string; platform?: string; platformId?: string; workspaceId?: string } {
   const ctx = getUserFromContext();
-  if (!ctx) return args as T & { userId?: string; email?: string; platform?: string; platformId?: string };
+  const reqCtx = getRequestContext();
+  if (!ctx && !reqCtx?.workspaceId) {
+    return args as T & { userId?: string; email?: string; platform?: string; platformId?: string; workspaceId?: string };
+  }
 
   // Only fill in missing values from context
   const merged = {
     ...args,
-    userId: (args.userId as string | undefined) ?? ctx.userId,
-    email: (args.email as string | undefined) ?? ctx.email,
-    platform: (args.platform as string | undefined) ?? ctx.platform,
-    platformId: (args.platformId as string | undefined) ?? ctx.platformId,
+    userId: (args.userId as string | undefined) ?? ctx?.userId,
+    email: (args.email as string | undefined) ?? ctx?.email,
+    platform: (args.platform as string | undefined) ?? ctx?.platform,
+    platformId: (args.platformId as string | undefined) ?? ctx?.platformId,
+    workspaceId: (args.workspaceId as string | undefined) ?? reqCtx?.workspaceId,
   };
 
-  return merged as T & { userId?: string; email?: string; platform?: string; platformId?: string };
+  return merged as T & { userId?: string; email?: string; platform?: string; platformId?: string; workspaceId?: string };
 }
