@@ -630,7 +630,6 @@ export function registerWorkspaceCommands(program: Command): void {
   const ws = program
     .command('studio')
     .alias('ws')
-    .alias('workspace')
     .description('Studio management for parallel development (worktree-backed)');
 
   ws.command('init [parent-name]')
