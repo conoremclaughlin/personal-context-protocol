@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const MCP_PORT = BASE_PORT;
+const MCP_CALLBACK = `http://localhost:${MCP_PORT}/mcp/auth/callback`;
+
 // Mock next/navigation
 const mockRedirect = vi.fn();
 vi.mock('next/navigation', () => ({
@@ -71,13 +75,13 @@ describe('auth server actions', () => {
       const result = await signInWithPassword(
         'user@test.com',
         'password123',
-        'http://localhost:3001/mcp/auth/callback',
+        MCP_CALLBACK,
         'pending-123'
       );
 
       expect(result).toHaveProperty('mcpRedirectUrl');
       const url = new URL((result as { mcpRedirectUrl: string }).mcpRedirectUrl);
-      expect(url.origin + url.pathname).toBe('http://localhost:3001/mcp/auth/callback');
+      expect(url.origin + url.pathname).toBe(MCP_CALLBACK);
       expect(url.searchParams.get('pending_id')).toBe('pending-123');
       expect(url.searchParams.get('access_token')).toBe('test-access-token');
       expect(url.searchParams.get('refresh_token')).toBe('test-refresh-token');

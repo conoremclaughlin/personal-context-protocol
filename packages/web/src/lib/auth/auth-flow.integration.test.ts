@@ -11,6 +11,10 @@ import { createServerClient } from '@supabase/ssr';
 import { NextRequest } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
 
+const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const WEB_PORT = BASE_PORT + 1;
+const WEB_ORIGIN = `http://localhost:${WEB_PORT}`;
+
 const SUPABASE_URL = process.env.SUPABASE_URL!;
 const SUPABASE_PUBLISHABLE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY!;
 const SUPABASE_SECRET_KEY = (process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_KEY)!;
@@ -43,7 +47,7 @@ function createSSRClient() {
 }
 
 function makeRequest(url: string): NextRequest {
-  const req = new NextRequest(new URL(url, 'http://localhost:3002'));
+  const req = new NextRequest(new URL(url, WEB_ORIGIN));
   // Copy session cookies onto the request
   cookieStore.forEach((value, name) => {
     req.cookies.set(name, value);
@@ -114,7 +118,7 @@ describe('auth flow integration', () => {
 
   describe('middleware auth injection', () => {
     it('injects Authorization header for /api/admin/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/admin/users');
+      const request = makeRequest('/api/admin/users');
       const response = await updateSession(request);
 
       // Middleware passes request headers via x-middleware-request-* headers
@@ -135,7 +139,7 @@ describe('auth flow integration', () => {
         data: { session },
       } = await ssr.auth.getSession();
 
-      const request = makeRequest('http://localhost:3002/api/admin/data');
+      const request = makeRequest('/api/admin/data');
       const response = await updateSession(request);
 
       const authHeader = response.headers.get('x-middleware-request-authorization');
@@ -143,7 +147,7 @@ describe('auth flow integration', () => {
     });
 
     it('does NOT inject auth header for /api/auth/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/auth/me');
+      const request = makeRequest('/api/auth/me');
       const response = await updateSession(request);
 
       const authHeader = response.headers.get('x-middleware-request-authorization');
@@ -151,7 +155,7 @@ describe('auth flow integration', () => {
     });
 
     it('injects auth for /api/chat/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/chat/messages');
+      const request = makeRequest('/api/chat/messages');
       const response = await updateSession(request);
 
       const authHeader = response.headers.get('x-middleware-request-authorization');
@@ -160,7 +164,7 @@ describe('auth flow integration', () => {
     });
 
     it('injects auth for /api/kindle/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/kindle/redeem');
+      const request = makeRequest('/api/kindle/redeem');
       const response = await updateSession(request);
 
       const authHeader = response.headers.get('x-middleware-request-authorization');
@@ -171,7 +175,7 @@ describe('auth flow integration', () => {
 
   describe('unauthenticated requests', () => {
     it('redirects to /login for protected routes without cookies', async () => {
-      const request = new NextRequest(new URL('http://localhost:3002/dashboard'));
+      const request = new NextRequest(new URL('/dashboard', WEB_ORIGIN));
       // No cookies set — unauthenticated
       const response = await updateSession(request);
 
@@ -180,7 +184,7 @@ describe('auth flow integration', () => {
     });
 
     it('does NOT inject auth for API routes without cookies', async () => {
-      const request = new NextRequest(new URL('http://localhost:3002/api/admin/users'));
+      const request = new NextRequest(new URL('/api/admin/users', WEB_ORIGIN));
       // No cookies
       const response = await updateSession(request);
 
@@ -191,7 +195,7 @@ describe('auth flow integration', () => {
 
   describe('token validation', () => {
     it('injected JWT contains the correct user ID in payload', async () => {
-      const request = makeRequest('http://localhost:3002/api/admin/users');
+      const request = makeRequest('/api/admin/users');
       const response = await updateSession(request);
 
       const authHeader = response.headers.get('x-middleware-request-authorization')!;
@@ -206,7 +210,7 @@ describe('auth flow integration', () => {
     });
 
     it('JWT has not expired', async () => {
-      const request = makeRequest('http://localhost:3002/api/admin/users');
+      const request = makeRequest('/api/admin/users');
       const response = await updateSession(request);
 
       const authHeader = response.headers.get('x-middleware-request-authorization')!;
@@ -220,7 +224,7 @@ describe('auth flow integration', () => {
 
   describe('cookie refresh propagation', () => {
     it('response includes session cookies for downstream', async () => {
-      const request = makeRequest('http://localhost:3002/api/admin/users');
+      const request = makeRequest('/api/admin/users');
       const response = await updateSession(request);
 
       // Supabase middleware should propagate any refreshed cookies

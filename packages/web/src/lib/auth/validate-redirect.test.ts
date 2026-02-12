@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { isAllowedMcpRedirect } from './validate-redirect';
 
+const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const MCP_PORT = BASE_PORT;
+
 describe('isAllowedMcpRedirect', () => {
   const originalEnv = process.env;
 
@@ -14,7 +17,7 @@ describe('isAllowedMcpRedirect', () => {
 
   describe('localhost (dev)', () => {
     it('allows localhost on any port', () => {
-      expect(isAllowedMcpRedirect('http://localhost:3001/mcp/auth/callback')).toBe(true);
+      expect(isAllowedMcpRedirect(`http://localhost:${MCP_PORT}/mcp/auth/callback`)).toBe(true);
     });
 
     it('allows localhost without port', () => {
@@ -22,7 +25,7 @@ describe('isAllowedMcpRedirect', () => {
     });
 
     it('allows 127.0.0.1', () => {
-      expect(isAllowedMcpRedirect('http://127.0.0.1:3001/mcp/auth/callback')).toBe(true);
+      expect(isAllowedMcpRedirect(`http://127.0.0.1:${MCP_PORT}/mcp/auth/callback`)).toBe(true);
     });
   });
 
@@ -55,7 +58,7 @@ describe('isAllowedMcpRedirect', () => {
     });
 
     it('allows HTTP for localhost', () => {
-      expect(isAllowedMcpRedirect('http://localhost:3001/callback')).toBe(true);
+      expect(isAllowedMcpRedirect(`http://localhost:${MCP_PORT}/callback`)).toBe(true);
     });
   });
 

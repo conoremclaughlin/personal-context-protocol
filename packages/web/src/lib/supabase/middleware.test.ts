@@ -1,6 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
+const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const WEB_PORT = BASE_PORT + 1;
+const MCP_PORT = BASE_PORT;
+const WEB_ORIGIN = `http://localhost:${WEB_PORT}`;
+const MCP_CALLBACK = `http://localhost:${MCP_PORT}/mcp/auth/callback`;
+
 // Track the supabaseResponse and its cookie setter for assertions
 let mockCookiesSetAll: ReturnType<typeof vi.fn>;
 const mockGetUser = vi.fn();
@@ -27,8 +33,8 @@ vi.mock('@supabase/ssr', () => ({
 
 import { updateSession } from './middleware';
 
-function makeRequest(url: string): NextRequest {
-  return new NextRequest(new URL(url, 'http://localhost:3002'));
+function makeRequest(path: string): NextRequest {
+  return new NextRequest(new URL(path, WEB_ORIGIN));
 }
 
 describe('middleware updateSession', () => {
@@ -43,32 +49,28 @@ describe('middleware updateSession', () => {
 
   describe('auth header injection', () => {
     it('injects Authorization header for /api/admin/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/admin/users');
+      const request = makeRequest('/api/admin/users');
       const response = await updateSession(request);
 
-      // The middleware returns a NextResponse — check that it passed through
       expect(response.status).toBe(200);
-      // Verify getSession was called (to get the token)
       expect(mockGetSession).toHaveBeenCalledTimes(1);
     });
 
     it('injects Authorization header for /api/chat/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/chat/messages');
+      const request = makeRequest('/api/chat/messages');
       await updateSession(request);
       expect(mockGetSession).toHaveBeenCalledTimes(1);
     });
 
     it('injects Authorization header for /api/kindle/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/kindle/token/abc');
+      const request = makeRequest('/api/kindle/token/abc');
       await updateSession(request);
       expect(mockGetSession).toHaveBeenCalledTimes(1);
     });
 
     it('does NOT inject auth for /api/auth/* routes', async () => {
-      const request = makeRequest('http://localhost:3002/api/auth/me');
+      const request = makeRequest('/api/auth/me');
       await updateSession(request);
-      // getSession should only be called once by getUser's internal flow,
-      // NOT by our auth injection code
       expect(mockGetSession).not.toHaveBeenCalled();
     });
 
@@ -76,7 +78,7 @@ describe('middleware updateSession', () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
       mockGetSession.mockResolvedValue({ data: { session: null } });
 
-      const request = makeRequest('http://localhost:3002/api/admin/users');
+      const request = makeRequest('/api/admin/users');
       const response = await updateSession(request);
       expect(response.status).toBe(200);
     });
@@ -86,7 +88,7 @@ describe('middleware updateSession', () => {
     it('redirects unauthenticated users to /login for protected routes', async () => {
       mockGetUser.mockResolvedValue({ data: { user: null } });
 
-      const request = makeRequest('http://localhost:3002/dashboard');
+      const request = makeRequest('/dashboard');
       const response = await updateSession(request);
 
       expect(response.status).toBe(307);
@@ -96,7 +98,7 @@ describe('middleware updateSession', () => {
     it('allows unauthenticated access to /login', async () => {
       mockGetUser.mockResolvedValue({ data: { user: null } });
 
-      const request = makeRequest('http://localhost:3002/login');
+      const request = makeRequest('/login');
       const response = await updateSession(request);
 
       expect(response.status).toBe(200);
@@ -105,7 +107,7 @@ describe('middleware updateSession', () => {
     it('allows unauthenticated access to /api/* routes', async () => {
       mockGetUser.mockResolvedValue({ data: { user: null } });
 
-      const request = makeRequest('http://localhost:3002/api/auth/me');
+      const request = makeRequest('/api/auth/me');
       const response = await updateSession(request);
 
       expect(response.status).toBe(200);
@@ -114,7 +116,7 @@ describe('middleware updateSession', () => {
     it('allows unauthenticated access to /kindle/[token] pages', async () => {
       mockGetUser.mockResolvedValue({ data: { user: null } });
 
-      const request = makeRequest('http://localhost:3002/kindle/abc123');
+      const request = makeRequest('/kindle/abc123');
       const response = await updateSession(request);
 
       expect(response.status).toBe(200);
@@ -134,16 +136,14 @@ describe('middleware updateSession', () => {
       });
 
       const request = makeRequest(
-        'http://localhost:3002/login?redirect=http://localhost:3001/mcp/auth/callback&pending_id=pending-123'
+        `/login?redirect=${encodeURIComponent(MCP_CALLBACK)}&pending_id=pending-123`
       );
       const response = await updateSession(request);
 
       expect(response.status).toBe(307);
       const location = response.headers.get('location')!;
       const redirectUrl = new URL(location);
-      expect(redirectUrl.origin + redirectUrl.pathname).toBe(
-        'http://localhost:3001/mcp/auth/callback'
-      );
+      expect(redirectUrl.origin + redirectUrl.pathname).toBe(MCP_CALLBACK);
       expect(redirectUrl.searchParams.get('pending_id')).toBe('pending-123');
       expect(redirectUrl.searchParams.get('access_token')).toBe('mcp-access-token');
       expect(redirectUrl.searchParams.get('refresh_token')).toBe('mcp-refresh-token');
@@ -160,9 +160,7 @@ describe('middleware updateSession', () => {
         },
       });
 
-      const request = makeRequest(
-        'http://localhost:3002/login?redirect=https://evil.com/steal&pending_id=pending-123'
-      );
+      const request = makeRequest('/login?redirect=https://evil.com/steal&pending_id=pending-123');
       const response = await updateSession(request);
 
       expect(response.status).toBe(307);
@@ -180,7 +178,7 @@ describe('middleware updateSession', () => {
       });
 
       const request = makeRequest(
-        'http://localhost:3002/login?redirect=http://localhost:3001/mcp/auth/callback&pending_id=pending-123'
+        `/login?redirect=${encodeURIComponent(MCP_CALLBACK)}&pending_id=pending-123`
       );
       const response = await updateSession(request);
 
@@ -189,7 +187,7 @@ describe('middleware updateSession', () => {
     });
 
     it('redirects logged-in user without MCP params to dashboard', async () => {
-      const request = makeRequest('http://localhost:3002/login');
+      const request = makeRequest('/login');
       const response = await updateSession(request);
 
       expect(response.status).toBe(307);
