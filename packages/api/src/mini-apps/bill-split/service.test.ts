@@ -153,14 +153,14 @@ describe('Bill Split Scenarios', () => {
 
   describe('recording expenses', () => {
     it('should create debt and balance atomically', () => {
-      // When recording "Ruoshan owes Conor $56 for groceries":
+      // When recording "Dana owes Charlie $56 for groceries":
       // 1. Insert debt record with amount: 56
-      // 2. Update/create balance "Ruoshan:Conor" += 56
+      // 2. Update/create balance "Dana:Charlie" += 56
       // Both should succeed or both should fail
 
       const scenario = {
         before: { balance: 0 },
-        action: { from: 'Ruoshan', to: 'Conor', amount: 56 },
+        action: { from: 'Dana', to: 'Charlie', amount: 56 },
         after: { balance: 56 },
       };
 
@@ -170,10 +170,10 @@ describe('Bill Split Scenarios', () => {
     it('should accumulate multiple debts correctly', () => {
       // Multiple expenses between same people
       const debts = [
-        { from: 'Ruoshan', to: 'Conor', amount: 56, description: 'Groceries' },
-        { from: 'Ruoshan', to: 'Conor', amount: 13.75, description: 'Pizza' },
-        { from: 'Ruoshan', to: 'Conor', amount: 34, description: 'IKEA' },
-        { from: 'Ruoshan', to: 'Conor', amount: 35, description: 'Cutting boards' },
+        { from: 'Dana', to: 'Charlie', amount: 56, description: 'Groceries' },
+        { from: 'Dana', to: 'Charlie', amount: 13.75, description: 'Pizza' },
+        { from: 'Dana', to: 'Charlie', amount: 34, description: 'IKEA' },
+        { from: 'Dana', to: 'Charlie', amount: 35, description: 'Cutting boards' },
       ];
 
       const expectedBalance = debts.reduce((sum, d) => sum + d.amount, 0);
@@ -182,9 +182,9 @@ describe('Bill Split Scenarios', () => {
 
     it('should track different creditor-debtor pairs separately', () => {
       const debts = [
-        { from: 'Ruoshan', to: 'Conor', amount: 56 },
-        { from: 'Ruoshan', to: 'Co Con', amount: 26.44 },
-        { from: 'Conor', to: 'Co Con', amount: 305 },
+        { from: 'Dana', to: 'Charlie', amount: 56 },
+        { from: 'Dana', to: 'Eve', amount: 26.44 },
+        { from: 'Charlie', to: 'Eve', amount: 305 },
       ];
 
       const balances = new Map<string, number>();
@@ -193,9 +193,9 @@ describe('Bill Split Scenarios', () => {
         balances.set(key, (balances.get(key) || 0) + debt.amount);
       }
 
-      expect(balances.get('Ruoshan:Conor')).toBe(56);
-      expect(balances.get('Ruoshan:Co Con')).toBe(26.44);
-      expect(balances.get('Conor:Co Con')).toBe(305);
+      expect(balances.get('Dana:Charlie')).toBe(56);
+      expect(balances.get('Dana:Eve')).toBe(26.44);
+      expect(balances.get('Charlie:Eve')).toBe(305);
     });
   });
 
@@ -232,9 +232,9 @@ describe('Bill Split Scenarios', () => {
   describe('name resolution', () => {
     it('should resolve aliases to canonical names', () => {
       const contacts = [
-        { name: 'Co Con', aliases: ['co', 'cocon', 'co con'] },
-        { name: 'Ruoshan', aliases: ['rs', 'ruoshan'] },
-        { name: 'Conor Grey', aliases: ['cg', 'conor grey'] },
+        { name: 'Eve', aliases: ['ev', 'evie'] },
+        { name: 'Dana', aliases: ['dn', 'dana'] },
+        { name: 'Charlie Fox', aliases: ['cf', 'charlie fox'] },
       ];
 
       const resolveName = (input: string): string => {
@@ -246,16 +246,16 @@ describe('Bill Split Scenarios', () => {
         return input; // Return original if not found
       };
 
-      expect(resolveName('Co')).toBe('Co Con');
-      expect(resolveName('RS')).toBe('Ruoshan');
-      expect(resolveName('CG')).toBe('Conor Grey');
+      expect(resolveName('Ev')).toBe('Eve');
+      expect(resolveName('DN')).toBe('Dana');
+      expect(resolveName('CF')).toBe('Charlie Fox');
       expect(resolveName('Unknown Person')).toBe('Unknown Person');
     });
 
     it('should flag similar-but-not-exact matches for clarification', () => {
       const contacts = [
-        { name: 'Co Con', aliases: ['co'] },
-        { name: 'Conor', aliases: [] },
+        { name: 'Charlie', aliases: ['ch'] },
+        { name: 'Chris', aliases: [] },
       ];
 
       const findSimilar = (input: string): string[] => {
@@ -273,10 +273,10 @@ describe('Bill Split Scenarios', () => {
         return similar;
       };
 
-      // "Con" could match both "Co Con" and "Conor"
-      const matches = findSimilar('Con');
-      expect(matches).toContain('Co Con');
-      expect(matches).toContain('Conor');
+      // "Ch" could match both "Charlie" and "Chris"
+      const matches = findSimilar('Ch');
+      expect(matches).toContain('Charlie');
+      expect(matches).toContain('Chris');
     });
   });
 
@@ -332,7 +332,7 @@ describe('Edge Cases', () => {
   });
 
   it('should handle unicode names', () => {
-    const names = ['Ruoshan', 'Co Con', 'José', 'François', '田中太郎'];
+    const names = ['Dana', 'Charlie', 'José', 'François', '田中太郎'];
     names.forEach(name => {
       expect(name.length).toBeGreaterThan(0);
     });

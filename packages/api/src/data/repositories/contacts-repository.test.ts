@@ -34,22 +34,22 @@ describe('levenshteinDistance', () => {
 
 describe('calculateSimilarity', () => {
   it('should return 1 for identical strings', () => {
-    expect(calculateSimilarity('Conor', 'Conor')).toBe(1);
+    expect(calculateSimilarity('Alex', 'Alex')).toBe(1);
   });
 
   it('should return 1 for case-insensitive matches', () => {
-    expect(calculateSimilarity('CONOR', 'conor')).toBe(1);
-    expect(calculateSimilarity('Co Con', 'co con')).toBe(1);
+    expect(calculateSimilarity('ALEX', 'alex')).toBe(1);
+    expect(calculateSimilarity('Jo Kim', 'jo kim')).toBe(1);
   });
 
   it('should return high similarity for close names', () => {
-    const similarity = calculateSimilarity('Co', 'Co Con');
+    const similarity = calculateSimilarity('Jo', 'Jo Kim');
     expect(similarity).toBeGreaterThan(0.3);
     expect(similarity).toBeLessThan(0.7);
   });
 
   it('should return low similarity for different names', () => {
-    const similarity = calculateSimilarity('Conor', 'Ruoshan');
+    const similarity = calculateSimilarity('Alex', 'Morgan');
     expect(similarity).toBeLessThan(0.3);
   });
 
@@ -59,7 +59,7 @@ describe('calculateSimilarity', () => {
   });
 
   it('should trim whitespace', () => {
-    expect(calculateSimilarity('  Conor  ', 'Conor')).toBe(1);
+    expect(calculateSimilarity('  Alex  ', 'Alex')).toBe(1);
   });
 });
 
@@ -68,19 +68,19 @@ describe('name resolution scenarios', () => {
   // For now, we test the logic units
 
   describe('alias matching', () => {
-    it('should identify Co as similar to Co Con', () => {
-      const similarity = calculateSimilarity('Co', 'Co Con');
-      // "Co" is a prefix of "Co Con", so should have some similarity
+    it('should identify Jo as similar to Jo Kim', () => {
+      const similarity = calculateSimilarity('Jo', 'Jo Kim');
+      // "Jo" is a prefix of "Jo Kim", so should have some similarity
       expect(similarity).toBeGreaterThan(0.3);
     });
 
-    it('should identify Ruoshan variations', () => {
-      expect(calculateSimilarity('Ruoshan', 'ruoshan')).toBe(1);
-      expect(calculateSimilarity('Ruoshan', 'RS')).toBeLessThan(0.3);
+    it('should identify Morgan variations', () => {
+      expect(calculateSimilarity('Morgan', 'morgan')).toBe(1);
+      expect(calculateSimilarity('Morgan', 'MG')).toBeLessThan(0.4);
     });
 
-    it('should identify Conor Grey as distinct from Conor', () => {
-      const similarity = calculateSimilarity('Conor Grey', 'Conor');
+    it('should identify Alex Grey as distinct from Alex', () => {
+      const similarity = calculateSimilarity('Alex Grey', 'Alex');
       expect(similarity).toBeGreaterThan(0.4);
       expect(similarity).toBeLessThan(0.8);
     });
@@ -90,20 +90,20 @@ describe('name resolution scenarios', () => {
     const threshold = 0.7;
 
     it('should match above threshold', () => {
-      // Very similar names
-      expect(calculateSimilarity('Connor', 'Conor')).toBeGreaterThan(threshold);
-      expect(calculateSimilarity('Ruosahn', 'Ruoshan')).toBeGreaterThan(threshold);
+      // Very similar names (typo variants)
+      expect(calculateSimilarity('Alec', 'Alex')).toBeGreaterThan(threshold);
+      expect(calculateSimilarity('Morgam', 'Morgan')).toBeGreaterThan(threshold);
     });
 
     it('should not match below threshold', () => {
       // Different names
-      expect(calculateSimilarity('Conor', 'Bob')).toBeLessThan(threshold);
-      expect(calculateSimilarity('Ruoshan', 'Alice')).toBeLessThan(threshold);
+      expect(calculateSimilarity('Alex', 'Bob')).toBeLessThan(threshold);
+      expect(calculateSimilarity('Morgan', 'Alice')).toBeLessThan(threshold);
     });
 
     it('should handle common typos', () => {
-      expect(calculateSimilarity('COnor', 'Conor')).toBeGreaterThan(threshold);
-      expect(calculateSimilarity('Roshan', 'Ruoshan')).toBeGreaterThan(0.6);
+      expect(calculateSimilarity('ALex', 'Alex')).toBeGreaterThan(threshold);
+      expect(calculateSimilarity('Morga', 'Morgan')).toBeGreaterThan(0.6);
     });
   });
 });
@@ -111,27 +111,27 @@ describe('name resolution scenarios', () => {
 describe('bill-split name scenarios', () => {
   // Real scenarios from the bill-split mini-app
 
-  it('should distinguish Co (first name) from Conor (different person)', () => {
-    // Co and Conor should NOT be considered the same
-    const similarity = calculateSimilarity('Co', 'Conor');
+  it('should distinguish Jo (first name) from Alex (different person)', () => {
+    // Jo and Alex should NOT be considered the same
+    const similarity = calculateSimilarity('Jo', 'Alex');
     // They share some characters but are short enough to be distinct
     expect(similarity).toBeLessThan(0.7);
   });
 
-  it('should match Co to Co Con (same person)', () => {
-    // "Co" is a nickname for "Co Con"
+  it('should match Jo to Jo Kim (same person)', () => {
+    // "Jo" is a nickname for "Jo Kim"
     // In practice, we'd rely on the alias array, but similarity helps suggest
-    const similarity = calculateSimilarity('Co', 'Co Con');
+    const similarity = calculateSimilarity('Jo', 'Jo Kim');
     expect(similarity).toBeGreaterThan(0.3);
   });
 
-  it('should keep Ruoshan distinct from Conor', () => {
-    const similarity = calculateSimilarity('Ruoshan', 'Conor');
+  it('should keep Morgan distinct from Alex', () => {
+    const similarity = calculateSimilarity('Morgan', 'Alex');
     expect(similarity).toBeLessThan(0.3);
   });
 
-  it('should keep Conor Grey distinct from Conor', () => {
-    const similarity = calculateSimilarity('Conor Grey', 'Conor');
+  it('should keep Alex Grey distinct from Alex', () => {
+    const similarity = calculateSimilarity('Alex Grey', 'Alex');
     // Partial match but not the same person
     expect(similarity).toBeLessThan(0.8);
     expect(similarity).toBeGreaterThan(0.4);

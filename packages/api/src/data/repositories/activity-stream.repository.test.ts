@@ -136,7 +136,7 @@ describe('ActivityStreamRepository', () => {
         type: 'message_in',
         content: 'Hey Myra, can you help me with something?',
         subtype: null,
-        payload: { senderName: 'Conor' },
+        payload: { senderName: 'TestUser' },
         contact_id: 'contact-789',
         parent_id: null,
         correlation_id: null,
@@ -166,7 +166,7 @@ describe('ActivityStreamRepository', () => {
         platformMessageId: 'tg-12345',
         platformChatId: 'tg-chat-67890',
         isDm: true,
-        payload: { senderName: 'Conor' },
+        payload: { senderName: 'TestUser' },
       });
 
       expect(result.type).toBe('message_in');

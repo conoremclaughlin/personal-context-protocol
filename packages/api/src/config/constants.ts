@@ -12,7 +12,7 @@ export const MCP_SERVER_DESCRIPTION = `Personal Context Protocol (PCP) - Persist
 
 ## User Identification
 Most tools require identifying a user. You can use ANY ONE of these methods:
-- userId: Direct UUID (e.g., "69ffffd2-f6e4-4cb7-b08f-9d051a63a409")
+- userId: Direct UUID (e.g., "00000000-0000-0000-0000-000000000000")
 - email: Email address (e.g., "user@example.com")
 - phone: E.164 format (e.g., "+14155551234")
 - platform + platformId: Platform name (telegram/whatsapp/discord) with user ID

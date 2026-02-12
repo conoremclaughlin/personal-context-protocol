@@ -693,7 +693,7 @@ describe('Fallback Auto-Response on Close', () => {
 
     const msg = backend.sendMessage({
       id: 'msg-1', channel: 'telegram', conversationId: 'chat-123',
-      sender: { id: 'u1', name: 'Conor' }, content: 'Hello',
+      sender: { id: 'u1', name: 'TestUser' }, content: 'Hello',
       timestamp: new Date(),
     });
 
