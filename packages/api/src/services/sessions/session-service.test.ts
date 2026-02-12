@@ -79,7 +79,7 @@ describe('SessionService', () => {
     agentId: 'myra',
     channel: 'telegram' as const,
     conversationId: 'chat-123',
-    sender: { id: '726555973', name: 'Conor' },
+    sender: { id: '123456789', name: 'TestUser' },
     content: 'Hello, Myra!',
     metadata: {},
     ...overrides,

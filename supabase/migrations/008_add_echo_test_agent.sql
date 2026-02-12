@@ -10,5 +10,5 @@ SELECT id, 'echo', 'Echo', 'Integration test agent',
   '["reliability", "simplicity"]'::jsonb,
   '["compact_session", "remember", "create_task"]'::jsonb
 FROM users
-WHERE email = 'conoremclaughlin@gmail.com'
+WHERE email = (SELECT email FROM users ORDER BY created_at ASC LIMIT 1)
 ON CONFLICT (user_id, agent_id) DO NOTHING;
