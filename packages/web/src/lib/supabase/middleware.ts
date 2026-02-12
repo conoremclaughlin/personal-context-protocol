@@ -65,24 +65,21 @@ export async function updateSession(request: NextRequest) {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      const hasTokens = !!(session?.access_token && session?.refresh_token);
-      console.log('[middleware] MCP flow, session tokens:', {
+      console.log('[middleware] MCP flow, session:', {
         hasAccessToken: !!session?.access_token,
-        hasRefreshToken: !!session?.refresh_token,
       });
 
-      if (hasTokens) {
-        console.log('[middleware] Redirecting to MCP callback with tokens');
+      if (session?.access_token) {
+        console.log('[middleware] Redirecting to MCP callback with access token');
         const apiUrl =
           process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
         const callbackUrl = new URL(`${apiUrl}/mcp/auth/callback`);
         callbackUrl.searchParams.set('pending_id', mcpPendingId);
         callbackUrl.searchParams.set('access_token', session.access_token);
-        callbackUrl.searchParams.set('refresh_token', session.refresh_token);
         return NextResponse.redirect(callbackUrl.toString());
       }
-      // Can't get both tokens from middleware — let the login form handle it.
-      console.log('[middleware] Missing tokens, letting login form handle MCP flow');
+      // Can't get access token from middleware — let the login form handle it.
+      console.log('[middleware] Missing access token, letting login form handle MCP flow');
       return supabaseResponse;
     }
 

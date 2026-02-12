@@ -351,16 +351,14 @@ export class MCPServer {
       res.redirect(loginUrl.toString());
     });
 
-    // Auth callback — receives Supabase tokens from web portal, creates auth code
+    // Auth callback — receives Supabase access token from web portal, creates auth code
     app.get('/mcp/auth/callback', async (req, res) => {
       const pendingId = req.query.pending_id as string;
       const accessToken = req.query.access_token as string;
-      const refreshToken = req.query.refresh_token as string;
 
       logger.info('MCP /mcp/auth/callback called', {
         pendingId,
         hasAccessToken: !!accessToken,
-        hasRefreshToken: !!refreshToken,
       });
 
       if (!accessToken) {
@@ -368,15 +366,9 @@ export class MCPServer {
         return;
       }
 
-      if (!refreshToken) {
-        res.status(400).send('Missing refresh token. Please try logging in again.');
-        return;
-      }
-
       const result = await this.authProvider.handleAuthCallback({
         pendingId,
         accessToken,
-        refreshToken,
       });
 
       if ('error' in result) {

@@ -27,7 +27,6 @@ export async function signInWithPassword(
     const callbackUrl = new URL(`${apiUrl}/mcp/auth/callback`);
     callbackUrl.searchParams.set('pending_id', mcpPendingId);
     callbackUrl.searchParams.set('access_token', data.session.access_token);
-    callbackUrl.searchParams.set('refresh_token', data.session.refresh_token);
     return { mcpRedirectUrl: callbackUrl.toString() };
   }
 

@@ -81,7 +81,8 @@ describe('auth server actions', () => {
       expect(url.origin + url.pathname).toBe(MCP_CALLBACK);
       expect(url.searchParams.get('pending_id')).toBe('pending-123');
       expect(url.searchParams.get('access_token')).toBe('test-access-token');
-      expect(url.searchParams.get('refresh_token')).toBe('test-refresh-token');
+      // refresh_token should NOT be in the callback URL
+      expect(url.searchParams.has('refresh_token')).toBe(false);
     });
 
     it('returns success (not MCP redirect) when MCP params are null', async () => {

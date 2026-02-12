@@ -132,7 +132,6 @@ describe('middleware updateSession', () => {
         data: {
           session: {
             access_token: 'mcp-access-token',
-            refresh_token: 'mcp-refresh-token',
           },
         },
       });
@@ -146,13 +145,14 @@ describe('middleware updateSession', () => {
       expect(redirectUrl.origin + redirectUrl.pathname).toBe(MCP_CALLBACK);
       expect(redirectUrl.searchParams.get('pending_id')).toBe('pending-123');
       expect(redirectUrl.searchParams.get('access_token')).toBe('mcp-access-token');
-      expect(redirectUrl.searchParams.get('refresh_token')).toBe('mcp-refresh-token');
+      // refresh_token should NOT be in the callback URL
+      expect(redirectUrl.searchParams.has('refresh_token')).toBe(false);
     });
 
-    it('lets login page load if tokens are missing in MCP flow', async () => {
+    it('lets login page load if access token is missing in MCP flow', async () => {
       mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } } });
       mockGetSession.mockResolvedValue({
-        data: { session: { access_token: 'at' } }, // no refresh_token
+        data: { session: null },
       });
 
       const request = makeRequest('/login?pending_id=pending-123');
