@@ -60,7 +60,7 @@ vi.mock('../routes/agent-trigger', () => {
 });
 
 vi.mock('../utils/request-context', () => ({
-  setSessionContext: vi.fn(),
+  runWithRequestContext: vi.fn((_ctx: unknown, fn: () => unknown) => fn()),
 }));
 
 vi.mock('@supabase/supabase-js', () => ({

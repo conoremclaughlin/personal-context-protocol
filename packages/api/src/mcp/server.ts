@@ -14,7 +14,7 @@ import adminRouter, { setWhatsAppListener } from '../routes/admin';
 import agentTriggerRouter, { getAgentGateway } from '../routes/agent-trigger';
 import { createChatRouter } from '../routes/chat';
 import { ChannelGateway, createChannelGateway, type ChannelGatewayConfig, type IncomingMessageHandler } from '../channels/gateway';
-import { setSessionContext } from '../utils/request-context';
+import { runWithRequestContext } from '../utils/request-context';
 import { PcpAuthProvider } from './auth/pcp-auth-provider';
 
 export { setWhatsAppListener, getAgentGateway };
@@ -165,38 +165,42 @@ export class MCPServer {
         return;
       }
 
-      if (userData) {
-        setSessionContext({
-          userId: userData.userId,
-          email: userData.email,
-        });
-      }
+      // Use request-scoped context (AsyncLocalStorage) instead of global state
+      // to prevent identity leaking across concurrent stateless requests.
+      const ctx = userData
+        ? { userId: userData.userId, email: userData.email }
+        : {};
 
-      try {
-        // Stateless: fresh transport per request — no session IDs, no stale sessions
-        const transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: undefined,
-        });
-        const mcpServer = this.createMcpServerInstance();
-
-        await mcpServer.connect(transport);
-        await transport.handleRequest(req, res);
-
-        // Clean up after request completes
-        transport.onclose = undefined;
-        mcpServer.close().catch((err) => {
-          logger.debug('Error closing stateless MCP server instance', { error: err });
-        });
-      } catch (error) {
-        logger.error('Error handling MCP request:', error);
-        if (!res.headersSent) {
-          res.status(500).json({
-            jsonrpc: '2.0',
-            error: { code: -32603, message: 'Internal server error' },
-            id: null,
+      await runWithRequestContext(ctx, async () => {
+        let transport: StreamableHTTPServerTransport | undefined;
+        let mcpServer: ReturnType<typeof this.createMcpServerInstance> | undefined;
+        try {
+          // Stateless: fresh transport per request — no session IDs, no stale sessions
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: undefined,
           });
+          mcpServer = this.createMcpServerInstance();
+
+          await mcpServer.connect(transport);
+          await transport.handleRequest(req, res);
+        } catch (error) {
+          logger.error('Error handling MCP request:', error);
+          if (!res.headersSent) {
+            res.status(500).json({
+              jsonrpc: '2.0',
+              error: { code: -32603, message: 'Internal server error' },
+              id: null,
+            });
+          }
+        } finally {
+          if (transport) transport.onclose = undefined;
+          if (mcpServer) {
+            mcpServer.close().catch((err) => {
+              logger.debug('Error closing stateless MCP server instance', { error: err });
+            });
+          }
         }
-      }
+      });
     });
 
     // DELETE /mcp - No-op in stateless mode (no sessions to terminate)
