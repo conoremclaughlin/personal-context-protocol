@@ -371,15 +371,44 @@ export async function handleUpdateArtifact(
   if (collaborators !== undefined) updates.collaborators = collaborators;
   if (tags !== undefined) updates.tags = tags;
 
+  // CAS (compare-and-swap) guard: only write if version hasn't changed since we read it.
+  // This prevents true race conditions where two concurrent writers both pass the
+  // merge check but then one silently overwrites the other.
+  const expectedVersion = current.version ?? 0;
+
   const { data: updated, error: updateError } = await supabase
     .from('artifacts')
     .update(updates)
     .eq('id', current.id)
+    .eq('version', expectedVersion)
     .select()
-    .single();
+    .maybeSingle();
 
   if (updateError) {
     throw new Error(`Failed to update artifact: ${updateError.message}`);
+  }
+
+  // No row updated — another writer won the race
+  if (!updated) {
+    logger.warn('CAS conflict: artifact version changed during update', {
+      uri: current.uri,
+      expectedVersion,
+      agentId,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({
+            success: false,
+            conflict: true,
+            staleWrite: true,
+            message: 'Artifact was modified by another writer during your update. Re-read the artifact and retry your edit with the new baseVersion.',
+          }),
+        },
+      ],
+    };
   }
 
   // Create history entry for this update

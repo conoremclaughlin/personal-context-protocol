@@ -39,6 +39,7 @@ function createMockSupabase(overrides: {
   artifact?: Record<string, unknown> | null;
   historyContent?: string | null;
   historyError?: boolean;
+  casFailure?: boolean;
 } = {}) {
   const artifact = overrides.artifact ?? {
     id: 'artifact-1',
@@ -71,12 +72,15 @@ function createMockSupabase(overrides: {
         }),
         update: vi.fn().mockImplementation((updates: Record<string, unknown>) => {
           Object.assign(updatedArtifact, updates);
+          // CAS guard: .eq('id', ...).eq('version', ...).select().maybeSingle()
           return {
             eq: vi.fn().mockReturnValue({
-              select: vi.fn().mockReturnValue({
-                single: vi.fn().mockResolvedValue({
-                  data: updatedArtifact,
-                  error: null,
+              eq: vi.fn().mockReturnValue({
+                select: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: overrides.casFailure ? null : updatedArtifact,
+                    error: null,
+                  }),
                 }),
               }),
             }),
@@ -338,6 +342,30 @@ describe('handleUpdateArtifact', () => {
           dataComposer,
         ),
       ).rejects.toThrow('Cannot merge: base version 1 not found in history');
+    });
+  });
+
+  describe('CAS (compare-and-swap) guard', () => {
+    it('should return staleWrite conflict when another writer wins the race', async () => {
+      const { supabase } = createMockSupabase({
+        casFailure: true, // simulate another writer incrementing version between read and write
+      });
+      const dataComposer = createMockDataComposer(supabase);
+
+      const result = await handleUpdateArtifact(
+        {
+          userId: '00000000-0000-0000-0000-000000000001',
+          uri: 'pcp://test/doc',
+          content: 'My update',
+          agentId: 'wren',
+        },
+        dataComposer,
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(false);
+      expect(parsed.conflict).toBe(true);
+      expect(parsed.staleWrite).toBe(true);
     });
   });
 
