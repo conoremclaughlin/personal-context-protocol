@@ -186,11 +186,14 @@ Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.
 
 ## Security
 
-- **Row Level Security (RLS)** on all tables — users can only access their own data
-- **OAuth2 token auth** for MCP connections (with refresh token support)
-- **Service key** used server-side only
+- **Application-level auth** is the primary security boundary — the API server validates JWTs, resolves PCP users, and scopes all queries. See [AGENTS.md Security section](./AGENTS.md#security-critical) for the full model.
+- **Service role key** (`SUPABASE_SECRET_KEY`) used server-side only — bypasses RLS entirely. Must never be exposed to the client.
+- **Frontend uses Supabase for auth only** — no direct database queries. All data access goes through API routes.
+- **Row Level Security (RLS)** is enabled on most tables but is not our primary defense. The `auth.uid()` policies are non-functional (PCP user IDs differ from Supabase Auth UIDs). Some tables have permissive service policies as a safety net.
+- **OAuth2 token auth** for MCP connections (with refresh token support via `mcp_tokens` table)
 - **Permissions system** — per-user toggles for sensitive operations (web search, bash, etc.)
 - **Audit logging** — tracks sensitive operations with full context
+- **Server-side Supabase clients must use `persistSession: false`** to prevent auth state leakage between requests
 
 ## Process Management
 
