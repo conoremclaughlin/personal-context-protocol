@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type AxiosResponse } from 'axios';
 import { createClient } from '@/lib/supabase/client';
+import { getSelectedWorkspaceId } from '@/lib/workspace-selection';
 
 export interface ApiError extends Error {
   status: number;
@@ -23,6 +24,11 @@ apiClient.interceptors.request.use(async (config) => {
 
   if (session?.access_token) {
     config.headers.Authorization = `Bearer ${session.access_token}`;
+  }
+
+  const workspaceId = getSelectedWorkspaceId();
+  if (workspaceId) {
+    config.headers['X-PCP-Workspace-Id'] = workspaceId;
   }
 
   return config;
