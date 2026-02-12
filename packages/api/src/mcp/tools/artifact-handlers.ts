@@ -97,11 +97,19 @@ async function resolveIdentityForAgent(
     .eq('agent_id', agentId)
     .maybeSingle();
 
-  if (error || !data) {
-    logger.warn(`No agent identity record found for agentId "${agentId}", continuing without UUID reference`, {
+  if (error) {
+    logger.warn('Failed to resolve identity UUID for agent slug; continuing with slug-only reference', {
       userId,
       agentId,
-      error: error?.message,
+      error: error.message,
+    });
+    return null;
+  }
+
+  if (!data) {
+    logger.warn('No identity row found for agent slug; continuing with slug-only reference', {
+      userId,
+      agentId,
     });
     return null;
   }

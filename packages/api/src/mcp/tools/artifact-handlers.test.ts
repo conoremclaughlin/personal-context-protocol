@@ -457,7 +457,7 @@ describe('artifact comment + identity UUID flows', () => {
     });
   });
 
-  it('handleCreateArtifact gracefully degrades when agent identity is missing', async () => {
+  it('handleCreateArtifact keeps slug behavior when identity row is missing', async () => {
     const supabase = createTableAwareSupabaseMock({
       agent_identities: [
         { maybeSingle: [{ data: null, error: null }] },
@@ -468,8 +468,8 @@ describe('artifact comment + identity UUID flows', () => {
           single: [{
             data: {
               id: 'artifact-2',
-              uri: 'pcp://specs/no-identity',
-              title: 'No Identity',
+              uri: 'pcp://specs/slug-only',
+              title: 'Slug only',
               artifact_type: 'spec',
               version: 1,
               created_at: '2026-02-11T00:00:00Z',
@@ -483,12 +483,12 @@ describe('artifact comment + identity UUID flows', () => {
 
     const result = await handleCreateArtifact(
       {
-        userId: '00000000-0000-0000-0000-000000000001',
-        uri: 'pcp://specs/no-identity',
-        title: 'No Identity',
-        content: '# Hello',
+        userId: '550e8400-e29b-41d4-a716-446655440000',
+        uri: 'pcp://specs/slug-only',
+        title: 'Slug only',
+        content: '# Hi',
         artifactType: 'spec',
-        agentId: 'unknown-agent',
+        agentId: 'unknown-agent-slug',
       },
       createMockDataComposer(supabase)
     );
@@ -497,9 +497,15 @@ describe('artifact comment + identity UUID flows', () => {
     expect(parsed.success).toBe(true);
 
     const artifactInsertBuilder = supabase.calls.find((c) => c.table === 'artifacts' && (c.builder.insert as ReturnType<typeof vi.fn>).mock.calls.length > 0)?.builder;
+    const historyInsertBuilder = supabase.calls.find((c) => c.table === 'artifact_history')?.builder;
+
     expect((artifactInsertBuilder?.insert as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
-      created_by_agent_id: 'unknown-agent',
+      created_by_agent_id: 'unknown-agent-slug',
       created_by_identity_id: null,
+    });
+    expect((historyInsertBuilder?.insert as ReturnType<typeof vi.fn>).mock.calls[0][0]).toMatchObject({
+      changed_by_agent_id: 'unknown-agent-slug',
+      changed_by_identity_id: null,
     });
   });
 
@@ -509,7 +515,9 @@ describe('artifact comment + identity UUID flows', () => {
         { single: [{ data: { id: '11111111-1111-1111-1111-111111111111', uri: 'pcp://specs/test' }, error: null }] },
       ],
       agent_identities: [
-        { maybeSingle: [{ data: { id: 'identity-1', agent_id: 'lumen', name: 'Lumen', backend: 'codex' }, error: null }] },
+        {
+          maybeSingle: [{ data: { id: 'identity-1', agent_id: 'lumen', name: 'Lumen', backend: 'codex' }, error: null }],
+        },
       ],
       artifact_comments: [
         {
