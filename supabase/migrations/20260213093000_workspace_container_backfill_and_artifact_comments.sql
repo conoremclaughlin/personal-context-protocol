@@ -211,14 +211,13 @@ WHERE a.created_by_identity_id IS NULL
 
 UPDATE public.artifact_history ah
 SET changed_by_identity_id = ai.id
-FROM public.artifacts a
-JOIN public.agent_identities ai
-  ON ai.user_id = COALESCE(ah.changed_by_user_id, a.user_id)
- AND ai.agent_id = ah.changed_by_agent_id
- AND ai.workspace_id IS NOT DISTINCT FROM ah.workspace_id
+FROM public.artifacts a, public.agent_identities ai
 WHERE ah.changed_by_identity_id IS NULL
   AND ah.artifact_id = a.id
-  AND ah.changed_by_agent_id IS NOT NULL;
+  AND ah.changed_by_agent_id IS NOT NULL
+  AND ai.user_id = COALESCE(ah.changed_by_user_id, a.user_id)
+  AND ai.agent_id = ah.changed_by_agent_id
+  AND ai.workspace_id IS NOT DISTINCT FROM ah.workspace_id;
 
 -- ----------------------------------------------------------------------------
 -- 5) Constraints + indexes
