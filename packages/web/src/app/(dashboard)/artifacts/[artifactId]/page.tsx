@@ -310,7 +310,7 @@ export default function ArtifactDetailPage() {
                   comment.createdByIdentity?.name ||
                   comment.createdByIdentity?.agentId ||
                   comment.createdByAgentId ||
-                  'Unknown';
+                  'You';
                 return (
                   <div key={comment.id} className="rounded-md border border-gray-200 p-4">
                     <div className="mb-2 flex items-center justify-between text-xs text-gray-500">
