@@ -59,16 +59,6 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 1000,
     },
-    // DEPRECATED: Myra standalone process has been migrated to PCP server.
-    // This entry is kept only for cleanup purposes. Use `pm2 delete myra` to remove.
-    // All Myra functionality is now in the 'pcp' process (src/server.ts).
-    // {
-    //   name: 'myra',
-    //   cwd: apiDir,
-    //   script: tsxBin,
-    //   args: 'src/myra/index.ts',
-    //   ...
-    // },
     {
       name: 'web',
       cwd: webDir,
