@@ -134,6 +134,10 @@ export default function LoginForm() {
         mode="login"
         isLoading={isLoading}
         onOAuthStart={() => setIsLoading(true)}
+        onOAuthError={(error) => {
+          setIsLoading(false);
+          setMessage({ type: 'error', text: error });
+        }}
         mcpPendingId={mcpPendingId}
       />
 

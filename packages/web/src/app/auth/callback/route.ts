@@ -50,8 +50,10 @@ export async function GET(request: Request) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // No code provided
-  return NextResponse.redirect(
-    `${origin}/login?error=${encodeURIComponent('No authentication code provided')}`
-  );
+  // No code provided — preserve pending_id for MCP retry
+  const noCodeError = encodeURIComponent('No authentication code provided');
+  const noCodeUrl = isMcpAuth
+    ? `${origin}/login?error=${noCodeError}&pending_id=${mcpPendingId}`
+    : `${origin}/login?error=${noCodeError}`;
+  return NextResponse.redirect(noCodeUrl);
 }

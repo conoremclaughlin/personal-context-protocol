@@ -84,6 +84,10 @@ export default function SignupForm() {
         mode="signup"
         isLoading={isLoading}
         onOAuthStart={() => setIsLoading(true)}
+        onOAuthError={(error) => {
+          setIsLoading(false);
+          setMessage({ type: 'error', text: error });
+        }}
         mcpPendingId={mcpPendingId}
       />
 

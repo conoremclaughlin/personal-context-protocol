@@ -6,6 +6,7 @@ interface SocialButtonsProps {
   mode: 'login' | 'signup';
   isLoading: boolean;
   onOAuthStart: () => void;
+  onOAuthError?: (error: string) => void;
   mcpPendingId?: string | null;
 }
 
@@ -13,6 +14,7 @@ export function SocialButtons({
   mode,
   isLoading,
   onOAuthStart,
+  onOAuthError,
   mcpPendingId,
 }: SocialButtonsProps) {
   const handleOAuth = async (provider: 'google' | 'github') => {
@@ -27,8 +29,9 @@ export function SocialButtons({
 
     if ('url' in result) {
       window.location.href = result.url;
+    } else {
+      onOAuthError?.(result.error);
     }
-    // If error, the parent form's loading state will reset on unmount/re-render
   };
 
   const label = mode === 'login' ? 'Sign in' : 'Sign up';
