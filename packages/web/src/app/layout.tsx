@@ -6,8 +6,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'PCP Admin Dashboard',
-  description: 'Manage WhatsApp, trusted users, and groups',
+  title: 'Personal Context',
+  description: 'Your AI beings remember what matters to you',
 };
 
 export default function RootLayout({
