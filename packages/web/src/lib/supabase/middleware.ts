@@ -39,6 +39,7 @@ export async function updateSession(request: NextRequest) {
   // Exclude: /login, /auth, /api (proxied to backend), /kindle/[token] (public landing)
   const isProtectedRoute =
     !request.nextUrl.pathname.startsWith('/login') &&
+    !request.nextUrl.pathname.startsWith('/signup') &&
     !request.nextUrl.pathname.startsWith('/auth') &&
     !request.nextUrl.pathname.startsWith('/api') &&
     !request.nextUrl.pathname.match(/^\/kindle\/[^/]+$/);
@@ -50,11 +51,13 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Already logged in and trying to access login
-  if (user && request.nextUrl.pathname.startsWith('/login')) {
+  // Already logged in and trying to access login or signup
+  const isAuthPage =
+    request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/signup');
+  if (user && isAuthPage) {
     const mcpPendingId = request.nextUrl.searchParams.get('pending_id');
 
-    console.log('[middleware] User logged in, accessing /login', {
+    console.log('[middleware] User logged in, accessing auth page', {
       hasMcpPendingId: !!mcpPendingId,
       path: request.nextUrl.pathname,
     });

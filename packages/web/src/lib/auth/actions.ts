@@ -53,6 +53,52 @@ export async function signInWithOtp(
   return { success: true };
 }
 
+export async function signInWithOAuth(
+  provider: 'google' | 'github',
+  redirectTo: string
+): Promise<{ url: string } | { error: string }> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: {
+      redirectTo,
+    },
+  });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  if (!data.url) {
+    return { error: 'OAuth provider returned no redirect URL' };
+  }
+
+  return { url: data.url };
+}
+
+export async function signUpWithPassword(
+  email: string,
+  password: string,
+  redirectTo: string
+): Promise<{ success: true } | { error: string }> {
+  const supabase = await createClient();
+
+  const { error } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      emailRedirectTo: redirectTo,
+    },
+  });
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  return { success: true };
+}
+
 export async function signOut(): Promise<never> {
   const supabase = await createClient();
   await supabase.auth.signOut();
