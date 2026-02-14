@@ -13,6 +13,16 @@ vi.mock('next/navigation', () => ({
   },
 }));
 
+// Mock next/headers cookies
+const mockCookieGet = vi.fn();
+const mockCookieDelete = vi.fn();
+vi.mock('next/headers', () => ({
+  cookies: vi.fn().mockResolvedValue({
+    get: (...args: unknown[]) => mockCookieGet(...args),
+    delete: (...args: unknown[]) => mockCookieDelete(...args),
+  }),
+}));
+
 // Mock Supabase server client
 const mockSignInWithPassword = vi.fn();
 const mockSignInWithOtp = vi.fn();
@@ -121,10 +131,77 @@ describe('auth server actions', () => {
   });
 
   describe('signOut', () => {
+    beforeEach(() => {
+      mockCookieGet.mockReturnValue(undefined);
+      mockCookieDelete.mockReturnValue(undefined);
+      vi.spyOn(global, 'fetch').mockResolvedValue(new Response('{}'));
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
     it('calls supabase signOut and redirects to /login', async () => {
       mockSignOut.mockResolvedValue({ error: null });
 
       await expect(signOut()).rejects.toThrow('NEXT_REDIRECT');
+      expect(mockSignOut).toHaveBeenCalled();
+      expect(mockRedirect).toHaveBeenCalledWith('/login');
+    });
+
+    it('clears PCP admin cookies on signOut', async () => {
+      mockSignOut.mockResolvedValue({ error: null });
+
+      await expect(signOut()).rejects.toThrow('NEXT_REDIRECT');
+
+      expect(mockCookieDelete).toHaveBeenCalledWith({
+        name: 'pcp-admin-token',
+        path: '/api/admin',
+      });
+      expect(mockCookieDelete).toHaveBeenCalledWith({
+        name: 'pcp-admin-refresh',
+        path: '/api/admin',
+      });
+    });
+
+    it('calls logout API to revoke refresh token when cookie exists', async () => {
+      mockSignOut.mockResolvedValue({ error: null });
+      mockCookieGet.mockImplementation((name: string) => {
+        if (name === 'pcp-admin-refresh') return { value: 'pcp-rt-test-token' };
+        return undefined;
+      });
+
+      await expect(signOut()).rejects.toThrow('NEXT_REDIRECT');
+
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining('/api/admin/auth/logout'),
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ refreshToken: 'pcp-rt-test-token' }),
+        })
+      );
+    });
+
+    it('does not call logout API when no refresh cookie exists', async () => {
+      mockSignOut.mockResolvedValue({ error: null });
+      mockCookieGet.mockReturnValue(undefined);
+
+      await expect(signOut()).rejects.toThrow('NEXT_REDIRECT');
+
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+
+    it('still signs out even if logout API call fails', async () => {
+      mockSignOut.mockResolvedValue({ error: null });
+      mockCookieGet.mockImplementation((name: string) => {
+        if (name === 'pcp-admin-refresh') return { value: 'pcp-rt-fail' };
+        return undefined;
+      });
+      vi.spyOn(global, 'fetch').mockRejectedValue(new Error('Network error'));
+
+      await expect(signOut()).rejects.toThrow('NEXT_REDIRECT');
+
+      // Supabase signOut should still be called
       expect(mockSignOut).toHaveBeenCalled();
       expect(mockRedirect).toHaveBeenCalledWith('/login');
     });

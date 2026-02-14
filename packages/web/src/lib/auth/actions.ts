@@ -105,6 +105,29 @@ export async function signUpWithPassword(
 }
 
 export async function signOut(): Promise<never> {
+  // Revoke PCP admin tokens (self-issued JWTs independent of Supabase session)
+  const { cookies } = await import('next/headers');
+  const cookieStore = await cookies();
+  const refreshToken = cookieStore.get('pcp-admin-refresh')?.value;
+
+  if (refreshToken) {
+    const apiUrl = process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
+    try {
+      await fetch(`${apiUrl}/api/admin/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+    } catch {
+      // Best-effort revocation — cookies are cleared below regardless
+    }
+  }
+
+  // Clear PCP admin cookies from browser
+  cookieStore.delete({ name: 'pcp-admin-token', path: '/api/admin' });
+  cookieStore.delete({ name: 'pcp-admin-refresh', path: '/api/admin' });
+
+  // Clear Supabase session
   const supabase = await createClient();
   await supabase.auth.signOut();
   redirect('/login');

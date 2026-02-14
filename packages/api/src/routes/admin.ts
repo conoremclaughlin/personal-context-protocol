@@ -357,7 +357,45 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
 
 const router = Router();
 
-// Apply auth middleware to all routes
+// =============================================================================
+// Auth Logout (before auth middleware — doesn't require active session)
+// =============================================================================
+
+/**
+ * POST /api/admin/auth/logout
+ * Revoke PCP admin refresh token and clear auth cookies.
+ * Accepts refresh token via request body (server action) or cookie (direct browser call).
+ */
+router.post('/auth/logout', async (req: Request, res: Response) => {
+  try {
+    const refreshToken = req.body?.refreshToken || req.cookies?.['pcp-admin-refresh'];
+
+    if (refreshToken) {
+      const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      await supabase
+        .from('mcp_tokens')
+        .delete()
+        .eq('refresh_token', refreshToken)
+        .eq('client_id', ADMIN_CLIENT_ID);
+    }
+
+    // Clear cookies regardless (same options used when setting them)
+    res.clearCookie('pcp-admin-token', { path: '/api/admin' });
+    res.clearCookie('pcp-admin-refresh', { path: '/api/admin' });
+
+    res.json({ success: true });
+  } catch (error) {
+    logger.error('Admin logout error:', error);
+    // Still clear cookies even if DB revocation fails
+    res.clearCookie('pcp-admin-token', { path: '/api/admin' });
+    res.clearCookie('pcp-admin-refresh', { path: '/api/admin' });
+    res.json({ success: true });
+  }
+});
+
+// Apply auth middleware to all subsequent routes
 router.use(adminAuthMiddleware);
 
 // =============================================================================

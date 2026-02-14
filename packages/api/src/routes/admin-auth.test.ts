@@ -146,6 +146,7 @@ interface MockResponse extends Response {
   _status: number;
   _json: unknown;
   _cookies: Record<string, { value: string; options: Record<string, unknown> }>;
+  _clearedCookies: Record<string, { options: Record<string, unknown> }>;
 }
 
 function createMockRes(): MockResponse {
@@ -153,6 +154,7 @@ function createMockRes(): MockResponse {
     _status: 200,
     _json: null,
     _cookies: {} as Record<string, { value: string; options: Record<string, unknown> }>,
+    _clearedCookies: {} as Record<string, { options: Record<string, unknown> }>,
     status(code: number) {
       res._status = code;
       return res;
@@ -163,6 +165,10 @@ function createMockRes(): MockResponse {
     },
     cookie(name: string, value: string, options: Record<string, unknown>) {
       (res._cookies as Record<string, unknown>)[name] = { value, options };
+      return res;
+    },
+    clearCookie(name: string, options: Record<string, unknown>) {
+      (res._clearedCookies as Record<string, unknown>)[name] = { options };
       return res;
     },
   };
@@ -877,5 +883,123 @@ describe('adminAuthMiddleware', () => {
       expect(res._cookies['pcp-admin-token']).toBeDefined();
       expect(res._cookies['pcp-admin-refresh']).toBeUndefined();
     });
+  });
+});
+
+// =============================================================================
+// Logout endpoint
+// =============================================================================
+
+describe('POST /auth/logout', () => {
+  /** Extract the logout route handler from the router stack */
+  function getLogoutHandler(): (req: Request, res: Response) => Promise<void> {
+    const layer = (router as any).stack.find(
+      (entry: any) => entry.route?.path === '/auth/logout' && entry.route?.methods?.post
+    );
+    if (!layer) {
+      throw new Error('POST /auth/logout route not found in router stack');
+    }
+    // Express stores route handlers in route.stack[0].handle
+    return layer.route.stack[0].handle;
+  }
+
+  let logoutHandler: ReturnType<typeof getLogoutHandler>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    logoutHandler = getLogoutHandler();
+  });
+
+  it('should clear both admin cookies', async () => {
+    const req = createMockReq({ body: {}, cookies: {} });
+    const res = createMockRes();
+
+    await logoutHandler(req, res);
+
+    expect(res._json).toEqual({ success: true });
+    expect(res._clearedCookies['pcp-admin-token']).toBeDefined();
+    expect(res._clearedCookies['pcp-admin-token'].options.path).toBe('/api/admin');
+    expect(res._clearedCookies['pcp-admin-refresh']).toBeDefined();
+    expect(res._clearedCookies['pcp-admin-refresh'].options.path).toBe('/api/admin');
+  });
+
+  it('should revoke refresh token from DB when provided in body', async () => {
+    const deleteChain: Record<string, any> = {};
+    deleteChain.delete = vi.fn(() => deleteChain);
+    deleteChain.eq = vi.fn(() => deleteChain);
+    mockSupabaseFrom.mockReturnValue(deleteChain);
+
+    const req = createMockReq({
+      body: { refreshToken: 'pcp-rt-to-revoke' },
+      cookies: {},
+    });
+    const res = createMockRes();
+
+    await logoutHandler(req, res);
+
+    expect(mockSupabaseFrom).toHaveBeenCalledWith('mcp_tokens');
+    expect(deleteChain.delete).toHaveBeenCalled();
+    expect(deleteChain.eq).toHaveBeenCalledWith('refresh_token', 'pcp-rt-to-revoke');
+    expect(deleteChain.eq).toHaveBeenCalledWith('client_id', 'dashboard');
+    expect(res._json).toEqual({ success: true });
+  });
+
+  it('should revoke refresh token from cookie when not in body', async () => {
+    const deleteChain: Record<string, any> = {};
+    deleteChain.delete = vi.fn(() => deleteChain);
+    deleteChain.eq = vi.fn(() => deleteChain);
+    mockSupabaseFrom.mockReturnValue(deleteChain);
+
+    const req = createMockReq({
+      body: {},
+      cookies: { 'pcp-admin-refresh': 'pcp-rt-from-cookie' },
+    });
+    const res = createMockRes();
+
+    await logoutHandler(req, res);
+
+    expect(deleteChain.eq).toHaveBeenCalledWith('refresh_token', 'pcp-rt-from-cookie');
+    expect(res._json).toEqual({ success: true });
+  });
+
+  it('should succeed even with no refresh token (just clears cookies)', async () => {
+    const req = createMockReq({ body: {}, cookies: {} });
+    const res = createMockRes();
+
+    await logoutHandler(req, res);
+
+    expect(res._json).toEqual({ success: true });
+    expect(mockSupabaseFrom).not.toHaveBeenCalled();
+  });
+
+  it('should still clear cookies and return success when DB revocation fails', async () => {
+    mockSupabaseFrom.mockImplementation(() => {
+      throw new Error('DB connection error');
+    });
+
+    const req = createMockReq({
+      body: { refreshToken: 'pcp-rt-fail' },
+      cookies: {},
+    });
+    const res = createMockRes();
+
+    await logoutHandler(req, res);
+
+    expect(res._json).toEqual({ success: true });
+    expect(res._clearedCookies['pcp-admin-token']).toBeDefined();
+    expect(res._clearedCookies['pcp-admin-refresh']).toBeDefined();
+  });
+
+  it('should not require authentication', async () => {
+    // Verify the logout route is registered BEFORE the auth middleware
+    const stack = (router as any).stack;
+    const logoutIndex = stack.findIndex((entry: any) => entry.route?.path === '/auth/logout');
+    const middlewareIndex = stack.findIndex(
+      (entry: any) =>
+        entry.name === 'adminAuthMiddleware' || entry.handle?.name === 'adminAuthMiddleware'
+    );
+
+    expect(logoutIndex).toBeGreaterThanOrEqual(0);
+    expect(middlewareIndex).toBeGreaterThan(logoutIndex);
   });
 });
