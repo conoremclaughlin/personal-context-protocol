@@ -17,12 +17,15 @@ import {
   Plus,
   UserPlus,
   Building2,
+  ChevronDown,
+  Check,
+  Settings,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
 import { useApiPost, useApiPostDynamic, useApiQuery, useQueryClient } from '@/lib/api/hooks';
 import { getSelectedWorkspaceId, setSelectedWorkspaceId } from '@/lib/workspace-selection';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { signOut } from '@/lib/auth/actions';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -78,6 +81,14 @@ interface WorkspaceMembersResponse {
   }>;
 }
 
+interface AuthMeResponse {
+  authenticated: boolean;
+  user?: {
+    id: string;
+    email: string | null;
+  };
+}
+
 export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
@@ -91,6 +102,9 @@ export function Sidebar() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'owner' | 'admin' | 'member' | 'viewer'>('member');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [isMounted, setIsMounted] = useState(false);
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   const { data: workspaceData, isLoading: workspacesLoading } = useApiQuery<WorkspaceListResponse>(
     ['workspace-containers'],
@@ -100,12 +114,19 @@ export function Sidebar() {
     }
   );
 
+  const { data: authMeData } = useApiQuery<AuthMeResponse>(['auth-me'], '/api/auth/me', {
+    retry: false,
+  });
+
   const resolvedWorkspaceId = useMemo(() => {
     if (selectedWorkspaceId) return selectedWorkspaceId;
     return workspaceData?.currentWorkspaceId ?? '';
   }, [selectedWorkspaceId, workspaceData?.currentWorkspaceId]);
 
   const workspaces = workspaceData?.workspaces || [];
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === resolvedWorkspaceId) || null;
+  const userEmail = authMeData?.user?.email || 'Account';
+  const userInitial = userEmail.charAt(0).toUpperCase();
   const inviteTargetWorkspaceId = inviteWorkspaceId || resolvedWorkspaceId;
   const workspaceMembersPath = inviteTargetWorkspaceId
     ? `/api/admin/workspaces/${inviteTargetWorkspaceId}/members`
@@ -164,6 +185,10 @@ export function Sidebar() {
   );
 
   useEffect(() => {
+    setIsMounted(true);
+  }, []);
+
+  useEffect(() => {
     const locallySelected = getSelectedWorkspaceId();
     if (locallySelected) {
       setSelectedWorkspaceState(locallySelected);
@@ -184,6 +209,23 @@ export function Sidebar() {
       }
     }
   }, [inviteWorkspaceId, selectedWorkspaceId, workspaceData?.currentWorkspaceId]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+
+    const handleGlobalMouseDown = (event: MouseEvent) => {
+      if (!accountMenuRef.current) return;
+      const targetNode = event.target as Node | null;
+      if (targetNode && !accountMenuRef.current.contains(targetNode)) {
+        setAccountMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleGlobalMouseDown);
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalMouseDown);
+    };
+  }, [accountMenuOpen]);
 
   const handleWorkspaceChange = (workspaceId: string) => {
     setSelectedWorkspaceId(workspaceId);
@@ -230,8 +272,80 @@ export function Sidebar() {
 
   return (
     <div className="flex h-full w-64 flex-col bg-gray-900">
-      <div className="flex h-16 shrink-0 items-center px-6">
-        <span className="text-xl font-bold text-white">PCP Admin</span>
+      <div className="relative border-b border-gray-800 px-4 py-3" ref={accountMenuRef}>
+        <div className="flex items-center justify-between">
+          <span className="text-lg font-bold text-white">PCP Admin</span>
+          <button
+            onClick={() => setAccountMenuOpen((open) => !open)}
+            className="flex items-center gap-2 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-gray-100 hover:bg-gray-700"
+          >
+            <span className="flex h-6 w-6 items-center justify-center rounded bg-gray-600 text-xs font-semibold">
+              {userInitial || 'U'}
+            </span>
+            <ChevronDown className="h-4 w-4" />
+          </button>
+        </div>
+
+        {accountMenuOpen && (
+          <div className="absolute right-4 top-14 z-30 w-72 rounded-md border border-gray-200 bg-white p-3 shadow-xl">
+            <p className="truncate text-sm font-semibold text-gray-900">{userEmail}</p>
+            <p className="mt-1 text-xs text-gray-500">
+              {selectedWorkspace
+                ? `Workspace: ${selectedWorkspace.name} (${selectedWorkspace.role})`
+                : 'No workspace selected'}
+            </p>
+
+            <div className="mt-3 space-y-1 rounded-md border border-gray-200 bg-gray-50 p-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">Workspaces</p>
+              {workspaces.length === 0 && <p className="text-xs text-gray-500">No workspaces yet</p>}
+              {workspaces.map((workspace) => {
+                const isSelected = workspace.id === resolvedWorkspaceId;
+                return (
+                  <button
+                    key={workspace.id}
+                    onClick={() => {
+                      handleWorkspaceChange(workspace.id);
+                      setAccountMenuOpen(false);
+                    }}
+                    className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm text-gray-700 hover:bg-gray-100"
+                  >
+                    <span className="truncate">
+                      {workspace.name} <span className="text-xs text-gray-500">({workspace.role})</span>
+                    </span>
+                    {isSelected && <Check className="h-4 w-4 text-gray-700" />}
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button
+                onClick={() => {
+                  setWorkspaceManagerOpen(true);
+                  setAccountMenuOpen(false);
+                }}
+                className="rounded border border-gray-300 px-2 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Workspaces
+              </button>
+              <button
+                disabled
+                className="flex items-center justify-center gap-1 rounded border border-gray-200 px-2 py-2 text-sm font-medium text-gray-400"
+              >
+                <Settings className="h-4 w-4" />
+                Settings
+              </button>
+            </div>
+
+            <button
+              onClick={() => signOut()}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded bg-gray-900 px-3 py-2 text-sm font-medium text-white hover:bg-gray-800"
+            >
+              <LogOut className="h-4 w-4" />
+              Log out
+            </button>
+          </div>
+        )}
       </div>
       <div className="px-4 pb-3">
         <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-400">
@@ -251,7 +365,19 @@ export function Sidebar() {
           ))}
         </select>
         <div className="mt-2">
-          <Dialog open={workspaceManagerOpen} onOpenChange={setWorkspaceManagerOpen}>
+          {!isMounted && (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled
+              className="w-full border-gray-700 bg-gray-800 text-gray-400"
+            >
+              <Building2 className="h-4 w-4" />
+              Manage Workspaces
+            </Button>
+          )}
+          {isMounted && (
+            <Dialog open={workspaceManagerOpen} onOpenChange={setWorkspaceManagerOpen}>
             <DialogTrigger asChild>
               <Button
                 variant="outline"
@@ -413,7 +539,8 @@ export function Sidebar() {
                 </p>
               )}
             </DialogContent>
-          </Dialog>
+            </Dialog>
+          )}
         </div>
       </div>
       <nav className="flex flex-1 flex-col">
