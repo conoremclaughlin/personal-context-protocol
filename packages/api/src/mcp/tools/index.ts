@@ -231,6 +231,13 @@ import {
 
 import { handleCreateKindleToken, createKindleTokenSchema } from './kindle-handlers';
 
+import {
+  handleUpdateIntegrationHealth,
+  handleGetIntegrationHealth,
+  updateIntegrationHealthSchema,
+  getIntegrationHealthSchema,
+} from './integration-health-handlers';
+
 // Re-export for external use
 export { setResponseCallback, addPendingMessage } from './response-handlers';
 export { setTelegramListener, registerChannelListener } from './chat-context-handlers';
@@ -4514,6 +4521,81 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleCreateKindleToken(args, dataComposer);
       } catch (error) {
         logger.error('Error in create_kindle_token:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // Integration Health Tools
+  // =====================================================
+
+  server.registerTool(
+    'update_integration_health',
+    {
+      title: 'Update Integration Health',
+      description:
+        'Report the health status of an external service integration (e.g., Google Calendar, Gmail). ' +
+        'Use this when an integration fails, recovers, or is first configured. ' +
+        'Upserts one row per user per service.\n\n' +
+        'User can be identified by ONE of:\n' +
+        '- userId: Direct UUID\n' +
+        '- email: Email address\n' +
+        '- phone: Phone number (E.164 format like +14155551234)\n' +
+        '- platform + platformId: Platform name (telegram/whatsapp/discord) and user ID',
+      inputSchema: updateIntegrationHealthSchema,
+    },
+    async (args) => {
+      try {
+        return await handleUpdateIntegrationHealth(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in update_integration_health:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_integration_health',
+    {
+      title: 'Get Integration Health',
+      description:
+        'Check the health status of external service integrations. ' +
+        'Returns all integrations for the user, or filter to a specific service.\n\n' +
+        'User can be identified by ONE of:\n' +
+        '- userId: Direct UUID\n' +
+        '- email: Email address\n' +
+        '- phone: Phone number (E.164 format like +14155551234)\n' +
+        '- platform + platformId: Platform name (telegram/whatsapp/discord) and user ID',
+      inputSchema: getIntegrationHealthSchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetIntegrationHealth(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_integration_health:', error);
         return {
           content: [
             {

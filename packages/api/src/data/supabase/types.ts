@@ -415,77 +415,6 @@ export type Database = {
           },
         ];
       };
-      artifact_history: {
-        Row: {
-          artifact_id: string;
-          change_summary: string | null;
-          change_type: string | null;
-          changed_by_agent_id: string | null;
-          changed_by_user_id: string | null;
-          content: string;
-          created_at: string | null;
-          id: string;
-          title: string;
-          version: number;
-          workspace_id: string | null;
-        };
-        Insert: {
-          artifact_id: string;
-          change_summary?: string | null;
-          change_type?: string | null;
-          changed_by_agent_id?: string | null;
-          changed_by_user_id?: string | null;
-          content: string;
-          created_at?: string | null;
-          id?: string;
-          title: string;
-          version: number;
-          workspace_id?: string | null;
-        };
-        Update: {
-          artifact_id?: string;
-          change_summary?: string | null;
-          change_type?: string | null;
-          changed_by_agent_id?: string | null;
-          changed_by_user_id?: string | null;
-          content?: string;
-          created_at?: string | null;
-          id?: string;
-          title?: string;
-          version?: number;
-          workspace_id?: string | null;
-        };
-        Relationships: [
-          {
-            foreignKeyName: 'artifact_history_artifact_id_fkey';
-            columns: ['artifact_id'];
-            isOneToOne: false;
-            referencedRelation: 'artifacts';
-            referencedColumns: ['id'];
-          },
-          {
-            foreignKeyName: 'artifact_history_changed_by_user_id_fkey';
-            columns: ['changed_by_user_id'];
-            isOneToOne: false;
-            referencedRelation: 'users';
-            referencedColumns: ['id'];
-          },
-          {
-            foreignKeyName: 'artifact_history_changed_by_identity_id_fkey';
-            columns: ['changed_by_identity_id'];
-            isOneToOne: false;
-            referencedRelation: 'agent_identities';
-            referencedColumns: ['id'];
-          },
-          {
-            foreignKeyName: 'artifact_history_workspace_id_fkey';
-            columns: ['workspace_id'];
-            isOneToOne: false;
-            referencedRelation: 'workspace_containers';
-            referencedColumns: ['id'];
-          },
-        ];
-      };
       artifact_comments: {
         Row: {
           artifact_id: string;
@@ -574,6 +503,80 @@ export type Database = {
           },
         ];
       };
+      artifact_history: {
+        Row: {
+          artifact_id: string;
+          change_summary: string | null;
+          change_type: string | null;
+          changed_by_agent_id: string | null;
+          changed_by_identity_id: string | null;
+          changed_by_user_id: string | null;
+          content: string;
+          created_at: string | null;
+          id: string;
+          title: string;
+          version: number;
+          workspace_id: string | null;
+        };
+        Insert: {
+          artifact_id: string;
+          change_summary?: string | null;
+          change_type?: string | null;
+          changed_by_agent_id?: string | null;
+          changed_by_identity_id?: string | null;
+          changed_by_user_id?: string | null;
+          content: string;
+          created_at?: string | null;
+          id?: string;
+          title: string;
+          version: number;
+          workspace_id?: string | null;
+        };
+        Update: {
+          artifact_id?: string;
+          change_summary?: string | null;
+          change_type?: string | null;
+          changed_by_agent_id?: string | null;
+          changed_by_identity_id?: string | null;
+          changed_by_user_id?: string | null;
+          content?: string;
+          created_at?: string | null;
+          id?: string;
+          title?: string;
+          version?: number;
+          workspace_id?: string | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'artifact_history_artifact_id_fkey';
+            columns: ['artifact_id'];
+            isOneToOne: false;
+            referencedRelation: 'artifacts';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'artifact_history_changed_by_identity_id_fkey';
+            columns: ['changed_by_identity_id'];
+            isOneToOne: false;
+            referencedRelation: 'agent_identities';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'artifact_history_changed_by_user_id_fkey';
+            columns: ['changed_by_user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'artifact_history_workspace_id_fkey';
+            columns: ['workspace_id'];
+            isOneToOne: false;
+            referencedRelation: 'workspace_containers';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       artifacts: {
         Row: {
           artifact_type: string;
@@ -582,6 +585,7 @@ export type Database = {
           content_type: string | null;
           created_at: string | null;
           created_by_agent_id: string | null;
+          created_by_identity_id: string | null;
           id: string;
           metadata: Json | null;
           tags: string[] | null;
@@ -600,6 +604,7 @@ export type Database = {
           content_type?: string | null;
           created_at?: string | null;
           created_by_agent_id?: string | null;
+          created_by_identity_id?: string | null;
           id?: string;
           metadata?: Json | null;
           tags?: string[] | null;
@@ -618,6 +623,7 @@ export type Database = {
           content_type?: string | null;
           created_at?: string | null;
           created_by_agent_id?: string | null;
+          created_by_identity_id?: string | null;
           id?: string;
           metadata?: Json | null;
           tags?: string[] | null;
@@ -631,17 +637,17 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: 'artifacts_user_id_fkey';
-            columns: ['user_id'];
-            isOneToOne: false;
-            referencedRelation: 'users';
-            referencedColumns: ['id'];
-          },
-          {
             foreignKeyName: 'artifacts_created_by_identity_id_fkey';
             columns: ['created_by_identity_id'];
             isOneToOne: false;
             referencedRelation: 'agent_identities';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'artifacts_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
             referencedColumns: ['id'];
           },
           {
@@ -1144,6 +1150,59 @@ export type Database = {
             foreignKeyName: 'heartbeat_state_user_id_fkey';
             columns: ['user_id'];
             isOneToOne: true;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      integration_health: {
+        Row: {
+          created_at: string | null;
+          error_code: string | null;
+          error_message: string | null;
+          id: string;
+          last_check_at: string | null;
+          last_healthy_at: string | null;
+          metadata: Json | null;
+          reported_by_agent_id: string | null;
+          service: string;
+          status: string;
+          updated_at: string | null;
+          user_id: string;
+        };
+        Insert: {
+          created_at?: string | null;
+          error_code?: string | null;
+          error_message?: string | null;
+          id?: string;
+          last_check_at?: string | null;
+          last_healthy_at?: string | null;
+          metadata?: Json | null;
+          reported_by_agent_id?: string | null;
+          service: string;
+          status?: string;
+          updated_at?: string | null;
+          user_id: string;
+        };
+        Update: {
+          created_at?: string | null;
+          error_code?: string | null;
+          error_message?: string | null;
+          id?: string;
+          last_check_at?: string | null;
+          last_healthy_at?: string | null;
+          metadata?: Json | null;
+          reported_by_agent_id?: string | null;
+          service?: string;
+          status?: string;
+          updated_at?: string | null;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'integration_health_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
             referencedRelation: 'users';
             referencedColumns: ['id'];
           },
@@ -2011,17 +2070,17 @@ export type Database = {
         };
         Relationships: [
           {
-            foreignKeyName: 'sessions_user_id_fkey';
-            columns: ['user_id'];
-            isOneToOne: false;
-            referencedRelation: 'users';
-            referencedColumns: ['id'];
-          },
-          {
             foreignKeyName: 'sessions_studio_id_fkey';
             columns: ['studio_id'];
             isOneToOne: false;
             referencedRelation: 'workspaces';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'sessions_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
             referencedColumns: ['id'];
           },
           {
@@ -2421,7 +2480,7 @@ export type Database = {
           {
             foreignKeyName: 'user_identity_user_id_fkey';
             columns: ['user_id'];
-            isOneToOne: true;
+            isOneToOne: false;
             referencedRelation: 'users';
             referencedColumns: ['id'];
           },
