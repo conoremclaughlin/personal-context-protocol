@@ -278,21 +278,24 @@ export function Sidebar() {
   return (
     <div className="flex h-full w-64 flex-col bg-gray-900">
       <div className="relative border-b border-gray-800 px-4 py-3" ref={accountMenuRef}>
-        <div className="flex items-center justify-between">
-          <span className="text-lg font-bold text-white">PCP Admin</span>
-          <button
-            onClick={() => setAccountMenuOpen((open) => !open)}
-            className="flex items-center gap-2 rounded-md border border-gray-700 bg-gray-800 px-2 py-1 text-gray-100 hover:bg-gray-700"
-          >
-            <span className="flex h-6 w-6 items-center justify-center rounded bg-gray-600 text-xs font-semibold">
+        <span className="text-lg font-bold text-white">PCP Admin</span>
+        <button
+          onClick={() => setAccountMenuOpen((open) => !open)}
+          className="mt-3 flex w-full items-center justify-between rounded-md border border-gray-700 bg-gray-800 px-3 py-2 text-gray-100 hover:bg-gray-700"
+        >
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="flex h-7 w-7 items-center justify-center rounded bg-gray-600 text-xs font-semibold">
               {userInitial || 'U'}
             </span>
-            <ChevronDown className="h-4 w-4" />
-          </button>
-        </div>
+            <span className="truncate text-sm font-medium">
+              {selectedWorkspace?.name || 'Personal Workspace'}
+            </span>
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0" />
+        </button>
 
         {accountMenuOpen && (
-          <div className="absolute left-0 right-0 top-full z-30 border-b border-gray-200 bg-white px-4 py-3 shadow-xl">
+          <div className="absolute left-4 right-4 top-full z-30 mt-2 rounded-xl border border-gray-200 bg-white p-3 shadow-2xl">
             <div className="rounded-md border border-gray-200 bg-gray-50 p-2">
               <p className="truncate text-sm font-semibold text-gray-900">
                 {selectedWorkspace?.name || 'Personal'} Workspace
