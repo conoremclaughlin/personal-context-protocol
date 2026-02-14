@@ -27,7 +27,7 @@ interface SessionWorkspace {
 
 interface Session {
   id: string;
-  claudeSessionId: string | null;
+  backendSessionId: string | null;
   agentId: string;
   agentName: string;
   agentRole: string | null;
@@ -189,10 +189,10 @@ function SessionCard({ session }: { session: Session }) {
                   <span className="text-gray-400">PCP Session ID: </span>
                   <code className="font-mono select-all">{session.id}</code>
                 </div>
-                {session.claudeSessionId && (
+                {session.backendSessionId && (
                   <div>
                     <span className="text-gray-400">Backend Session ID: </span>
-                    <code className="font-mono select-all">{session.claudeSessionId}</code>
+                    <code className="font-mono select-all">{session.backendSessionId}</code>
                   </div>
                 )}
               </div>

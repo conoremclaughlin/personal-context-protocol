@@ -2136,7 +2136,9 @@ router.delete('/connected-accounts/:id', async (req: Request, res: Response) => 
  */
 router.get('/sessions', async (req: Request, res: Response) => {
   try {
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
     const authReq = req as AdminAuthRequest;
     const includeCompleted = req.query.includeCompleted === 'true';
 
@@ -2170,10 +2172,12 @@ router.get('/sessions', async (req: Request, res: Response) => {
     >();
 
     if (uniqueAgentIds.length > 0) {
+      // Look up identities by user_id (not workspace container) so names resolve
+      // for sessions across all containers. agent_id is typically unique per user.
       const { data: identities } = await supabase
         .from('agent_identities')
         .select('agent_id, name, role')
-        .eq('workspace_id', authReq.pcpWorkspaceId)
+        .eq('user_id', authReq.pcpUserId)
         .in('agent_id', uniqueAgentIds);
 
       for (const identity of identities || []) {
@@ -2232,7 +2236,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
         const identity = s.agent_id ? identitiesByAgentId.get(s.agent_id) : null;
         return {
           id: s.id,
-          claudeSessionId: s.claude_session_id || null,
+          backendSessionId: s.claude_session_id || null,
           agentId: s.agent_id,
           agentName: identity?.name || s.agent_id || 'Unknown',
           agentRole: identity?.role || null,
