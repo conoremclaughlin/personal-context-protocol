@@ -145,16 +145,15 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
       });
     };
 
-    // Ensure every user always has at least one workspace container.
-    const personalWorkspace = await workspaceRepo.ensurePersonalWorkspace(pcpUser.id);
+    let activeWorkspaceId = '';
+    let activeWorkspaceRole: WorkspaceMemberRole | 'trusted' = 'trusted';
+    let hasDirectMembership = false;
 
-    let activeWorkspaceId = personalWorkspace.id;
-    let activeWorkspaceRole = await workspaceRepo.getMemberRole(activeWorkspaceId, pcpUser.id);
     if (requestedWorkspaceId) {
       const requestedWorkspace = await workspaceRepo.findById(requestedWorkspaceId, pcpUser.id);
       if (requestedWorkspace) {
         activeWorkspaceId = requestedWorkspace.id;
-        activeWorkspaceRole = await workspaceRepo.getMemberRole(activeWorkspaceId, pcpUser.id);
+        hasDirectMembership = true;
       } else {
         const requestedWorkspaceExists = await workspaceRepo.findRawById(requestedWorkspaceId);
         if (!requestedWorkspaceExists) {
@@ -169,16 +168,25 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
         }
 
         activeWorkspaceId = requestedWorkspaceId;
-        activeWorkspaceRole = null;
+        activeWorkspaceRole = 'trusted';
       }
+    } else {
+      // Ensure every user always has at least one workspace container.
+      const personalWorkspace = await workspaceRepo.ensurePersonalWorkspace(pcpUser.id);
+      activeWorkspaceId = personalWorkspace.id;
+      hasDirectMembership = true;
     }
 
-    if (!activeWorkspaceRole) {
+    if (!hasDirectMembership) {
       const trustedForActiveWorkspace = await hasTrustedAdminAccess(activeWorkspaceId);
       if (!trustedForActiveWorkspace) {
         res.status(403).json({ error: 'Insufficient permissions' });
         return;
       }
+    }
+
+    if (hasDirectMembership) {
+      activeWorkspaceRole = 'member';
     }
 
     // Attach user + PCP context to request
@@ -230,9 +238,12 @@ router.get('/workspaces', async (req: Request, res: Response) => {
       includeArchived: false,
     });
 
+    const currentWorkspaceMembership = workspaces.find((workspace) => workspace.id === authReq.pcpWorkspaceId);
+    const currentWorkspaceRole = currentWorkspaceMembership?.role || authReq.pcpWorkspaceRole;
+
     res.json({
       currentWorkspaceId: authReq.pcpWorkspaceId,
-      currentWorkspaceRole: authReq.pcpWorkspaceRole,
+      currentWorkspaceRole,
       workspaces: workspaces.map((w) => ({
         id: w.id,
         name: w.name,
@@ -406,6 +417,7 @@ router.post('/workspaces/:workspaceId/members', async (req: Request, res: Respon
         email: rawEmail,
       });
       userWasCreated = true;
+      await workspaceRepo.ensurePersonalWorkspace(inviteeUser.id);
     }
 
     const membership = await workspaceRepo.addMember(workspaceId, inviteeUser.id, memberRole);
