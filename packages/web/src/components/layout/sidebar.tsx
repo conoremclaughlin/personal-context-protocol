@@ -149,6 +149,7 @@ export function Sidebar() {
         retry: 1,
       }
     );
+  const canManageInviteTarget = workspaceMembersData?.canManage ?? false;
 
   const createWorkspaceMutation = useApiPost<
     { workspace: WorkspaceOption },
@@ -441,7 +442,7 @@ export function Sidebar() {
                     >
                       {workspaces.map((workspace) => (
                         <option key={workspace.id} value={workspace.id}>
-                          {workspace.name} ({workspace.role})
+                          {workspace.name} ({workspace.role || 'member'})
                         </option>
                       ))}
                     </select>
@@ -475,7 +476,12 @@ export function Sidebar() {
 
                   <Button
                     onClick={handleInviteWorkspaceMember}
-                    disabled={inviteWorkspaceMemberMutation.isPending || !workspaceMembersData?.canManage}
+                    disabled={
+                      inviteWorkspaceMemberMutation.isPending ||
+                      workspaceMembersLoading ||
+                      !inviteTargetWorkspaceId ||
+                      !canManageInviteTarget
+                    }
                     className="w-full"
                   >
                     {inviteWorkspaceMemberMutation.isPending ? 'Inviting...' : 'Invite collaborator'}
@@ -483,8 +489,16 @@ export function Sidebar() {
 
                   <div className="rounded-md border p-3">
                     <p className="mb-2 text-sm font-semibold text-gray-700">Current collaborators</p>
+                    {!inviteTargetWorkspaceId && (
+                      <p className="text-sm text-gray-500">Select a workspace to view collaborators.</p>
+                    )}
                     {workspaceMembersLoading && (
                       <p className="text-sm text-gray-500">Loading collaborators...</p>
+                    )}
+                    {!workspaceMembersLoading && inviteTargetWorkspaceId && !workspaceMembersData && (
+                      <p className="text-sm text-gray-500">
+                        Unable to load collaborators. Try reopening the dialog.
+                      </p>
                     )}
                     {!workspaceMembersLoading && workspaceMembersData?.members?.length === 0 && (
                       <p className="text-sm text-gray-500">No collaborators yet.</p>
