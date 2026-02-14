@@ -18,6 +18,7 @@ import { runWithRequestContext } from '../utils/request-context';
 import { getDataComposer } from '../data/composer';
 import crypto from 'crypto';
 import type { WorkspaceMemberRole } from '../data/repositories/workspace-containers.repository';
+import { slugifyWorkspaceName } from '../utils/workspace-slug';
 
 // WhatsApp listener reference (set via setWhatsAppListener)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -37,23 +38,14 @@ type CommentAuthorUser = {
   email: string | null;
 };
 
+const LAST_LOGIN_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 function formatCommentAuthorUserName(user: CommentAuthorUser | null): string | null {
   if (!user) return null;
   if (user.first_name?.trim()) return user.first_name.trim();
   if (user.username?.trim()) return user.username.trim();
   if (user.email?.trim()) return user.email.trim();
   return null;
-}
-
-function slugifyWorkspaceName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-
-  return slug || 'workspace';
 }
 
 /**
@@ -111,16 +103,24 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    const loginTimestamp = new Date().toISOString();
-    const { error: loginUpdateError } = await supabase
-      .from('users')
-      .update({ last_login_at: loginTimestamp })
-      .eq('id', pcpUser.id);
-    if (loginUpdateError) {
-      logger.warn('Failed to update users.last_login_at during admin auth', {
-        userId: pcpUser.id,
-        error: loginUpdateError.message,
-      });
+    const lastLoginAtMs = pcpUser.last_login_at ? new Date(pcpUser.last_login_at).getTime() : NaN;
+    const shouldUpdateLastLoginAt =
+      !pcpUser.last_login_at ||
+      Number.isNaN(lastLoginAtMs) ||
+      Date.now() - lastLoginAtMs >= LAST_LOGIN_UPDATE_INTERVAL_MS;
+
+    if (shouldUpdateLastLoginAt) {
+      const loginTimestamp = new Date().toISOString();
+      const { error: loginUpdateError } = await supabase
+        .from('users')
+        .update({ last_login_at: loginTimestamp })
+        .eq('id', pcpUser.id);
+      if (loginUpdateError) {
+        logger.warn('Failed to update users.last_login_at during admin auth', {
+          userId: pcpUser.id,
+          error: loginUpdateError.message,
+        });
+      }
     }
 
     // Resolve active workspace container from header (or default to personal).
@@ -380,6 +380,7 @@ router.post('/workspaces/:workspaceId/members', async (req: Request, res: Respon
       res.status(403).json({ error: 'Only workspace owners/admins can invite collaborators' });
       return;
     }
+    const actingRole = await workspaceRepo.getMemberRole(workspaceId, authReq.pcpUserId);
 
     const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
     if (!rawEmail || !rawEmail.includes('@')) {
@@ -392,6 +393,10 @@ router.post('/workspaces/:workspaceId/members', async (req: Request, res: Respon
     const memberRole: WorkspaceMemberRole = allowedRoles.includes(rawRole as WorkspaceMemberRole)
       ? (rawRole as WorkspaceMemberRole)
       : 'member';
+    if (memberRole === 'owner' && actingRole !== 'owner') {
+      res.status(403).json({ error: 'Only workspace owners can grant owner role' });
+      return;
+    }
 
     let inviteeUser = await usersRepo.findByEmail(rawEmail);
     let userWasCreated = false;

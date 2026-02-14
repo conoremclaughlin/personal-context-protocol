@@ -32,6 +32,7 @@ function createMockDataComposer() {
         listMembershipsByUser: vi.fn(),
         findById: vi.fn(),
         canManageWorkspace: vi.fn(),
+        getMemberRole: vi.fn(),
         update: vi.fn(),
         listMembers: vi.fn(),
         listMembersWithUsers: vi.fn(),
@@ -229,6 +230,7 @@ describe('workspace-container handlers', () => {
       archivedAt: null,
     });
     mockDataComposer.repositories.workspaceContainers.canManageWorkspace.mockResolvedValue(true);
+    mockDataComposer.repositories.workspaceContainers.getMemberRole.mockResolvedValue('owner');
     mockDataComposer.repositories.users.findByEmail.mockResolvedValue({
       id: 'user-456',
       email: 'co@test.com',
@@ -259,5 +261,37 @@ describe('workspace-container handlers', () => {
       'user-456',
       'admin'
     );
+  });
+
+  it('add-member handler blocks admins from assigning owner role', async () => {
+    mockDataComposer.repositories.workspaceContainers.findById.mockResolvedValue({
+      id: 'ws-1',
+      userId: 'user-123',
+      name: 'PCP Team',
+      slug: 'pcp-team',
+      type: 'team',
+      description: null,
+      metadata: {},
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      archivedAt: null,
+    });
+    mockDataComposer.repositories.workspaceContainers.canManageWorkspace.mockResolvedValue(true);
+    mockDataComposer.repositories.workspaceContainers.getMemberRole.mockResolvedValue('admin');
+
+    const result = await handleAddWorkspaceMember(
+      {
+        email: 'owner@test.com',
+        workspaceId: '11111111-1111-1111-1111-111111111111',
+        inviteeEmail: 'co@test.com',
+        role: 'owner',
+      },
+      mockDataComposer as never
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(false);
+    expect(parsed.error).toContain('Only workspace owners can grant owner role');
+    expect(result.isError).toBe(true);
   });
 });

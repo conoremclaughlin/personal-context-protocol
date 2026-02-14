@@ -12,6 +12,7 @@ import type {
   WorkspaceMemberRole,
 } from '../../data/repositories/workspace-containers.repository';
 import type { Json } from '../../data/supabase/types';
+import { slugifyWorkspaceName } from '../../utils/workspace-slug';
 
 const workspaceContainerTypeSchema = z.enum(['personal', 'team']);
 const workspaceMemberRoleSchema = z.enum(['owner', 'admin', 'member', 'viewer']);
@@ -62,16 +63,6 @@ export const addWorkspaceMemberSchema = userIdentifierBaseSchema.extend({
   role: workspaceMemberRoleSchema.optional().default('member'),
 });
 
-function slugify(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 64);
-  return slug || 'workspace';
-}
-
 function successResponse(data: Record<string, unknown>) {
   return {
     content: [{ type: 'text' as const, text: JSON.stringify({ success: true, ...data }) }],
@@ -96,7 +87,7 @@ export async function handleCreateWorkspaceContainer(args: unknown, dataComposer
   const workspace = await dataComposer.repositories.workspaceContainers.create({
     userId: user.id,
     name: params.name,
-    slug: params.slug || slugify(params.name),
+    slug: params.slug || slugifyWorkspaceName(params.name),
     type: (params.type || 'personal') as WorkspaceContainerType,
     description: params.description,
     metadata: toJsonObject(params.metadata),
@@ -267,6 +258,14 @@ export async function handleAddWorkspaceMember(args: unknown, dataComposer: Data
   );
   if (!canManage) {
     return errorResponse('Only workspace owners/admins can add collaborators');
+  }
+
+  const actingRole = await dataComposer.repositories.workspaceContainers.getMemberRole(
+    workspace.id,
+    user.id
+  );
+  if (params.role === 'owner' && actingRole !== 'owner') {
+    return errorResponse('Only workspace owners can grant owner role');
   }
 
   const normalizedInviteeEmail = params.inviteeEmail.trim().toLowerCase();
