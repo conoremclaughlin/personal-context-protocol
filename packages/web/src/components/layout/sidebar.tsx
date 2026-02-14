@@ -20,6 +20,7 @@ import {
   ChevronDown,
   Check,
   Settings,
+  Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useRouter } from 'next/navigation';
@@ -41,6 +42,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 const navigation = [
   { name: 'Dashboard', href: '/', icon: Home },
   { name: 'Chat', href: '/chat', icon: MessageSquare },
+  { name: 'Sessions', href: '/sessions', icon: Activity },
   { name: 'Trusted Users', href: '/trusted-users', icon: Users },
   { name: 'Groups', href: '/groups', icon: UsersRound },
   { name: 'Challenge Codes', href: '/challenge-codes', icon: Key },

@@ -38,6 +38,14 @@ function resolveStudioId(params: { studioId?: string; workspaceId?: string }): s
   return params.studioId ?? params.workspaceId;
 }
 
+/** Coerce a comma-separated string into a string array so callers can pass either format. */
+const topicsSchema = z
+  .preprocess(
+    (val) => (typeof val === 'string' ? val.split(',').map((s) => s.trim()).filter(Boolean) : val),
+    z.array(z.string())
+  )
+  .optional();
+
 // =====================================================
 // MEMORY TOOLS
 // =====================================================
@@ -46,7 +54,7 @@ export const rememberSchema = userIdentifierBaseSchema.extend({
   content: z.string().describe('The content to remember'),
   source: memorySourceSchema.optional().describe('Source of the memory (default: observation)'),
   salience: salienceSchema.optional().describe('Importance level (default: medium)'),
-  topics: z.array(z.string()).optional().describe('Topics for categorization'),
+  topics: topicsSchema.describe('Topics for categorization'),
   metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
   expiresAt: z.string().datetime().optional().describe('Optional expiration date (ISO 8601)'),
   agentId: z
@@ -71,7 +79,7 @@ export const recallSchema = userIdentifierBaseSchema.extend({
   query: z.string().optional().describe('Search query (text search for now, semantic later)'),
   source: memorySourceSchema.optional().describe('Filter by source'),
   salience: salienceSchema.optional().describe('Filter by salience'),
-  topics: z.array(z.string()).optional().describe('Filter by topics (any match)'),
+  topics: topicsSchema.describe('Filter by topics (any match)'),
   limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
   includeExpired: z.boolean().optional().describe('Include expired memories'),
   agentId: z
@@ -91,7 +99,7 @@ export const forgetSchema = userIdentifierBaseSchema.extend({
 export const updateMemorySchema = userIdentifierBaseSchema.extend({
   memoryId: z.string().uuid().describe('ID of the memory to update'),
   salience: salienceSchema.optional().describe('New salience level'),
-  topics: z.array(z.string()).optional().describe('New topics'),
+  topics: topicsSchema.describe('New topics'),
   metadata: z.record(z.unknown()).optional().describe('Additional metadata to merge'),
 });
 

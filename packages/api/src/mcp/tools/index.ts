@@ -1013,7 +1013,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
           .enum(['low', 'medium', 'high', 'critical'])
           .optional()
           .describe('Importance level (default: medium)'),
-        topics: z.array(z.string()).optional().describe('Topics for categorization'),
+        topics: z.union([z.string(), z.array(z.string())]).optional().describe('Topics for categorization'),
         metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
         expiresAt: z.string().datetime().optional().describe('Optional expiration date (ISO 8601)'),
         agentId: z
@@ -1075,7 +1075,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
           .enum(['low', 'medium', 'high', 'critical'])
           .optional()
           .describe('Filter by salience'),
-        topics: z.array(z.string()).optional().describe('Filter by topics (any match)'),
+        topics: z.union([z.string(), z.array(z.string())]).optional().describe('Filter by topics (any match)'),
         limit: z.number().min(1).max(100).optional().describe('Max results (default: 20)'),
         includeExpired: z.boolean().optional().describe('Include expired memories'),
         agentId: z
@@ -1158,7 +1158,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
           .enum(['low', 'medium', 'high', 'critical'])
           .optional()
           .describe('New salience level'),
-        topics: z.array(z.string()).optional().describe('New topics'),
+        topics: z.union([z.string(), z.array(z.string())]).optional().describe('New topics'),
         metadata: z.record(z.unknown()).optional().describe('Metadata to merge'),
       },
     },

@@ -2274,6 +2274,141 @@ router.delete('/connected-accounts/:id', async (req: Request, res: Response) => 
 });
 
 // =============================================================================
+// Sessions & Studios
+// =============================================================================
+
+/**
+ * GET /api/admin/sessions
+ * List sessions with linked agent identities and workspaces (studios)
+ */
+router.get('/sessions', async (req: Request, res: Response) => {
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const authReq = req as AdminAuthRequest;
+    const includeCompleted = req.query.includeCompleted === 'true';
+
+    // 1. Fetch sessions for the user
+    let sessionsQuery = supabase
+      .from('sessions')
+      .select('*')
+      .eq('user_id', authReq.pcpUserId)
+      .order('updated_at', { ascending: false })
+      .limit(100);
+
+    if (!includeCompleted) {
+      sessionsQuery = sessionsQuery.in('status', ['active', 'paused']);
+    }
+
+    const { data: sessions, error: sessionsError } = await sessionsQuery;
+
+    if (sessionsError) {
+      logger.error('Failed to list sessions:', sessionsError);
+      res.status(500).json({ error: 'Failed to list sessions' });
+      return;
+    }
+
+    const sessionRows = sessions || [];
+
+    // 2. Batch-fetch agent identities for unique agent_ids
+    const uniqueAgentIds = [...new Set(sessionRows.map((s) => s.agent_id).filter(Boolean))];
+    const identitiesByAgentId = new Map<
+      string,
+      { name: string; role: string | null }
+    >();
+
+    if (uniqueAgentIds.length > 0) {
+      // Look up identities by user_id (not workspace container) so names resolve
+      // for sessions across all containers. agent_id is typically unique per user.
+      const { data: identities } = await supabase
+        .from('agent_identities')
+        .select('agent_id, name, role')
+        .eq('user_id', authReq.pcpUserId)
+        .in('agent_id', uniqueAgentIds);
+
+      for (const identity of identities || []) {
+        identitiesByAgentId.set(identity.agent_id, {
+          name: identity.name,
+          role: identity.role,
+        });
+      }
+    }
+
+    // 3. Batch-fetch workspaces linked to these sessions
+    const sessionIds = sessionRows.map((s) => s.id);
+    const workspacesBySessionId = new Map<
+      string,
+      {
+        id: string;
+        branch: string | null;
+        baseBranch: string | null;
+        purpose: string | null;
+        workType: string | null;
+        status: string;
+      }
+    >();
+
+    if (sessionIds.length > 0) {
+      const { data: workspaces } = await supabase
+        .from('workspaces')
+        .select('id, session_id, branch, base_branch, purpose, work_type, status')
+        .in('session_id', sessionIds);
+
+      for (const ws of workspaces || []) {
+        if (ws.session_id) {
+          workspacesBySessionId.set(ws.session_id, {
+            id: ws.id,
+            branch: ws.branch,
+            baseBranch: ws.base_branch,
+            purpose: ws.purpose,
+            workType: ws.work_type,
+            status: ws.status,
+          });
+        }
+      }
+    }
+
+    // 4. Compute stats
+    const stats = {
+      active: sessionRows.filter((s) => s.status === 'active' && !s.current_phase?.startsWith('blocked')).length,
+      blocked: sessionRows.filter((s) => s.current_phase?.startsWith('blocked')).length,
+      paused: sessionRows.filter((s) => s.status === 'paused').length,
+      total: sessionRows.length,
+    };
+
+    res.json({
+      stats,
+      sessions: sessionRows.map((s) => {
+        const identity = s.agent_id ? identitiesByAgentId.get(s.agent_id) : null;
+        return {
+          id: s.id,
+          backendSessionId: s.claude_session_id || null,
+          agentId: s.agent_id,
+          agentName: identity?.name || s.agent_id || 'Unknown',
+          agentRole: identity?.role || null,
+          status: s.status,
+          currentPhase: s.current_phase,
+          summary: s.summary,
+          context: s.context,
+          backend: s.backend,
+          model: s.model,
+          messageCount: s.message_count,
+          tokenCount: s.token_count,
+          startedAt: s.started_at,
+          updatedAt: s.updated_at,
+          endedAt: s.ended_at,
+          workspace: workspacesBySessionId.get(s.id) || null,
+        };
+      }),
+    });
+  } catch (error) {
+    logger.error('Failed to list sessions:', error);
+    res.status(500).json({ error: 'Failed to list sessions' });
+  }
+});
+
+// =============================================================================
 // Skills
 // =============================================================================
 
