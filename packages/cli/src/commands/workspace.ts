@@ -472,6 +472,11 @@ async function createWorkspace(
       console.log(chalk.dim('  Hooks:  ') + `${hooksBackend.name} (installed)`);
     } else if (hooksResult === 'already-installed') {
       console.log(chalk.dim('  Hooks:  ') + `${hooksBackend.name} (already installed)`);
+    } else if (hooksResult === 'conflict') {
+      console.log(
+        chalk.yellow('  Hooks:  ') +
+          `skipped — existing non-PCP hooks in ${hooksBackend.configPath}. Run: sb hooks install --force`
+      );
     }
     console.log('');
     console.log(chalk.cyan('To start working:'));

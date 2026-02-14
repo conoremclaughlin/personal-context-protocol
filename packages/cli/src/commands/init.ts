@@ -102,8 +102,8 @@ function ensureMcpJson(cwd: string): InitStepResult {
   return { label: '.mcp.json', status: 'created', detail: `pcp → ${serverUrl}/mcp` };
 }
 
-function runInstallHooks(cwd: string): InitStepResult {
-  const { result, backend } = installHooks(cwd);
+function runInstallHooks(cwd: string, force?: boolean): InitStepResult {
+  const { result, backend } = installHooks(cwd, { force });
 
   switch (result) {
     case 'installed':
@@ -153,7 +153,7 @@ async function initCommand(options: { force?: boolean }): Promise<void> {
   const steps: InitStepResult[] = [
     ensurePcpDir(cwd),
     ensureMcpJson(cwd),
-    runInstallHooks(cwd),
+    runInstallHooks(cwd, options.force),
     syncBackendConfigs(cwd),
   ];
 

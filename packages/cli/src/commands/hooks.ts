@@ -168,12 +168,22 @@ function getPcpServerUrl(): string {
   return process.env.PCP_SERVER_URL || 'http://localhost:3001';
 }
 
+let jsonRpcId = 1;
+
 async function callPcpTool(tool: string, args: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const url = `${getPcpServerUrl()}/api/mcp/call`;
+  const url = `${getPcpServerUrl()}/mcp`;
   const response = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tool, args }),
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      method: 'tools/call',
+      params: { name: tool, arguments: args },
+      id: jsonRpcId++,
+    }),
   });
 
   if (!response.ok) {
@@ -182,10 +192,15 @@ async function callPcpTool(tool: string, args: Record<string, unknown>): Promise
 
   const payload = (await response.json()) as Record<string, unknown>;
 
-  // Unwrap MCP response format
-  const mcpText =
-    (payload.result as { content?: Array<{ text?: string }> } | undefined)?.content?.[0]?.text ||
-    (payload.content as Array<{ text?: string }> | undefined)?.[0]?.text;
+  // JSON-RPC error
+  if (payload.error) {
+    const err = payload.error as { message?: string; code?: number };
+    throw new Error(`PCP tool error (${err.code}): ${err.message}`);
+  }
+
+  // Unwrap JSON-RPC result → MCP tool response → content text
+  const result = payload.result as { content?: Array<{ text?: string }> } | undefined;
+  const mcpText = result?.content?.[0]?.text;
 
   if (typeof mcpText === 'string') {
     try {
@@ -195,7 +210,7 @@ async function callPcpTool(tool: string, args: Record<string, unknown>): Promise
     }
   }
 
-  return payload;
+  return (result as Record<string, unknown>) ?? payload;
 }
 
 // ============================================================================
