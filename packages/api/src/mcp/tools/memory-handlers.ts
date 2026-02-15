@@ -116,6 +116,12 @@ export const startSessionSchema = userIdentifierBaseSchema.extend({
     .uuid()
     .optional()
     .describe('[Deprecated] Workspace ID alias for studioId.'),
+  threadKey: z
+    .string()
+    .optional()
+    .describe(
+      'Thread key for session routing (e.g., "pr:32"). If an active session with this threadKey exists for the same agent, it is returned instead of creating a new one.'
+    ),
   metadata: z.record(z.unknown()).optional().describe('Additional session metadata'),
 });
 
@@ -536,12 +542,26 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
   const studioId = resolveStudioId(params);
 
-  // Check if there's already an active session for this agent (scoped by studio if provided)
-  const existingSession = await dataComposer.repositories.memory.getActiveSession(
-    user.id,
-    params.agentId,
-    studioId
-  );
+  // Session matching priority:
+  // 1. threadKey match — find active session with same agent+threadKey
+  // 2. studioId match — find active session scoped by agent+studio (existing behavior)
+  let existingSession = null;
+
+  if (params.threadKey && params.agentId) {
+    existingSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
+      user.id,
+      params.agentId,
+      params.threadKey
+    );
+  }
+
+  if (!existingSession) {
+    existingSession = await dataComposer.repositories.memory.getActiveSession(
+      user.id,
+      params.agentId,
+      studioId
+    );
+  }
 
   if (existingSession) {
     return {
@@ -558,6 +578,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
                 agentId: existingSession.agentId,
                 studioId: existingSession.studioId,
                 workspaceId: existingSession.workspaceId,
+                threadKey: existingSession.threadKey || null,
                 startedAt: existingSession.startedAt.toISOString(),
                 isExisting: true,
               },
@@ -575,6 +596,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     agentId: params.agentId,
     studioId,
     workspaceId: params.workspaceId,
+    threadKey: params.threadKey,
     metadata: params.metadata,
   });
 
@@ -583,6 +605,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     agentId: session.agentId,
     studioId: session.studioId,
     workspaceId: session.workspaceId,
+    threadKey: session.threadKey,
   });
 
   return {
@@ -599,6 +622,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
               agentId: session.agentId,
               studioId: session.studioId,
               workspaceId: session.workspaceId,
+              threadKey: session.threadKey || null,
               startedAt: session.startedAt.toISOString(),
             },
           },
@@ -1504,6 +1528,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
               agentId: s.agentId,
               studioId: s.studioId || null,
               workspaceId: s.workspaceId || null,
+              threadKey: s.threadKey || null,
               currentPhase: s.currentPhase || null,
               startedAt: s.startedAt.toISOString(),
             })),
