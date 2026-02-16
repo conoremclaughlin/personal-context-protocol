@@ -1127,11 +1127,12 @@ describe('handleStartSession - threadKey matching', () => {
     expect(parsed.session.threadKey).toBe('pr:32');
     expect(parsed.session.isExisting).toBe(true);
 
-    // Should have queried by threadKey
+    // Should have queried by threadKey, scoped by studioId (undefined here)
     expect(mockDataComposer.repositories.memory.getActiveSessionByThreadKey).toHaveBeenCalledWith(
       'user-123',
       'lumen',
-      'pr:32'
+      'pr:32',
+      undefined
     );
     // Should NOT have fallen through to studioId lookup
     expect(mockDataComposer.repositories.memory.getActiveSession).not.toHaveBeenCalled();
@@ -1181,6 +1182,23 @@ describe('handleStartSession - threadKey matching', () => {
         agentId: 'lumen',
         threadKey: 'pr:99',
       })
+    );
+  });
+
+  it('should scope threadKey lookup by studioId when provided', async () => {
+    const studioId = '550e8400-e29b-41d4-a716-446655440000';
+    mockDataComposer.repositories.memory.getActiveSessionByThreadKey.mockResolvedValue(mockSession);
+
+    await handleStartSession(
+      { email: 'test@test.com', agentId: 'lumen', threadKey: 'pr:32', studioId },
+      mockDataComposer as never
+    );
+
+    expect(mockDataComposer.repositories.memory.getActiveSessionByThreadKey).toHaveBeenCalledWith(
+      'user-123',
+      'lumen',
+      'pr:32',
+      studioId
     );
   });
 

@@ -349,15 +349,16 @@ export class MemoryRepository {
   }
 
   /**
-   * Get active session by threadKey for a user+agent.
+   * Get active session by threadKey for a user+agent, optionally scoped by studio.
    * Returns the most recent active session with a matching thread_key, or null.
    */
   async getActiveSessionByThreadKey(
     userId: string,
     agentId: string,
-    threadKey: string
+    threadKey: string,
+    studioId?: string | null
   ): Promise<Session | null> {
-    const { data, error } = await this.supabase
+    let query = this.supabase
       .from('sessions')
       .select('*')
       .eq('user_id', userId)
@@ -365,8 +366,17 @@ export class MemoryRepository {
       .eq('thread_key', threadKey)
       .is('ended_at', null)
       .order('started_at', { ascending: false })
-      .limit(1)
-      .single();
+      .limit(1);
+
+    if (studioId !== undefined) {
+      if (studioId === null) {
+        query = query.is('studio_id', null);
+      } else {
+        query = query.eq('studio_id', studioId);
+      }
+    }
+
+    const { data, error } = await query.single();
 
     if (error) {
       if (error.code === 'PGRST116') return null;

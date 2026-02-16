@@ -551,7 +551,8 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     existingSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
       user.id,
       params.agentId,
-      params.threadKey
+      params.threadKey,
+      studioId
     );
   }
 
