@@ -165,14 +165,23 @@ export function pinSessionAgent(agentId: string): void {
 
 /**
  * Get the pinned agent identity.
- * Request context (HTTP token-bound agentId) takes priority over session pin (stdio).
+ *
+ * In HTTP mode (request context exists): returns agentId from the token only.
+ *   The global session pin is NEVER consulted — it's process-global and would
+ *   leak identity across concurrent requests from different users/agents.
+ *
+ * In stdio mode (no request context): returns the session pin set by bootstrap().
+ *   Safe because stdio is single-session-per-process.
+ *
  * Returns null if no identity is pinned (human user or pre-bootstrap).
  */
 export function getPinnedAgentId(): string | null {
-  // HTTP request context (token-bound) takes priority
   const reqCtx = getRequestContext();
-  if (reqCtx?.agentId) return reqCtx.agentId;
-  // Fall back to session pin (stdio/bootstrap)
+  if (reqCtx) {
+    // HTTP mode: only trust the token-bound agentId, never the global pin
+    return reqCtx.agentId ?? null;
+  }
+  // stdio mode: use the session pin from bootstrap()
   return pinnedSessionAgentId;
 }
 
