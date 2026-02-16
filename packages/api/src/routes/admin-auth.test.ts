@@ -465,7 +465,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-tier3',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('signed-admin-jwt');
       mockCreateRefreshToken.mockResolvedValue({
@@ -551,7 +550,7 @@ describe('adminAuthMiddleware', () => {
           return Promise.resolve({ data: null, error: null }); // Not found
         }
         return Promise.resolve({
-          data: { id: 'new-user', telegram_id: null, whatsapp_id: null, last_login_at: null },
+          data: { id: 'new-user', telegram_id: null, whatsapp_id: null },
           error: null,
         });
       });
@@ -582,7 +581,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-123',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('signed-jwt');
       mockCreateRefreshToken.mockRejectedValue(new Error('DB error'));
@@ -682,7 +680,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-cookie',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('jwt');
       mockCreateRefreshToken.mockResolvedValue({ refreshToken: 'rt', expiresAt: new Date() });
@@ -708,7 +705,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-path',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('jwt');
       mockCreateRefreshToken.mockResolvedValue({ refreshToken: 'rt', expiresAt: new Date() });
@@ -734,7 +730,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-same',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('jwt');
       mockCreateRefreshToken.mockResolvedValue({ refreshToken: 'rt', expiresAt: new Date() });
@@ -760,7 +755,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-maxage',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('jwt');
       mockCreateRefreshToken.mockResolvedValue({ refreshToken: 'rt', expiresAt: new Date() });
@@ -785,7 +779,6 @@ describe('adminAuthMiddleware', () => {
         id: 'user-refresh-age',
         telegram_id: null,
         whatsapp_id: null,
-        last_login_at: null,
       });
       mockSignPcpAccessToken.mockReturnValue('jwt');
       mockCreateRefreshToken.mockResolvedValue({ refreshToken: 'rt', expiresAt: new Date() });

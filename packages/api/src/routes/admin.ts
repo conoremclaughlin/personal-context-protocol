@@ -44,7 +44,6 @@ type CommentAuthorUser = {
   email: string | null;
 };
 
-const LAST_LOGIN_UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_ACCESS_TOKEN_LIFETIME_SECONDS = 3600; // 1 hour
 const ADMIN_REFRESH_TOKEN_LIFETIME_DAYS = 90;
 const ADMIN_CLIENT_ID = 'dashboard';
@@ -147,7 +146,7 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
       const normalizedEmail = user.email?.toLowerCase() ?? null;
       let { data: pcpUser } = await supabase
         .from('users')
-        .select('id, telegram_id, whatsapp_id, last_login_at')
+        .select('id, telegram_id, whatsapp_id')
         .eq('email', normalizedEmail)
         .single();
 
@@ -159,14 +158,14 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
 
         const { data: createdUser, error: createUserError } = await supabase
           .from('users')
-          .insert({ email: normalizedEmail })
-          .select('id, telegram_id, whatsapp_id, last_login_at')
+          .insert({ email: normalizedEmail, last_login_at: new Date().toISOString() })
+          .select('id, telegram_id, whatsapp_id')
           .single();
 
         if (createUserError) {
           const { data: racedUser } = await supabase
             .from('users')
-            .select('id, telegram_id, whatsapp_id, last_login_at')
+            .select('id, telegram_id, whatsapp_id')
             .eq('email', normalizedEmail)
             .single();
 
@@ -185,25 +184,11 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
         }
       }
 
-      const lastLoginAtMs = pcpUser.last_login_at ? new Date(pcpUser.last_login_at).getTime() : NaN;
-      const shouldUpdateLastLoginAt =
-        !pcpUser.last_login_at ||
-        Number.isNaN(lastLoginAtMs) ||
-        Date.now() - lastLoginAtMs >= LAST_LOGIN_UPDATE_INTERVAL_MS;
-
-      if (shouldUpdateLastLoginAt) {
-        const loginTimestamp = new Date().toISOString();
-        const { error: loginUpdateError } = await supabase
-          .from('users')
-          .update({ last_login_at: loginTimestamp })
-          .eq('id', pcpUser.id);
-        if (loginUpdateError) {
-          logger.warn('Failed to update users.last_login_at during admin auth', {
-            userId: pcpUser.id,
-            error: loginUpdateError.message,
-          });
-        }
-      }
+      // Update last_login_at — Tier 3 only runs on actual login (Supabase token verification)
+      await supabase
+        .from('users')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', pcpUser.id);
 
       pcpUserId = pcpUser.id;
       userEmail = normalizedEmail || user.email || undefined;
@@ -2311,10 +2296,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
 
     // 2. Batch-fetch agent identities for unique agent_ids
     const uniqueAgentIds = [...new Set(sessionRows.map((s) => s.agent_id).filter(Boolean))];
-    const identitiesByAgentId = new Map<
-      string,
-      { name: string; role: string | null }
-    >();
+    const identitiesByAgentId = new Map<string, { name: string; role: string | null }>();
 
     if (uniqueAgentIds.length > 0) {
       // Look up identities by user_id (not workspace container) so names resolve
@@ -2369,7 +2351,9 @@ router.get('/sessions', async (req: Request, res: Response) => {
 
     // 4. Compute stats
     const stats = {
-      active: sessionRows.filter((s) => s.status === 'active' && !s.current_phase?.startsWith('blocked')).length,
+      active: sessionRows.filter(
+        (s) => s.status === 'active' && !s.current_phase?.startsWith('blocked')
+      ).length,
       blocked: sessionRows.filter((s) => s.current_phase?.startsWith('blocked')).length,
       paused: sessionRows.filter((s) => s.status === 'paused').length,
       total: sessionRows.length,
