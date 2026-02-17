@@ -885,8 +885,8 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
     new Set(sessions.map((s) => s.studioId).filter((id): id is string => !!id))
   );
 
-  const workspaces = await dataComposer.repositories.workspaces.listByIds(user.id, studioIds);
-  const workspaceById = new Map(workspaces.map((w) => [w.id, w]));
+  const studios = await dataComposer.repositories.studios.listByIds(user.id, studioIds);
+  const workspaceById = new Map(studios.map((w) => [w.id, w]));
 
   return {
     content: [

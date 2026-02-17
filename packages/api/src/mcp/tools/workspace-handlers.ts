@@ -180,7 +180,7 @@ export async function handleCreateWorkspace(args: unknown, dataComposer: DataCom
   // Insert workspace record into the database
   let workspace;
   try {
-    workspace = await dataComposer.repositories.workspaces.create({
+    workspace = await dataComposer.repositories.studios.create({
       userId: resolved.user.id,
       agentId,
       sessionId,
@@ -243,21 +243,21 @@ export async function handleListWorkspaces(args: unknown, dataComposer: DataComp
   const resolved = await resolveUserOrThrow(parsed, dataComposer);
 
   const { agentId, status = 'all', includeAll = false } = parsed;
-  const workspacesRepo = dataComposer.repositories.workspaces;
+  const studiosRepo = dataComposer.repositories.studios;
 
   let workspaces;
   if (status !== 'all') {
-    workspaces = await workspacesRepo.listByUser(resolved.user.id, {
+    workspaces = await studiosRepo.listByUser(resolved.user.id, {
       status: status as 'active' | 'idle' | 'archived' | 'cleaned',
       agentId: agentId || undefined,
     });
   } else if (includeAll) {
-    workspaces = await workspacesRepo.listByUser(resolved.user.id, {
+    workspaces = await studiosRepo.listByUser(resolved.user.id, {
       agentId: agentId || undefined,
     });
   } else {
     // Default: get all but exclude 'cleaned'
-    const all = await workspacesRepo.listByUser(resolved.user.id, {
+    const all = await studiosRepo.listByUser(resolved.user.id, {
       agentId: agentId || undefined,
     });
     workspaces = all.filter((w) => w.status !== 'cleaned');
@@ -286,16 +286,16 @@ export async function handleGetWorkspace(args: unknown, dataComposer: DataCompos
   const parsed = getWorkspaceSchema.parse(args);
   await resolveUserOrThrow(parsed, dataComposer);
 
-  const workspacesRepo = dataComposer.repositories.workspaces;
+  const studiosRepo = dataComposer.repositories.studios;
   let workspace = null;
 
   // Try identifiers in order: workspaceId, branch, path
   if (parsed.workspaceId) {
-    workspace = await workspacesRepo.findById(parsed.workspaceId);
+    workspace = await studiosRepo.findById(parsed.workspaceId);
   } else if (parsed.branch) {
-    workspace = await workspacesRepo.findByBranch(parsed.branch);
+    workspace = await studiosRepo.findByBranch(parsed.branch);
   } else if (parsed.path) {
-    workspace = await workspacesRepo.findByPath(parsed.path);
+    workspace = await studiosRepo.findByPath(parsed.path);
   } else {
     return errorResponse('Must provide at least one of: workspaceId, branch, or path');
   }
@@ -332,10 +332,10 @@ export async function handleUpdateWorkspace(args: unknown, dataComposer: DataCom
   await resolveUserOrThrow(parsed, dataComposer);
 
   const { workspaceId, agentId, status, purpose, sessionId, unlinkSession } = parsed;
-  const workspacesRepo = dataComposer.repositories.workspaces;
+  const studiosRepo = dataComposer.repositories.studios;
 
   // Verify workspace exists
-  const existing = await workspacesRepo.findById(workspaceId);
+  const existing = await studiosRepo.findById(workspaceId);
   if (!existing) {
     return errorResponse(`Workspace not found: ${workspaceId}`);
   }
@@ -343,9 +343,9 @@ export async function handleUpdateWorkspace(args: unknown, dataComposer: DataCom
   let updated;
 
   if (unlinkSession) {
-    updated = await workspacesRepo.unlinkSession(workspaceId);
+    updated = await studiosRepo.unlinkSession(workspaceId);
   } else if (sessionId) {
-    updated = await workspacesRepo.linkSession(workspaceId, sessionId);
+    updated = await studiosRepo.linkSession(workspaceId, sessionId);
   } else {
     const updateObj: Record<string, unknown> = {};
     if (status !== undefined) {
@@ -354,7 +354,7 @@ export async function handleUpdateWorkspace(args: unknown, dataComposer: DataCom
     if (purpose !== undefined) {
       updateObj.purpose = purpose;
     }
-    updated = await workspacesRepo.update(workspaceId, updateObj);
+    updated = await studiosRepo.update(workspaceId, updateObj);
   }
 
   logger.info('Workspace updated', { workspaceId, agentId, status: updated.status });
@@ -381,10 +381,10 @@ export async function handleCloseWorkspace(args: unknown, dataComposer: DataComp
   await resolveUserOrThrow(parsed, dataComposer);
 
   const { workspaceId, agentId, removeWorktree = true, deleteBranch = false } = parsed;
-  const workspacesRepo = dataComposer.repositories.workspaces;
+  const studiosRepo = dataComposer.repositories.studios;
 
   // Verify workspace exists
-  const workspace = await workspacesRepo.findById(workspaceId);
+  const workspace = await studiosRepo.findById(workspaceId);
   if (!workspace) {
     return errorResponse(`Workspace not found: ${workspaceId}`);
   }
@@ -433,7 +433,7 @@ export async function handleCloseWorkspace(args: unknown, dataComposer: DataComp
   }
 
   // Mark as cleaned in the database
-  const updated = await workspacesRepo.markCleaned(workspaceId);
+  const updated = await studiosRepo.markCleaned(workspaceId);
 
   logger.info('Workspace closed', {
     workspaceId,
@@ -456,16 +456,16 @@ export async function handleAdoptWorkspace(args: unknown, dataComposer: DataComp
   await resolveUserOrThrow(parsed, dataComposer);
 
   const { agentId, sessionId } = parsed;
-  const workspacesRepo = dataComposer.repositories.workspaces;
+  const studiosRepo = dataComposer.repositories.studios;
 
   // Find workspace by ID, branch, or path
   let workspace = null;
   if (parsed.workspaceId) {
-    workspace = await workspacesRepo.findById(parsed.workspaceId);
+    workspace = await studiosRepo.findById(parsed.workspaceId);
   } else if (parsed.branch) {
-    workspace = await workspacesRepo.findByBranch(parsed.branch);
+    workspace = await studiosRepo.findByBranch(parsed.branch);
   } else if (parsed.worktreePath) {
-    workspace = await workspacesRepo.findByPath(parsed.worktreePath);
+    workspace = await studiosRepo.findByPath(parsed.worktreePath);
   } else {
     return errorResponse('Must provide at least one of: workspaceId, branch, or worktreePath');
   }
@@ -475,7 +475,7 @@ export async function handleAdoptWorkspace(args: unknown, dataComposer: DataComp
   }
 
   // Link session and set to active
-  const updated = await workspacesRepo.linkSession(workspace.id, sessionId);
+  const updated = await studiosRepo.linkSession(workspace.id, sessionId);
 
   logger.info('Workspace adopted', {
     workspaceId: updated.id,

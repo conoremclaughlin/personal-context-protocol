@@ -30,6 +30,7 @@ function mapDbToSession(row: DbSession): Session {
     userId: row.user_id,
     agentId: row.agent_id || '',
     identityId: row.identity_id || undefined,
+    studioId: row.studio_id || row.workspace_id || undefined,
     claudeSessionId: row.claude_session_id,
 
     type: (metadata.type as SessionType) || 'primary',
@@ -86,6 +87,9 @@ function mapSessionToDb(
     token_count: session.tokenCount,
     backend: session.backend,
     model: session.model,
+    studio_id: session.studioId || null,
+    // Keep mirrored for compatibility with older server versions.
+    workspace_id: session.studioId || null,
     thread_key: session.threadKey || null,
     metadata: {
       type: session.type,
@@ -121,7 +125,7 @@ export class SessionRepository implements ISessionRepository {
   async findByUserAndAgent(
     userId: string,
     agentId: string,
-    options?: { status?: SessionStatus; type?: SessionType }
+    options?: { status?: SessionStatus; type?: SessionType; studioId?: string }
   ): Promise<Session | null> {
     let query = this.supabase
       .from('sessions')
@@ -131,6 +135,10 @@ export class SessionRepository implements ISessionRepository {
       .is('ended_at', null)
       .order('started_at', { ascending: false })
       .limit(1);
+
+    if (options?.studioId) {
+      query = query.or(`studio_id.eq.${options.studioId},workspace_id.eq.${options.studioId}`);
+    }
 
     if (options?.status) {
       query = query.eq('status', options.status);
@@ -164,9 +172,10 @@ export class SessionRepository implements ISessionRepository {
   async findByThreadKey(
     userId: string,
     agentId: string,
-    threadKey: string
+    threadKey: string,
+    studioId?: string
   ): Promise<Session | null> {
-    const { data, error } = await this.supabase
+    let query = this.supabase
       .from('sessions')
       .select('*')
       .eq('user_id', userId)
@@ -175,6 +184,12 @@ export class SessionRepository implements ISessionRepository {
       .is('ended_at', null)
       .order('started_at', { ascending: false })
       .limit(1);
+
+    if (studioId) {
+      query = query.or(`studio_id.eq.${studioId},workspace_id.eq.${studioId}`);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       logger.error('Error finding session by thread key', { userId, agentId, threadKey, error });
@@ -287,6 +302,12 @@ export class SessionRepository implements ISessionRepository {
 
     if (updates.model !== undefined) {
       dbUpdates.model = updates.model;
+    }
+
+    if (updates.studioId !== undefined) {
+      dbUpdates.studio_id = updates.studioId || null;
+      // Keep mirrored for compatibility with older server versions.
+      dbUpdates.workspace_id = updates.studioId || null;
     }
 
     // Merge metadata updates

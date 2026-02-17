@@ -188,6 +188,9 @@ export class SessionService implements ISessionService {
         taskDescription: metadata?.taskDescription,
         parentSessionId: metadata?.parentSessionId,
         threadKey: metadata?.threadKey,
+        studioId: metadata?.studioId,
+        studioHint: metadata?.studioHint,
+        relatedSessionId: metadata?.relatedSessionId,
       });
 
       // 2. Build lock key - must be per agent + session to support sub-agents
@@ -273,6 +276,9 @@ export class SessionService implements ISessionService {
             taskDescription: pending.request.metadata?.taskDescription,
             parentSessionId: pending.request.metadata?.parentSessionId,
             threadKey: pending.request.metadata?.threadKey,
+            studioId: pending.request.metadata?.studioId,
+            studioHint: pending.request.metadata?.studioHint,
+            relatedSessionId: pending.request.metadata?.relatedSessionId,
           }
         );
 
@@ -305,9 +311,16 @@ export class SessionService implements ISessionService {
     // 2. Format the incoming message with sender info + current timestamp
     const formattedMessage = this.formatMessage(request, injectedContext.user.timezone);
 
+    // Resolve working directory from studio when available.
+    const resolvedWorkingDirectory = await this.resolveWorkingDirectory(
+      userId,
+      agentId,
+      session.studioId
+    );
+
     // 3. Build Claude runner config
     const runnerConfig: ClaudeRunnerConfig = {
-      workingDirectory: this.config.defaultWorkingDirectory,
+      workingDirectory: resolvedWorkingDirectory,
       mcpConfigPath: this.config.mcpConfigPath,
       model: this.config.defaultModel,
       appendSystemPrompt: buildIdentityPrompt(
@@ -395,23 +408,37 @@ export class SessionService implements ISessionService {
       taskDescription?: string;
       parentSessionId?: string;
       threadKey?: string;
+      studioId?: string;
+      studioHint?: 'main';
+      relatedSessionId?: string;
     }
   ): Promise<Session> {
     const type = options?.type || 'primary';
 
     const backend = await this.resolveAgentBackend(userId, agentId);
+    const resolvedStudioId = await this.resolveStudioId(userId, agentId, {
+      threadKey: options?.threadKey,
+      explicitStudioId: options?.studioId,
+      studioHint: options?.studioHint,
+      relatedSessionId: options?.relatedSessionId,
+      backend,
+    });
 
     // For primary sessions, try to find existing active session
     if (type === 'primary') {
       // ThreadKey match takes priority — find session scoped to this topic
       if (options?.threadKey && 'findByThreadKey' in this.repository) {
-        const threadMatch = await (
-          this.repository as { findByThreadKey: (u: string, a: string, t: string) => Promise<Session | null> }
-        ).findByThreadKey(userId, agentId, options.threadKey);
+        const threadRepo = this.repository as {
+          findByThreadKey: (u: string, a: string, t: string, s?: string) => Promise<Session | null>;
+        };
+        const threadMatch = resolvedStudioId
+          ? await threadRepo.findByThreadKey(userId, agentId, options.threadKey, resolvedStudioId)
+          : await threadRepo.findByThreadKey(userId, agentId, options.threadKey);
         if (threadMatch) {
           logger.debug('Found existing session by threadKey', {
             sessionId: threadMatch.id,
             threadKey: options.threadKey,
+            studioId: threadMatch.studioId || null,
           });
           return threadMatch;
         }
@@ -420,12 +447,14 @@ export class SessionService implements ISessionService {
       // Fall back to general active session match
       const existing = await this.repository.findByUserAndAgent(userId, agentId, {
         type: 'primary',
+        ...(resolvedStudioId ? { studioId: resolvedStudioId } : {}),
       });
 
       if (existing) {
         logger.debug('Found existing session', {
           sessionId: existing.id,
           claudeSessionId: existing.claudeSessionId,
+          studioId: existing.studioId || null,
         });
         return existing;
       }
@@ -448,6 +477,7 @@ export class SessionService implements ISessionService {
       taskDescription: options?.taskDescription,
       parentSessionId: options?.parentSessionId,
       threadKey: options?.threadKey,
+      studioId: resolvedStudioId,
       contextTokens: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,
@@ -466,9 +496,194 @@ export class SessionService implements ISessionService {
       userId,
       agentId,
       type,
+      studioId: resolvedStudioId || null,
     });
 
     return session;
+  }
+
+  private async resolveStudioId(
+    userId: string,
+    agentId: string,
+    options: {
+      threadKey?: string;
+      explicitStudioId?: string;
+      studioHint?: 'main';
+      relatedSessionId?: string;
+      backend?: string;
+    }
+  ): Promise<string | undefined> {
+    if (options.explicitStudioId) {
+      return options.explicitStudioId;
+    }
+
+    if (!this.supabase) {
+      return undefined;
+    }
+
+    // Explicit convenience hint: route directly to user's shared main studio.
+    if (options.studioHint === 'main') {
+      return this.resolveMainStudioId(userId);
+    }
+
+    // 1) Related session scope (explicit resume continuity)
+    if (options.relatedSessionId) {
+      const { data } = await this.supabase
+        .from('sessions')
+        .select('studio_id, workspace_id')
+        .eq('id', options.relatedSessionId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+      const scopedStudioId = data?.studio_id || data?.workspace_id || undefined;
+      if (scopedStudioId) {
+        return scopedStudioId;
+      }
+    }
+
+    // 2) Thread-key scoped continuity (no caller-side studio lookup needed)
+    if (options.threadKey) {
+      const { data: activeThreadSession } = await this.supabase
+        .from('sessions')
+        .select('studio_id, workspace_id, updated_at')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .eq('thread_key', options.threadKey)
+        .is('ended_at', null)
+        .or('studio_id.not.is.null,workspace_id.not.is.null')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const activeThreadStudio =
+        activeThreadSession?.studio_id || activeThreadSession?.workspace_id || undefined;
+      if (activeThreadStudio) {
+        return activeThreadStudio;
+      }
+
+      const { data: endedThreadSession } = await this.supabase
+        .from('sessions')
+        .select('studio_id, workspace_id, updated_at')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .eq('thread_key', options.threadKey)
+        .not('ended_at', 'is', null)
+        .or('studio_id.not.is.null,workspace_id.not.is.null')
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const endedThreadStudio =
+        endedThreadSession?.studio_id || endedThreadSession?.workspace_id || undefined;
+      if (endedThreadStudio) {
+        return endedThreadStudio;
+      }
+    }
+
+    // 3) Agent default studio (derived from recent sessions, then studio records)
+    const { data: recentAgentStudioSession } = await this.supabase
+      .from('sessions')
+      .select('studio_id, workspace_id, updated_at')
+      .eq('user_id', userId)
+      .eq('agent_id', agentId)
+      .or('studio_id.not.is.null,workspace_id.not.is.null')
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const recentAgentStudio =
+      recentAgentStudioSession?.studio_id || recentAgentStudioSession?.workspace_id || undefined;
+    if (recentAgentStudio) {
+      return recentAgentStudio;
+    }
+
+    const { data: agentStudio } = await this.supabase
+      .from('studios')
+      .select('id, updated_at')
+      .eq('user_id', userId)
+      .eq('agent_id', agentId)
+      .in('status', ['active', 'idle', 'archived'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (agentStudio?.id) {
+      return agentStudio.id;
+    }
+
+    // 4) Shared per-user main studio fallback
+    const mainStudioId = await this.resolveMainStudioId(userId);
+    if (mainStudioId) return mainStudioId;
+
+    // Codex is worktree-sensitive: keep a deterministic warning when no studio could be resolved.
+    if (options.backend === 'codex-cli') {
+      logger.warn('No studio resolved for codex-cli request; falling back to default working directory', {
+        userId,
+        agentId,
+        defaultWorkingDirectory: this.config.defaultWorkingDirectory,
+      });
+    }
+
+    return undefined;
+  }
+
+  private async resolveMainStudioId(userId: string): Promise<string | undefined> {
+    if (!this.supabase) return undefined;
+
+    const { data: mainStudioByPath } = await this.supabase
+      .from('studios')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('worktree_path', this.config.defaultWorkingDirectory)
+      .neq('status', 'cleaned')
+      .limit(1)
+      .maybeSingle();
+
+    if (mainStudioByPath?.id) {
+      return mainStudioByPath.id;
+    }
+
+    const { data: mainStudioByBranch } = await this.supabase
+      .from('studios')
+      .select('id, updated_at')
+      .eq('user_id', userId)
+      .eq('branch', 'main')
+      .in('status', ['active', 'idle', 'archived'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return mainStudioByBranch?.id || undefined;
+  }
+
+  private async resolveWorkingDirectory(
+    userId: string,
+    agentId: string,
+    studioId?: string
+  ): Promise<string> {
+    if (!studioId || !this.supabase) {
+      return this.config.defaultWorkingDirectory;
+    }
+
+    const { data: studio } = await this.supabase
+      .from('studios')
+      .select('worktree_path, status')
+      .eq('id', studioId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (studio?.worktree_path) {
+      return studio.worktree_path;
+    }
+
+    logger.warn('Studio not found for session; using default working directory', {
+      userId,
+      agentId,
+      studioId,
+      defaultWorkingDirectory: this.config.defaultWorkingDirectory,
+    });
+
+    return this.config.defaultWorkingDirectory;
   }
 
   async getSession(sessionId: string): Promise<Session | null> {
@@ -538,8 +753,14 @@ This session will continue with a fresh context after compaction. Your identity,
         session
       );
 
+      const compactionWorkingDirectory = await this.resolveWorkingDirectory(
+        session.userId,
+        session.agentId,
+        session.studioId
+      );
+
       const runnerConfig: ClaudeRunnerConfig = {
-        workingDirectory: this.config.defaultWorkingDirectory,
+        workingDirectory: compactionWorkingDirectory,
         mcpConfigPath: this.config.mcpConfigPath,
         model: this.config.defaultModel,
         appendSystemPrompt: buildIdentityPrompt(

@@ -1,9 +1,9 @@
 /**
- * Workspaces Repository
+ * Studios Repository
  *
- * Manages git worktree workspaces for parallel agent work:
+ * Manages git worktree studios for parallel agent work:
  * - Track active worktrees per user/agent
- * - Link workspaces to sessions
+ * - Link studios to sessions
  * - Lifecycle management (active → idle → archived → cleaned)
  */
 
@@ -11,13 +11,12 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database, Json } from '../supabase/types';
 import { resolveIdentityId } from '../../auth/resolve-identity';
 
-// Type alias for the table to help with Supabase generics
-type WorkspacesTable = Database['public']['Tables']['workspaces'];
+type StudiosTable = Database['public']['Tables']['studios'];
 
-export type WorkspaceStatus = 'active' | 'idle' | 'archived' | 'cleaned';
+export type StudioStatus = 'active' | 'idle' | 'archived' | 'cleaned';
 export type WorkType = 'feature' | 'bugfix' | 'refactor' | 'chore' | 'experiment' | 'other';
 
-export interface Workspace {
+export interface Studio {
   id: string;
   userId: string;
   agentId: string | null;
@@ -28,7 +27,7 @@ export interface Workspace {
   baseBranch: string;
   purpose: string | null;
   workType: string | null;
-  status: WorkspaceStatus;
+  status: StudioStatus;
   metadata: Json;
   createdAt: string;
   updatedAt: string;
@@ -36,7 +35,7 @@ export interface Workspace {
   cleanedAt: string | null;
 }
 
-export interface CreateWorkspaceInput {
+export interface CreateStudioInput {
   userId: string;
   agentId?: string;
   identityId?: string;
@@ -50,8 +49,8 @@ export interface CreateWorkspaceInput {
   metadata?: Json;
 }
 
-export interface UpdateWorkspaceInput {
-  status?: WorkspaceStatus;
+export interface UpdateStudioInput {
+  status?: StudioStatus;
   sessionId?: string | null;
   purpose?: string;
   workType?: WorkType;
@@ -60,13 +59,10 @@ export interface UpdateWorkspaceInput {
   cleanedAt?: string;
 }
 
-export class WorkspacesRepository {
+export class StudiosRepository {
   constructor(private client: SupabaseClient<Database>) {}
 
-  /**
-   * Map a snake_case DB row to camelCase Workspace interface
-   */
-  private mapRow(row: Record<string, unknown>): Workspace {
+  private mapRow(row: Record<string, unknown>): Studio {
     return {
       id: row.id as string,
       userId: row.user_id as string,
@@ -78,7 +74,7 @@ export class WorkspacesRepository {
       baseBranch: row.base_branch as string,
       purpose: (row.purpose as string) || null,
       workType: (row.work_type as string) || null,
-      status: row.status as WorkspaceStatus,
+      status: row.status as StudioStatus,
       metadata: (row.metadata as Json) || {},
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
@@ -87,15 +83,12 @@ export class WorkspacesRepository {
     };
   }
 
-  /**
-   * Create a new workspace
-   */
-  async create(input: CreateWorkspaceInput): Promise<Workspace> {
+  async create(input: CreateStudioInput): Promise<Studio> {
     const identityId =
       input.identityId ||
       (input.agentId ? await resolveIdentityId(this.client, input.userId, input.agentId) : null);
 
-    const insertData: WorkspacesTable['Insert'] = {
+    const insertData: StudiosTable['Insert'] = {
       user_id: input.userId,
       agent_id: input.agentId,
       identity_id: identityId,
@@ -111,74 +104,58 @@ export class WorkspacesRepository {
     };
 
     const { data, error } = await this.client
-      .from('workspaces')
+      .from('studios')
       .insert(insertData as never)
       .select()
       .single();
 
     if (error) {
-      throw new Error(`Failed to create workspace: ${error.message}`);
+      throw new Error(`Failed to create studio: ${error.message}`);
     }
 
     return this.mapRow(data as Record<string, unknown>);
   }
 
-  /**
-   * Find workspace by ID
-   */
-  async findById(id: string): Promise<Workspace | null> {
-    const { data, error } = await this.client.from('workspaces').select('*').eq('id', id).single();
+  async findById(id: string): Promise<Studio | null> {
+    const { data, error } = await this.client.from('studios').select('*').eq('id', id).single();
 
     if (error && error.code !== 'PGRST116') {
-      throw new Error(`Failed to find workspace: ${error.message}`);
+      throw new Error(`Failed to find studio: ${error.message}`);
     }
 
     return data ? this.mapRow(data as Record<string, unknown>) : null;
   }
 
-  /**
-   * Find workspace by branch name
-   */
-  async findByBranch(branch: string): Promise<Workspace | null> {
-    const { data, error } = await this.client
-      .from('workspaces')
-      .select('*')
-      .eq('branch', branch)
-      .single();
+  async findByBranch(branch: string): Promise<Studio | null> {
+    const { data, error } = await this.client.from('studios').select('*').eq('branch', branch).single();
 
     if (error && error.code !== 'PGRST116') {
-      throw new Error(`Failed to find workspace by branch: ${error.message}`);
+      throw new Error(`Failed to find studio by branch: ${error.message}`);
     }
 
     return data ? this.mapRow(data as Record<string, unknown>) : null;
   }
 
-  /**
-   * Find workspace by worktree path
-   */
-  async findByPath(worktreePath: string): Promise<Workspace | null> {
+  async findByPath(worktreePath: string): Promise<Studio | null> {
     const { data, error } = await this.client
-      .from('workspaces')
+      .from('studios')
       .select('*')
       .eq('worktree_path', worktreePath)
       .single();
 
     if (error && error.code !== 'PGRST116') {
-      throw new Error(`Failed to find workspace by path: ${error.message}`);
+      throw new Error(`Failed to find studio by path: ${error.message}`);
     }
 
     return data ? this.mapRow(data as Record<string, unknown>) : null;
   }
 
-  /**
-   * List workspaces for a user, optionally filtered by status and/or agentId
-   */
   async listByUser(
     userId: string,
-    opts?: { status?: WorkspaceStatus; agentId?: string }
-  ): Promise<Workspace[]> {
+    opts?: { status?: StudioStatus; agentId?: string }
+  ): Promise<Studio[]> {
     let query = this.client
-      .from('workspaces')
+      .from('studios')
       .select('*')
       .eq('user_id', userId)
       .order('updated_at', { ascending: false });
@@ -194,111 +171,79 @@ export class WorkspacesRepository {
     const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to list workspaces: ${error.message}`);
+      throw new Error(`Failed to list studios: ${error.message}`);
     }
 
     return (data || []).map((row) => this.mapRow(row as Record<string, unknown>));
   }
 
-  /**
-   * List workspaces by IDs for a specific user.
-   */
-  async listByIds(userId: string, ids: string[]): Promise<Workspace[]> {
+  async listByIds(userId: string, ids: string[]): Promise<Studio[]> {
     if (ids.length === 0) {
       return [];
     }
 
     const { data, error } = await this.client
-      .from('workspaces')
+      .from('studios')
       .select('*')
       .eq('user_id', userId)
       .in('id', ids);
 
     if (error) {
-      throw new Error(`Failed to list workspaces by ids: ${error.message}`);
+      throw new Error(`Failed to list studios by ids: ${error.message}`);
     }
 
     return (data || []).map((row) => this.mapRow(row as Record<string, unknown>));
   }
 
-  /**
-   * List active workspaces for a user (status in 'active' or 'idle')
-   */
-  async listActive(userId: string): Promise<Workspace[]> {
+  async listActive(userId: string): Promise<Studio[]> {
     const { data, error } = await this.client
-      .from('workspaces')
+      .from('studios')
       .select('*')
       .eq('user_id', userId)
       .in('status', ['active', 'idle'])
       .order('updated_at', { ascending: false });
 
     if (error) {
-      throw new Error(`Failed to list active workspaces: ${error.message}`);
+      throw new Error(`Failed to list active studios: ${error.message}`);
     }
 
     return (data || []).map((row) => this.mapRow(row as Record<string, unknown>));
   }
 
-  /**
-   * Update a workspace
-   */
-  async update(id: string, input: UpdateWorkspaceInput): Promise<Workspace> {
+  async update(id: string, input: UpdateStudioInput): Promise<Studio> {
     const updateData: Record<string, unknown> = {};
 
-    if (input.status !== undefined) {
-      updateData.status = input.status;
-    }
-    if (input.sessionId !== undefined) {
-      updateData.session_id = input.sessionId;
-    }
-    if (input.purpose !== undefined) {
-      updateData.purpose = input.purpose;
-    }
-    if (input.workType !== undefined) {
-      updateData.work_type = input.workType;
-    }
-    if (input.metadata !== undefined) {
-      updateData.metadata = input.metadata;
-    }
-    if (input.archivedAt !== undefined) {
-      updateData.archived_at = input.archivedAt;
-    }
-    if (input.cleanedAt !== undefined) {
-      updateData.cleaned_at = input.cleanedAt;
-    }
+    if (input.status !== undefined) updateData.status = input.status;
+    if (input.sessionId !== undefined) updateData.session_id = input.sessionId;
+    if (input.purpose !== undefined) updateData.purpose = input.purpose;
+    if (input.workType !== undefined) updateData.work_type = input.workType;
+    if (input.metadata !== undefined) updateData.metadata = input.metadata;
+    if (input.archivedAt !== undefined) updateData.archived_at = input.archivedAt;
+    if (input.cleanedAt !== undefined) updateData.cleaned_at = input.cleanedAt;
 
     const { data, error } = await this.client
-      .from('workspaces')
+      .from('studios')
       .update(updateData as never)
       .eq('id', id)
       .select()
       .single();
 
     if (error) {
-      throw new Error(`Failed to update workspace: ${error.message}`);
+      throw new Error(`Failed to update studio: ${error.message}`);
     }
 
     return this.mapRow(data as Record<string, unknown>);
   }
 
-  /**
-   * Link a session to a workspace
-   */
-  async linkSession(id: string, sessionId: string): Promise<Workspace> {
+  async linkSession(id: string, sessionId: string): Promise<Studio> {
     return this.update(id, { sessionId, status: 'active' });
   }
 
-  /**
-   * Unlink a session from a workspace (sets session_id to null, status to 'idle')
-   */
-  async unlinkSession(id: string): Promise<Workspace> {
+  async unlinkSession(id: string): Promise<Studio> {
     return this.update(id, { sessionId: null, status: 'idle' });
   }
 
-  /**
-   * Mark a workspace as cleaned
-   */
-  async markCleaned(id: string): Promise<Workspace> {
+  async markCleaned(id: string): Promise<Studio> {
     return this.update(id, {
       status: 'cleaned',
       cleanedAt: new Date().toISOString(),
