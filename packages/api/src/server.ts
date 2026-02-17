@@ -276,8 +276,22 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
    * Deliver reminder via SessionService - same stateless flow as all other messages.
    */
   const deliverReminderViaSession = async (reminder: DueReminder): Promise<boolean> => {
-    // Resolve the userId from the reminder
     const userId = reminder.user_id;
+
+    // Resolve agent from reminder's identity_id, fall back to server default
+    let reminderAgentId = agentId;
+    if (reminder.identity_id && dataComposer) {
+      const { data: identity } = await dataComposer
+        .getClient()
+        .from('agent_identities')
+        .select('agent_id')
+        .eq('id', reminder.identity_id)
+        .single();
+      if (identity?.agent_id) {
+        reminderAgentId = identity.agent_id;
+        logger.debug(`[Heartbeat] Resolved agent from identity_id: ${reminderAgentId}`);
+      }
+    }
 
     const reminderContent = `[HEARTBEAT REMINDER]
 Title: ${reminder.title}
@@ -295,7 +309,7 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
 
     const request: SessionRequest = {
       userId,
-      agentId,
+      agentId: reminderAgentId,
       channel: 'agent',
       conversationId: `heartbeat:${reminder.id}`,
       sender: { id: 'system', name: 'heartbeat' },
