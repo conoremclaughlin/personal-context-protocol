@@ -1901,6 +1901,7 @@ export type Database = {
           delivery_target: string | null;
           description: string | null;
           id: string;
+          identity_id: string | null;
           last_run_at: string | null;
           max_runs: number | null;
           metadata: Json | null;
@@ -1918,6 +1919,7 @@ export type Database = {
           delivery_target?: string | null;
           description?: string | null;
           id?: string;
+          identity_id?: string | null;
           last_run_at?: string | null;
           max_runs?: number | null;
           metadata?: Json | null;
@@ -1935,6 +1937,7 @@ export type Database = {
           delivery_target?: string | null;
           description?: string | null;
           id?: string;
+          identity_id?: string | null;
           last_run_at?: string | null;
           max_runs?: number | null;
           metadata?: Json | null;
@@ -1946,6 +1949,13 @@ export type Database = {
           user_id?: string;
         };
         Relationships: [
+          {
+            foreignKeyName: 'scheduled_reminders_identity_id_fkey';
+            columns: ['identity_id'];
+            isOneToOne: false;
+            referencedRelation: 'agent_identities';
+            referencedColumns: ['id'];
+          },
           {
             foreignKeyName: 'scheduled_reminders_user_id_fkey';
             columns: ['user_id'];
@@ -2675,6 +2685,7 @@ export type Database = {
           email: string | null;
           first_name: string | null;
           id: string;
+          last_login_at: string | null;
           last_name: string | null;
           phone_number: string | null;
           preferences: Json | null;
@@ -2691,6 +2702,7 @@ export type Database = {
           email?: string | null;
           first_name?: string | null;
           id?: string;
+          last_login_at?: string | null;
           last_name?: string | null;
           phone_number?: string | null;
           preferences?: Json | null;
@@ -2707,6 +2719,7 @@ export type Database = {
           email?: string | null;
           first_name?: string | null;
           id?: string;
+          last_login_at?: string | null;
           last_name?: string | null;
           phone_number?: string | null;
           preferences?: Json | null;
