@@ -2315,8 +2315,23 @@ router.get('/sessions', async (req: Request, res: Response) => {
       }
     }
 
-    // 3. Batch-fetch workspaces linked to these sessions
+    // 3. Batch-fetch studios linked to these sessions (studio_id preferred, session_id fallback)
     const sessionIds = sessionRows.map((s) => s.id);
+    const studioIds = [
+      ...new Set(sessionRows.map((s) => s.studio_id || s.workspace_id).filter(Boolean)),
+    ] as string[];
+
+    const studiosById = new Map<
+      string,
+      {
+        id: string;
+        branch: string | null;
+        baseBranch: string | null;
+        purpose: string | null;
+        workType: string | null;
+        status: string;
+      }
+    >();
     const workspacesBySessionId = new Map<
       string,
       {
@@ -2329,13 +2344,32 @@ router.get('/sessions', async (req: Request, res: Response) => {
       }
     >();
 
+    if (studioIds.length > 0) {
+      const { data: studios } = await supabase
+        .from('studios')
+        .select('id, branch, base_branch, purpose, work_type, status')
+        .in('id', studioIds);
+
+      for (const studio of studios || []) {
+        studiosById.set(studio.id, {
+          id: studio.id,
+          branch: studio.branch,
+          baseBranch: studio.base_branch,
+          purpose: studio.purpose,
+          workType: studio.work_type,
+          status: studio.status,
+        });
+      }
+    }
+
+    // Fallback: support older rows linked only by workspaces.session_id.
     if (sessionIds.length > 0) {
-      const { data: workspaces } = await supabase
-        .from('workspaces')
+      const { data: linkedWorkspaces } = await supabase
+        .from('studios')
         .select('id, session_id, branch, base_branch, purpose, work_type, status')
         .in('session_id', sessionIds);
 
-      for (const ws of workspaces || []) {
+      for (const ws of linkedWorkspaces || []) {
         if (ws.session_id) {
           workspacesBySessionId.set(ws.session_id, {
             id: ws.id,
@@ -2381,6 +2415,8 @@ router.get('/sessions', async (req: Request, res: Response) => {
           updatedAt: s.updated_at,
           endedAt: s.ended_at,
           workspace: workspacesBySessionId.get(s.id) || null,
+          studio:
+            studiosById.get(s.studio_id || s.workspace_id || '') || workspacesBySessionId.get(s.id) || null,
         };
       }),
     });

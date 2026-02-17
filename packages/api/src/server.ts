@@ -358,22 +358,10 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
       type: payload.triggerType,
       priority: payload.priority,
       summary: payload.summary,
+      studioHint: payload.studioHint,
     });
 
-    // 1. Verify agent exists in agent_identities
-    const { data: agentIdentity } = await dataComposer!
-      .getClient()
-      .from('agent_identities')
-      .select('agent_id')
-      .eq('agent_id', targetAgentId)
-      .limit(1);
-
-    if (!agentIdentity || agentIdentity.length === 0) {
-      logger.error(`[Trigger] Unknown agent: ${targetAgentId}`);
-      throw new Error(`Unknown agent: ${targetAgentId}. Register in agent_identities first.`);
-    }
-
-    // 2. Resolve userId from inbox message (required for stateless processing)
+    // 1. Resolve userId from inbox message (required for stateless processing)
     let userId: string | undefined;
     if (payload.inboxMessageId) {
       const { data: inboxMsg } = await dataComposer!
@@ -388,6 +376,22 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
     if (!userId) {
       logger.error(`[Trigger] Cannot process - no userId found for agent ${targetAgentId}`);
       throw new Error('Cannot process trigger without userId (inbox message required)');
+    }
+
+    // 2. Verify target agent exists for this user
+    const { data: agentIdentity } = await dataComposer!
+      .getClient()
+      .from('agent_identities')
+      .select('agent_id')
+      .eq('user_id', userId)
+      .eq('agent_id', targetAgentId)
+      .limit(1);
+
+    if (!agentIdentity || agentIdentity.length === 0) {
+      logger.error(`[Trigger] Unknown agent for user: ${targetAgentId}`, { userId });
+      throw new Error(
+        `Unknown agent for user: ${targetAgentId}. Register in agent_identities first.`
+      );
     }
 
     // 3. Build trigger message
@@ -418,6 +422,9 @@ If you need to message a user, use send_response with the appropriate channel an
         triggerType: 'agent',
         chatType: 'direct',
         threadKey: payload.threadKey,
+        studioId: payload.studioId,
+        studioHint: payload.studioHint,
+        relatedSessionId: payload.relatedSessionId,
       },
     };
 

@@ -412,7 +412,7 @@ export async function handleGetAgentStatus(args: unknown, dataComposer: DataComp
 
   // Get active workspaces for this agent
   const { data: workspaces } = await supabase
-    .from('workspaces')
+    .from('studios')
     .select('id, branch, worktree_path, purpose, status, work_type, session_id, created_at')
     .eq('user_id', resolved.user.id)
     .eq('agent_id', agentId)

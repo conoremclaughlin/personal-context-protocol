@@ -50,6 +50,20 @@ export const triggerAgentSchema = z.object({
     .string()
     .optional()
     .describe('Thread key for session routing on the recipient side (e.g., "pr:32")'),
+  studioId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Optional explicit studio ID for the target agent session'),
+  studioHint: z
+    .enum(['main'])
+    .optional()
+    .describe('Convenience studio routing hint (e.g., "main" to force shared main studio)'),
+  relatedSessionId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Optional related session ID to inherit studio scope from'),
   metadata: z
     .record(z.unknown())
     .optional()
@@ -82,6 +96,9 @@ export async function handleTriggerAgent(
       inboxMessageId: args.inboxMessageId,
       priority: args.priority,
       threadKey: args.threadKey,
+      studioId: args.studioId,
+      studioHint: args.studioHint,
+      relatedSessionId: args.relatedSessionId,
       metadata: args.metadata,
     };
 

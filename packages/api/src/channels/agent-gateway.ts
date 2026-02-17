@@ -30,6 +30,12 @@ export interface AgentTriggerPayload {
   priority?: 'low' | 'normal' | 'high' | 'urgent';
   /** Thread key for session routing (e.g., "pr:32") */
   threadKey?: string;
+  /** Explicit studio/worktree scope for the target agent */
+  studioId?: string;
+  /** Convenience studio routing hint */
+  studioHint?: 'main';
+  /** Related session to inherit studio scope from */
+  relatedSessionId?: string;
   /** Additional metadata */
   metadata?: Record<string, unknown>;
 }

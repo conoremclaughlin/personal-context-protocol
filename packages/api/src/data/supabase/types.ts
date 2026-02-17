@@ -2146,7 +2146,7 @@ export type Database = {
             foreignKeyName: 'sessions_studio_id_fkey';
             columns: ['studio_id'];
             isOneToOne: false;
-            referencedRelation: 'workspaces';
+            referencedRelation: 'studios';
             referencedColumns: ['id'];
           },
           {
@@ -2160,7 +2160,7 @@ export type Database = {
             foreignKeyName: 'sessions_workspace_id_fkey';
             columns: ['workspace_id'];
             isOneToOne: false;
-            referencedRelation: 'workspaces';
+            referencedRelation: 'studios';
             referencedColumns: ['id'];
           },
         ];
@@ -2818,7 +2818,7 @@ export type Database = {
           },
         ];
       };
-      workspaces: {
+      studios: {
         Row: {
           agent_id: string | null;
           archived_at: string | null;

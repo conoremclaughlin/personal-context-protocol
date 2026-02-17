@@ -46,6 +46,8 @@ export interface Session {
   userId: string;
   agentId: string;
   identityId?: string;
+  /** Studio/worktree scope for this session */
+  studioId?: string;
   claudeSessionId: string | null;
 
   type: SessionType;
@@ -109,6 +111,12 @@ export interface SessionRequest {
     triggerType?: 'message' | 'heartbeat' | 'agent' | 'api';
     // Thread key for topic-scoped session routing (e.g., "pr:43")
     threadKey?: string;
+    // Explicit studio/worktree scope for this request
+    studioId?: string;
+    // Convenience routing hint (e.g., force main studio without UUID lookup)
+    studioHint?: 'main';
+    // Related session to inherit studio scope from
+    relatedSessionId?: string;
     // For task sessions
     sessionType?: SessionType;
     taskDescription?: string;
@@ -236,6 +244,9 @@ export interface ISessionService {
       taskDescription?: string;
       parentSessionId?: string;
       threadKey?: string;
+      studioId?: string;
+      studioHint?: 'main';
+      relatedSessionId?: string;
     }
   ): Promise<Session>;
 
@@ -290,7 +301,14 @@ export interface ISessionRepository {
   findByUserAndAgent(
     userId: string,
     agentId: string,
-    options?: { status?: SessionStatus; type?: SessionType }
+    options?: { status?: SessionStatus; type?: SessionType; studioId?: string }
+  ): Promise<Session | null>;
+
+  findByThreadKey?(
+    userId: string,
+    agentId: string,
+    threadKey: string,
+    studioId?: string
   ): Promise<Session | null>;
 
   findByUser(
