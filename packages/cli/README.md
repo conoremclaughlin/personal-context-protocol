@@ -129,17 +129,15 @@ sb                              # New Claude Code session as wren
 sb -a lumen                     # New session as lumen
 sb -b codex                     # New Codex session
 sb -b gemini                    # New Gemini session
-sb -m opus                      # Use opus model
 
 # Prompt mode (one-shot)
 sb "fix the login bug"
 sb -b codex "refactor the auth module"
-sb -m opus "explain this function"
 ```
 
 ### Resuming sessions
 
-Each backend has its own resume mechanism. `sb` passes unrecognized flags and positional args through to the backend, so you use the backend's native syntax:
+Each backend has its own resume mechanism. `sb` passes unrecognized flags and positional args through to the backend, so you use the backend's native syntax. If `-a` is omitted, the agent is read from `.pcp/identity.json` in the current directory:
 
 ```bash
 # Claude Code: --resume or --continue flags
@@ -149,8 +147,8 @@ sb --continue                   # Continue the most recent session
 # Codex: positional `resume` subcommand
 sb -a lumen -b codex resume 019c6e3e-9219-70d1-b5dd-f35931c45190
 
-# Gemini: --session flag
-sb -b gemini --session abc123
+# Gemini: --resume flag
+sb -a aster -b gemini --resume ebd99b48-0203-402f-bc18-af19e9cc2bd3 --debug
 ```
 
 You can also manage PCP-level sessions (which track identity, logs, and context across backend sessions):
