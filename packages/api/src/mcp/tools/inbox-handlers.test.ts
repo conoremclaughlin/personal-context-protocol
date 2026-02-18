@@ -264,6 +264,7 @@ describe('handleSendToInbox - threadKey', () => {
         recipientAgentId: 'myra',
         senderAgentId: 'wren',
         messageType: 'notification',
+        threadKey: 'pr:32',
         content: 'FYI',
       },
       mockDc as never
@@ -276,7 +277,26 @@ describe('handleSendToInbox - threadKey', () => {
     );
   });
 
-  it('should pass relatedSessionId through trigger payload', async () => {
+  it('should reject deprecated relatedSessionId input', async () => {
+    const mockSb = createMockSupabase();
+    const mockDc = createMockDataComposer(mockSb);
+
+    await expect(
+      handleSendToInbox(
+        {
+          email: 'test@test.com',
+          recipientAgentId: 'lumen',
+          senderAgentId: 'wren',
+          messageType: 'session_resume',
+          relatedSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
+          content: 'Resume this session',
+        },
+        mockDc as never
+      )
+    ).rejects.toThrow('relatedSessionId');
+  });
+
+  it('should pass recipientSessionId through trigger payload', async () => {
     const { getAgentGateway } = await import('../../channels/agent-gateway.js');
     const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
 
@@ -289,7 +309,7 @@ describe('handleSendToInbox - threadKey', () => {
         recipientAgentId: 'lumen',
         senderAgentId: 'wren',
         messageType: 'session_resume',
-        relatedSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
+        recipientSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
         content: 'Resume this session',
       },
       mockDc as never
@@ -300,6 +320,39 @@ describe('handleSendToInbox - threadKey', () => {
         relatedSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
       })
     );
+  });
+
+  it('should support recipientSessionId as preferred routing field', async () => {
+    const { getAgentGateway } = await import('../../channels/agent-gateway.js');
+    const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
+
+    const mockSb = createMockSupabase();
+    const mockDc = createMockDataComposer(mockSb);
+
+    const result = await handleSendToInbox(
+      {
+        email: 'test@test.com',
+        recipientAgentId: 'lumen',
+        senderAgentId: 'wren',
+        messageType: 'session_resume',
+        recipientSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
+        content: 'Resume this session',
+      },
+      mockDc as never
+    );
+
+    expect(mockSb._chainable.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        related_session_id: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
+      })
+    );
+    expect(mockGateway.processTrigger).toHaveBeenCalledWith(
+      expect.objectContaining({
+        relatedSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
+      })
+    );
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.recipientSessionId).toBe('b85490f5-0836-4bdd-8193-f6cfa2562a41');
   });
 
   it('should trigger without senderAgentId using system sender', async () => {
@@ -313,6 +366,7 @@ describe('handleSendToInbox - threadKey', () => {
       {
         email: 'test@test.com',
         recipientAgentId: 'lumen',
+        messageType: 'task_request',
         content: 'Human-sent coordination message',
       },
       mockDc as never
@@ -323,5 +377,52 @@ describe('handleSendToInbox - threadKey', () => {
         fromAgentId: 'system',
       })
     );
+  });
+
+  it('should not trigger by default for message type', async () => {
+    const { getAgentGateway } = await import('../../channels/agent-gateway.js');
+    const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
+
+    const mockSb = createMockSupabase();
+    const mockDc = createMockDataComposer(mockSb);
+
+    const result = await handleSendToInbox(
+      {
+        email: 'test@test.com',
+        recipientAgentId: 'lumen',
+        senderAgentId: 'wren',
+        messageType: 'message',
+        content: 'casual ping',
+      },
+      mockDc as never
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.trigger.triggered).toBe(false);
+    expect(mockGateway.processTrigger).not.toHaveBeenCalled();
+  });
+
+  it('should deliver actionable handoff without anchor and return routing hint', async () => {
+    const { getAgentGateway } = await import('../../channels/agent-gateway.js');
+    const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
+
+    const mockSb = createMockSupabase();
+    const mockDc = createMockDataComposer(mockSb);
+
+    const result = await handleSendToInbox(
+      {
+        email: 'test@test.com',
+        recipientAgentId: 'lumen',
+        senderAgentId: 'wren',
+        messageType: 'task_request',
+        content: 'Please do this work',
+      },
+      mockDc as never
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.routingHint).toContain('routing anchor');
+    expect(mockGateway.processTrigger).toHaveBeenCalled();
   });
 });

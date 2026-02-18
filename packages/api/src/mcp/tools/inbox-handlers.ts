@@ -12,6 +12,7 @@ import { resolveIdentityId } from '../../auth/resolve-identity';
 import { getEffectiveAgentId } from '../../auth/enforce-identity';
 import { logger } from '../../utils/logger';
 import type { Json } from '../../data/supabase/types';
+import { getRequestContext, getSessionContext } from '../../utils/request-context';
 import { getAgentGateway, type AgentTriggerPayload } from '../../channels/agent-gateway.js';
 
 // ============== Schemas ==============
@@ -33,11 +34,20 @@ const sendToInboxSchema = userIdentifierBaseSchema.extend({
     .optional()
     .default('normal')
     .describe('Message priority'),
-  relatedSessionId: z
+  recipientSessionId: z
     .string()
     .uuid()
     .optional()
-    .describe('Related session ID (for resume requests)'),
+    .describe('Recipient session ID to resume/route to (preferred)'),
+  recipientStudioId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Recipient studio ID hint for session routing'),
+  recipientStudioHint: z
+    .enum(['main'])
+    .optional()
+    .describe('Recipient studio routing hint (e.g., "main")'),
   relatedArtifactUri: z.string().optional().describe('Related artifact URI'),
   metadata: z.record(z.unknown()).optional().describe('Additional metadata'),
   expiresAt: z.string().datetime().optional().describe('When this message expires'),
@@ -52,7 +62,7 @@ const sendToInboxSchema = userIdentifierBaseSchema.extend({
     .boolean()
     .optional()
     .describe(
-      'If true, automatically trigger the recipient agent after sending. Defaults to true for all message types.'
+      'If true, automatically trigger the recipient agent after sending. Defaults to true for task_request, session_resume, and notification; false for message.'
     ),
   triggerType: z
     .enum(['task_complete', 'approval_needed', 'message', 'error', 'custom'])
@@ -89,6 +99,17 @@ const getAgentStatusSchema = userIdentifierBaseSchema.extend({
 // ============== Handlers ==============
 
 export async function handleSendToInbox(args: unknown, dataComposer: DataComposer) {
+  if (
+    args &&
+    typeof args === 'object' &&
+    !Array.isArray(args) &&
+    Object.prototype.hasOwnProperty.call(args, 'relatedSessionId')
+  ) {
+    throw new Error(
+      '`relatedSessionId` has been retired for send_to_inbox. Use `recipientSessionId`.'
+    );
+  }
+
   const supabase = dataComposer.getClient();
   const parsed = sendToInboxSchema.parse(args);
   const resolved = await resolveUserOrThrow(parsed, dataComposer);
@@ -99,7 +120,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     content,
     messageType = 'message',
     priority = 'normal',
-    relatedSessionId,
+    recipientSessionId,
+    recipientStudioId,
+    recipientStudioHint,
     relatedArtifactUri,
     metadata = {},
     expiresAt,
@@ -110,12 +133,56 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   // Enforce identity on sender (who is performing the action), not recipient (target)
   const senderAgentId = getEffectiveAgentId(parsed.senderAgentId);
   const triggerSenderId = senderAgentId || 'system';
+  const effectiveRecipientSessionId = recipientSessionId;
 
   // Default trigger behavior:
-  // Always wake the recipient unless the caller explicitly opts out with trigger=false.
-  // This keeps SB-to-SB coordination immediate by default.
-  const shouldTriggerByDefault = true;
+  // Wake recipient by default for actionable handoffs, but not for casual messages.
+  const shouldTriggerByDefault =
+    messageType === 'task_request' ||
+    messageType === 'session_resume' ||
+    messageType === 'notification';
   const trigger = parsed.trigger ?? shouldTriggerByDefault;
+
+  const hasRoutingAnchor = Boolean(
+    threadKey || effectiveRecipientSessionId || recipientStudioId || recipientStudioHint
+  );
+  const requiresRoutingAnchor = Boolean(senderAgentId) && messageType !== 'message';
+  const missingRoutingAnchor = requiresRoutingAnchor && !hasRoutingAnchor;
+  if (missingRoutingAnchor) {
+    logger.warn('send_to_inbox missing routing anchor for actionable handoff', {
+      messageType,
+      recipientAgentId,
+      senderAgentId,
+    });
+  }
+
+  const reqCtx = getRequestContext();
+  const sessCtx = getSessionContext();
+  const senderSessionId = reqCtx?.sessionId || sessCtx?.sessionId || null;
+  const senderStudioId = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
+  const metadataRecord =
+    metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : {};
+  const existingPcp =
+    metadataRecord.pcp && typeof metadataRecord.pcp === 'object'
+      ? (metadataRecord.pcp as Record<string, unknown>)
+      : {};
+  const enrichedMetadata = {
+    ...metadataRecord,
+    pcp: {
+      ...existingPcp,
+      sender: {
+        agentId: triggerSenderId,
+        sessionId: senderSessionId,
+        studioId: senderStudioId,
+      },
+      recipient: {
+        threadKey: threadKey || null,
+        sessionId: effectiveRecipientSessionId || null,
+        studioId: recipientStudioId || null,
+        studioHint: recipientStudioHint || null,
+      },
+    },
+  };
 
   // Resolve canonical identity UUIDs for sender and recipient
   const recipientIdentityId = await resolveIdentityId(supabase, resolved.user.id, recipientAgentId);
@@ -136,9 +203,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       content,
       message_type: messageType,
       priority,
-      related_session_id: relatedSessionId || null,
+      related_session_id: effectiveRecipientSessionId || null,
       related_artifact_uri: relatedArtifactUri || null,
-      metadata: metadata as Json,
+      metadata: enrichedMetadata as Json,
       expires_at: expiresAt || null,
       thread_key: threadKey || null,
     })
@@ -171,13 +238,6 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
 
   if (trigger) {
     const gateway = getAgentGateway();
-    const metadataStudioId =
-      metadata && typeof metadata.studioId === 'string' && metadata.studioId.length > 0
-        ? metadata.studioId
-        : undefined;
-    const metadataStudioHint =
-      metadata && metadata.studioHint === 'main' ? ('main' as const) : undefined;
-
     const payload: AgentTriggerPayload = {
       fromAgentId: triggerSenderId,
       toAgentId: recipientAgentId,
@@ -186,9 +246,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       summary: triggerSummary || subject || `New ${messageType} from ${triggerSenderId}`,
       priority,
       threadKey,
-      relatedSessionId,
-      studioId: metadataStudioId,
-      studioHint: metadataStudioHint,
+      relatedSessionId: effectiveRecipientSessionId,
+      studioId: recipientStudioId,
+      studioHint: recipientStudioHint,
     };
 
     // Fire-and-forget: don't await the trigger processing
@@ -234,8 +294,17 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           messageType,
           priority,
           threadKey: threadKey || null,
+          recipientSessionId: effectiveRecipientSessionId || null,
+          recipientStudioId: recipientStudioId || null,
+          recipientStudioHint: recipientStudioHint || null,
           createdAt: message.created_at,
           trigger: triggerResult,
+          ...(missingRoutingAnchor
+            ? {
+                routingHint:
+                  'Actionable handoff is missing a routing anchor. Add one of: threadKey, recipientSessionId, recipientStudioId, or recipientStudioHint.',
+              }
+            : {}),
           ...(!threadKey
             ? {
                 hint: 'Consider adding a threadKey (e.g., "pr:32", "spec:cli-hooks") so the recipient can resume the same session for follow-up messages on this topic.',
@@ -480,7 +549,7 @@ export const inboxToolDefinitions = [
   {
     name: 'send_to_inbox',
     description:
-      "Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.\n\nMessage types:\n- message: General communication\n- task_request: Request another agent to do work\n- session_resume: Request agent to resume a specific session\n- notification: FYI, no response needed\n\nUser can be identified by ONE of: userId, email, phone, or platform + platformId",
+      "Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.\n\nMessage types:\n- message: General communication\n- task_request: Request another agent to do work\n- session_resume: Request agent to resume a specific session\n- notification: FYI, no response needed\n\nTrigger defaults:\n- task_request / session_resume / notification: wake recipient by default\n- message: no automatic wake by default\n- override with `trigger` boolean\n\nUser can be identified by ONE of: userId, email, phone, or platform + platformId",
     schema: sendToInboxSchema,
     handler: handleSendToInbox,
   },
