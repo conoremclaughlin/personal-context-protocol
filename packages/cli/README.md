@@ -280,10 +280,14 @@ Hooks are installed to **local-only** config by default (e.g., `.claude/settings
 
 ```bash
 sb session list                 # Recent sessions
+sb session list --flat          # Flat list (default groups by SB/agent)
 sb session show <id>            # Session details
 sb session resume <id>          # Resume a session
 sb session end [id]             # End a session
 ```
+
+`sb session list` now prints grouped SB sections with attach hints:
+`sb chat -a <agent> --session-id <id>`.
 
 ### Workspaces (`sb workspace`)
 
