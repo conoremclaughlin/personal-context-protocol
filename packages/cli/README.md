@@ -20,6 +20,74 @@ yarn workspace @personal-context/cli dev   # tsc --watch in another terminal
 
 To remove: `yarn workspace @personal-context/cli uninstall:cli`
 
+## Getting Started
+
+The setup flow for a first-time user:
+
+### 1. Configure your identity
+
+Create `~/.pcp/config.json` with your email:
+
+```json
+{"email": "you@example.com"}
+```
+
+### 2. Initialize PCP in your repo
+
+```bash
+cd your-project
+sb init
+```
+
+This does everything for a single worktree:
+- Creates `.pcp/` directory
+- Creates `.mcp.json` with PCP server entry
+- Installs lifecycle hooks for the detected backend (Claude Code, Codex, or Gemini)
+- Syncs backend configs (`.codex/config.toml`, `.gemini/settings.json`) from `.mcp.json`
+
+### 3. Install hooks across all worktrees
+
+If you use multiple git worktrees (studios), install hooks in all of them at once:
+
+```bash
+sb hooks install --all
+```
+
+This can be run from **any** worktree — it discovers all siblings via `git worktree list`. Each worktree gets hooks configured for its backend (read from `.pcp/identity.json` or auto-detected from the filesystem).
+
+**Important**: Restart any running REPL sessions after installing hooks. Backends read hook config at startup.
+
+### 4. Create studios for your SBs
+
+Each SB gets its own git worktree (studio) with a dedicated identity:
+
+```bash
+sb studio create lumen --agent lumen --backend codex
+sb studio create aster --agent aster --backend gemini
+```
+
+This creates the worktree, writes `.pcp/identity.json` with the agent ID and backend, installs hooks, and syncs MCP configs.
+
+### 5. Awaken a new SB (optional)
+
+Bring a new SB to life with an interactive ceremony:
+
+```bash
+sb awaken                     # Default backend (Claude Code)
+sb awaken --backend gemini    # Awaken on Gemini
+sb awaken -b codex            # Awaken on Codex
+```
+
+This fetches shared values and sibling identities from PCP, builds an awakening prompt, and drops into an interactive session where you and the new SB choose a name together.
+
+### 6. Start working
+
+```bash
+sb                            # Launch a session as your default SB
+```
+
+Hooks automatically bootstrap identity and check inbox at session start, save context before compaction, and nudge the SB to log decisions periodically.
+
 ## Usage
 
 ```bash
@@ -46,6 +114,7 @@ echo "explain this" | sb
 # Subcommands
 sb init                         # Set up PCP in current repo
 sb hooks install --all          # Install hooks across all worktrees
+sb awaken                       # Awaken a new SB
 sb studio create feat-auth      # Create studio/workspace
 sb agent status                 # Check agent status
 sb session list                 # List sessions
@@ -73,6 +142,17 @@ The agent ID is resolved in order:
 
 ## Subcommands
 
+### Init (`sb init`)
+
+Initialize PCP in the current repo. Idempotent — safe to run multiple times.
+
+```bash
+sb init                          # Auto-detect backend
+sb init --force                  # Overwrite existing hooks
+```
+
+Creates `.pcp/`, `.mcp.json`, installs hooks, and syncs backend configs. Does NOT propagate to other worktrees — use `sb hooks install --all` for that.
+
 ### Studios (`sb studio`)
 
 Git worktree management with per-studio identity.
@@ -93,8 +173,19 @@ Backwards compatibility aliases still work:
 
 Options for `create`:
 - `-a, --agent <agent>` — Agent ID for this studio (default: wren)
+- `--backend <name>` — Primary backend: claude-code, codex, or gemini
 - `-p, --purpose <desc>` — Description
 - `-b, --branch <branch>` — Custom branch (default: `<agent>/workspace/<name>`)
+
+### Awaken (`sb awaken`)
+
+Bring a new SB to life. Fetches shared values and sibling identities from PCP, builds an awakening prompt, and launches an interactive session.
+
+```bash
+sb awaken                       # Awaken on Claude Code
+sb awaken --backend gemini      # Awaken on Gemini
+sb awaken -b codex              # Awaken on Codex
+```
 
 ### Agents (`sb agent`)
 
@@ -122,6 +213,11 @@ sb hooks uninstall --all           # Remove from all worktrees
 
 Hooks are installed to **local-only** config by default (e.g., `.claude/settings.local.json`) so they don't leak into version control. `sb init` runs `sb hooks install` automatically.
 
+Backend detection priority:
+1. `backend` field in `.pcp/identity.json` (set by `sb studio create --backend`)
+2. Filesystem detection (`.claude/` → Claude Code, `.gemini/` → Gemini, `.codex/` → Codex)
+3. Default: Claude Code
+
 **Hook events:**
 
 | PCP Event | What it does | Claude Code | Codex | Gemini |
@@ -140,6 +236,18 @@ sb session show <id>            # Session details
 sb session resume <id>          # Resume a session
 sb session end [id]             # End a session
 ```
+
+### Config Sync (`sb config sync`)
+
+Sync `.mcp.json` to backend-specific formats. Run this after adding new MCP servers.
+
+```bash
+sb config sync                  # Generate .codex/config.toml and .gemini/settings.json
+```
+
+Converts `.mcp.json` entries to each backend's native format:
+- **Codex**: `Bearer ${ENV_VAR}` headers → `bearer_token_env_var` in TOML
+- **Gemini**: Preserves `type: "http"` for server identification
 
 ## Environment Variables
 
