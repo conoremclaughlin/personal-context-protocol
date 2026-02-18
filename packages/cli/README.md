@@ -196,7 +196,7 @@ Options for `create`:
 - `-a, --agent <agent>` — Agent ID for this studio (default: wren)
 - `-p, --purpose <desc>` — Description
 - `-b, --backend <name>` — Primary backend (claude-code, codex, gemini)
-- `-br, --branch <branch>` — Custom branch (default: `<agent>/studio/<name>`)
+- `-br, --branch <branch>` — Custom branch (default: `<agent>/studio/main`)
 
 ### Agents (`sb agent`)
 

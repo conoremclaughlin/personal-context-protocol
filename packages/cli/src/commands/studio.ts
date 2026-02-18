@@ -203,7 +203,7 @@ async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<Int
   });
 
   // Step 2: Branch name (derived, editable)
-  const defaultBranch = `${agentId}/studio/${name}`;
+  const defaultBranch = `${agentId}/studio/main`;
   const branch = await input({
     message: 'Branch name',
     default: defaultBranch,
@@ -409,7 +409,7 @@ async function createStudio(
     const gitRoot = findGitRoot();
     const wsPath = getStudioPath(gitRoot, name);
     // Priority: overrides (from interactive) > options (from flags) > default
-    const branch = overrides?.branch || options.branch || `${agentId}/studio/${name}`;
+    const branch = overrides?.branch || options.branch || `${agentId}/studio/main`;
 
     if (existsSync(wsPath)) {
       spinner.fail(`Studio already exists at ${wsPath}`);
@@ -810,7 +810,7 @@ export function registerStudioCommands(program: Command): void {
     .description('Create a new studio with git worktree')
     .option('-a, --agent <agent>', 'Agent ID for this studio', 'wren')
     .option('-p, --purpose <desc>', 'Description/purpose of the studio')
-    .option('-br, --branch <branch>', 'Custom branch name (default: <agentId>/studio/<name>)')
+    .option('-br, --branch <branch>', 'Custom branch name (default: <agentId>/studio/main)')
     .option('-b, --backend <name>', 'Primary backend (claude-code, codex, gemini)')
     .option('--copy-config', 'Copy config directories into the new studio')
     .option(
