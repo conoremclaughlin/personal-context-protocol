@@ -38,7 +38,10 @@ export function resolveAgentId(cliAgent?: string): string {
   try {
     cwd = process.cwd();
   } catch {
-    /* cwd deleted — skip local identity lookup */
+    console.warn(
+      'warning: could not read current directory — you may be in an orphan directory.\n' +
+        '  Try: cd .. && cd -\n'
+    );
   }
 
   if (cwd) {
