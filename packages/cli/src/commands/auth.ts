@@ -91,6 +91,7 @@ function startCallbackServer(
         const desc = url.searchParams.get('error_description') || error;
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(ERROR_HTML(desc));
+        clearTimeout(timeout);
         rejectResult(new Error(desc));
         return;
       }
@@ -98,6 +99,7 @@ function startCallbackServer(
       if (!code || !state) {
         res.writeHead(400, { 'Content-Type': 'text/html' });
         res.end(ERROR_HTML('Missing code or state parameter'));
+        clearTimeout(timeout);
         rejectResult(new Error('Missing code or state in callback'));
         return;
       }
@@ -105,14 +107,21 @@ function startCallbackServer(
       if (state !== expectedState) {
         res.writeHead(400, { 'Content-Type': 'text/html' });
         res.end(ERROR_HTML('State mismatch — possible CSRF. Try again.'));
+        clearTimeout(timeout);
         rejectResult(new Error('State mismatch'));
         return;
       }
 
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end(SUCCESS_HTML);
+      clearTimeout(timeout);
       resolveResult({ code, state });
     });
+
+    const timeout = setTimeout(() => {
+      rejectResult(new Error('Login timed out'));
+      server.close();
+    }, LOGIN_TIMEOUT_MS);
 
     server.listen(0, '127.0.0.1', () => {
       const addr = server.address();
@@ -120,15 +129,12 @@ function startCallbackServer(
       resolveServer({
         result,
         port,
-        close: () => server.close(),
+        close: () => {
+          clearTimeout(timeout);
+          server.close();
+        },
       });
     });
-
-    // Timeout
-    setTimeout(() => {
-      rejectResult(new Error('Login timed out'));
-      server.close();
-    }, LOGIN_TIMEOUT_MS);
   });
 }
 
