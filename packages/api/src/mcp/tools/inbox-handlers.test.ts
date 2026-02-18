@@ -334,24 +334,6 @@ describe('handleSendToInbox - threadKey', () => {
     );
   });
 
-  it('should require routing anchor for non-message cross-agent handoffs', async () => {
-    const mockSb = createMockSupabase();
-    const mockDc = createMockDataComposer(mockSb);
-
-    await expect(
-      handleSendToInbox(
-        {
-          email: 'test@test.com',
-          recipientAgentId: 'lumen',
-          senderAgentId: 'wren',
-          messageType: 'task_request',
-          content: 'Please do this work',
-        },
-        mockDc as never
-      )
-    ).rejects.toThrow('Missing routing anchor');
-  });
-
   it('should trigger without senderAgentId using system sender', async () => {
     const { getAgentGateway } = await import('../../channels/agent-gateway.js');
     const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
@@ -363,6 +345,7 @@ describe('handleSendToInbox - threadKey', () => {
       {
         email: 'test@test.com',
         recipientAgentId: 'lumen',
+        messageType: 'task_request',
         content: 'Human-sent coordination message',
       },
       mockDc as never
@@ -373,5 +356,52 @@ describe('handleSendToInbox - threadKey', () => {
         fromAgentId: 'system',
       })
     );
+  });
+
+  it('should not trigger by default for message type', async () => {
+    const { getAgentGateway } = await import('../../channels/agent-gateway.js');
+    const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
+
+    const mockSb = createMockSupabase();
+    const mockDc = createMockDataComposer(mockSb);
+
+    const result = await handleSendToInbox(
+      {
+        email: 'test@test.com',
+        recipientAgentId: 'lumen',
+        senderAgentId: 'wren',
+        messageType: 'message',
+        content: 'casual ping',
+      },
+      mockDc as never
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.trigger.triggered).toBe(false);
+    expect(mockGateway.processTrigger).not.toHaveBeenCalled();
+  });
+
+  it('should deliver actionable handoff without anchor and return routing hint', async () => {
+    const { getAgentGateway } = await import('../../channels/agent-gateway.js');
+    const mockGateway = (getAgentGateway as ReturnType<typeof vi.fn>)();
+
+    const mockSb = createMockSupabase();
+    const mockDc = createMockDataComposer(mockSb);
+
+    const result = await handleSendToInbox(
+      {
+        email: 'test@test.com',
+        recipientAgentId: 'lumen',
+        senderAgentId: 'wren',
+        messageType: 'task_request',
+        content: 'Please do this work',
+      },
+      mockDc as never
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.success).toBe(true);
+    expect(parsed.routingHint).toContain('routing anchor');
+    expect(mockGateway.processTrigger).toHaveBeenCalled();
   });
 });

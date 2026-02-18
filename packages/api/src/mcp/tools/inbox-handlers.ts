@@ -67,7 +67,7 @@ const sendToInboxSchema = userIdentifierBaseSchema.extend({
     .boolean()
     .optional()
     .describe(
-      'If true, automatically trigger the recipient agent after sending. Defaults to true for all message types.'
+      'If true, automatically trigger the recipient agent after sending. Defaults to true for task_request, session_resume, and notification; false for message.'
     ),
   triggerType: z
     .enum(['task_complete', 'approval_needed', 'message', 'error', 'custom'])
@@ -131,19 +131,24 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   const effectiveRecipientSessionId = recipientSessionId || relatedSessionId;
 
   // Default trigger behavior:
-  // Always wake the recipient unless the caller explicitly opts out with trigger=false.
-  // This keeps SB-to-SB coordination immediate by default.
-  const shouldTriggerByDefault = true;
+  // Wake recipient by default for actionable handoffs, but not for casual messages.
+  const shouldTriggerByDefault =
+    messageType === 'task_request' ||
+    messageType === 'session_resume' ||
+    messageType === 'notification';
   const trigger = parsed.trigger ?? shouldTriggerByDefault;
 
   const hasRoutingAnchor = Boolean(
     threadKey || effectiveRecipientSessionId || recipientStudioId || recipientStudioHint
   );
   const requiresRoutingAnchor = Boolean(senderAgentId) && messageType !== 'message';
-  if (requiresRoutingAnchor && !hasRoutingAnchor) {
-    throw new Error(
-      'Missing routing anchor. Provide one of: threadKey, recipientSessionId, recipientStudioId, or recipientStudioHint.'
-    );
+  const missingRoutingAnchor = requiresRoutingAnchor && !hasRoutingAnchor;
+  if (missingRoutingAnchor) {
+    logger.warn('send_to_inbox missing routing anchor for actionable handoff', {
+      messageType,
+      recipientAgentId,
+      senderAgentId,
+    });
   }
 
   const reqCtx = getRequestContext();
@@ -291,6 +296,12 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           trigger: triggerResult,
           // Backward compatibility
           relatedSessionId: effectiveRecipientSessionId || null,
+          ...(missingRoutingAnchor
+            ? {
+                routingHint:
+                  'Actionable handoff is missing a routing anchor. Add one of: threadKey, recipientSessionId, recipientStudioId, or recipientStudioHint.',
+              }
+            : {}),
           ...(!threadKey
             ? {
                 hint: 'Consider adding a threadKey (e.g., "pr:32", "spec:cli-hooks") so the recipient can resume the same session for follow-up messages on this topic.',
@@ -535,7 +546,7 @@ export const inboxToolDefinitions = [
   {
     name: 'send_to_inbox',
     description:
-      "Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.\n\nMessage types:\n- message: General communication\n- task_request: Request another agent to do work\n- session_resume: Request agent to resume a specific session\n- notification: FYI, no response needed\n\nUser can be identified by ONE of: userId, email, phone, or platform + platformId",
+      "Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.\n\nMessage types:\n- message: General communication\n- task_request: Request another agent to do work\n- session_resume: Request agent to resume a specific session\n- notification: FYI, no response needed\n\nTrigger defaults:\n- task_request / session_resume / notification: wake recipient by default\n- message: no automatic wake by default\n- override with `trigger` boolean\n\nUser can be identified by ONE of: userId, email, phone, or platform + platformId",
     schema: sendToInboxSchema,
     handler: handleSendToInbox,
   },
