@@ -252,7 +252,30 @@ sb session end [id]             # End a session
 ## Development
 
 ```bash
-yarn workspace @personal-context/cli build      # Build
-yarn workspace @personal-context/cli dev         # Watch mode
+yarn workspace @personal-context/cli build      # Build once
+yarn workspace @personal-context/cli dev         # Watch mode (auto-rebuild on changes)
 yarn workspace @personal-context/cli test        # Run tests
+```
+
+### Running in development mode
+
+The global `sb` symlink points to `packages/cli/dist/cli.js` (compiled output). After pulling new code, rebuild to pick up changes:
+
+```bash
+yarn workspace @personal-context/cli build
+```
+
+For continuous development, run watch mode in a background terminal so changes compile automatically:
+
+```bash
+yarn workspace @personal-context/cli dev         # tsc --watch
+```
+
+To test a feature branch without overwriting the global `sb`:
+
+```bash
+sb studio cli                   # Links as sb-<agent> (e.g., sb-wren)
+sb studio cli --name sb-dev     # Or pick a custom name
+sb-wren auth status             # Test your branch build
+sb studio cli --unlink          # Clean up when done
 ```

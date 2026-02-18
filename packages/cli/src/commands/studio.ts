@@ -795,7 +795,7 @@ export {
 };
 export type { InitResult };
 
-export function registerWorkspaceCommands(program: Command): void {
+export function registerStudioCommands(program: Command): void {
   const ws = program
     .command('studio')
     .alias('ws')

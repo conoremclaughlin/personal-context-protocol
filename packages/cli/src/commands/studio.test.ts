@@ -7,7 +7,7 @@ import { execSync } from 'child_process';
 import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, renameSync } from 'fs';
 import { join, basename } from 'path';
 import { tmpdir } from 'os';
-import { planInit, getWorktreePaths, type InitResult } from './workspace.js';
+import { planInit, getWorktreePaths, type InitResult } from './studio.js';
 
 type Move = InitResult['moves'][number];
 

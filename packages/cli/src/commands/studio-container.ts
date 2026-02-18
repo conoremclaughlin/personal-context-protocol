@@ -438,7 +438,7 @@ function currentWorkspaceContainer(): void {
   console.log(config.workspaceId);
 }
 
-export function registerWorkspaceContainerCommands(program: Command): void {
+export function registerStudioContainerCommands(program: Command): void {
   const workspace = program
     .command('workspace')
     .description('Workspace management (personal/team scope)');
