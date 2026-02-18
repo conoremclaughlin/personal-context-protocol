@@ -254,7 +254,7 @@ function buildPromptEnvelope(
     .join('\n');
 }
 
-async function runChat(options: ChatOptions): Promise<void> {
+export async function runChat(options: ChatOptions): Promise<void> {
   const agentId = resolveAgentId(options.agent);
   const pcp = new PcpClient();
   const identity = readIdentityJson(process.cwd());
@@ -272,7 +272,11 @@ async function runChat(options: ChatOptions): Promise<void> {
     transcriptPath: ensureRuntimeTranscriptPath(),
     activeSkills: [],
   };
-  const toolPolicy = new ToolPolicyState(runtime.toolMode);
+  const policyPathFromEnv = process.env.PCP_TOOL_POLICY_PATH?.trim();
+  const toolPolicy = new ToolPolicyState(
+    runtime.toolMode,
+    policyPathFromEnv ? { policyPath: policyPathFromEnv } : undefined
+  );
 
   const ledger = new ContextLedger();
   const seenInboxIds = new Set<string>();

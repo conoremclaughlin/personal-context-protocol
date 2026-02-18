@@ -360,6 +360,7 @@ Inside REPL:
 | ---------------- | ----------------------- | -------------------------- |
 | `PCP_SERVER_URL` | PCP server URL          | `http://localhost:3001`    |
 | `AGENT_ID`       | Override agent identity | (from identity resolution) |
+| `PCP_TOOL_POLICY_PATH` | Override persisted REPL tool-policy JSON path | `~/.pcp/security/tool-policy.json` |
 
 ## Development
 
