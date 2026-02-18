@@ -743,7 +743,8 @@ This session will continue with a fresh context after compaction. Your identity,
 
       const context = await this.contextBuilder.buildMinimalContext(
         session.userId,
-        session.agentId
+        session.agentId,
+        session
       );
 
       // Fetch user timezone for identity prompt

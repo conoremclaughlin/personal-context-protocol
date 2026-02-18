@@ -361,7 +361,8 @@ export interface IContextBuilder {
    */
   buildMinimalContext(
     userId: string,
-    agentId: string
+    agentId: string,
+    session?: Session
   ): Promise<Pick<InjectedContext, 'temporal' | 'agent'>>;
 
   /**
