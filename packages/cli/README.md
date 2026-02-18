@@ -345,6 +345,8 @@ Inside REPL:
 - `/policy` inspect active policy and storage path
 - `/skills` list discovered local skills from .codex/.pcp/.claude/.gemini roots
 - `/skill-allow <pattern>` add skill pattern to persistent skill allowlist
+- `/path-allow-read <glob>` add a persistent local read allowlist pattern for skills/context files
+- `/path-allow-write <glob>` add a persistent local write allowlist pattern
 - `/skill-use <name>` activate a discovered skill and inject SKILL.md guidance into prompt context
 - `/skill-clear [name]` clear active skills
 - `/pcp <tool> [jsonArgs]` invoke PCP tools directly from REPL

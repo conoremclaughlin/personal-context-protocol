@@ -12,6 +12,8 @@ import { parseSlashCommand } from '../repl/slash.js';
 import { ToolMode, ToolPolicyState } from '../repl/tool-policy.js';
 import { discoverSkills, loadSkillInstruction, type SkillInstruction } from '../repl/skills.js';
 import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-approval.js';
+import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
+import { canActivateSkill, filterSkillsByPolicy } from '../repl/skill-policy.js';
 
 type ChatOptions = {
   agent?: string;
@@ -420,6 +422,8 @@ async function runChat(options: ChatOptions): Promise<void> {
               '/sessions [watch|off]      Show active sessions (or stream each turn)',
               '/skills                    List discovered local skills',
               '/skill-allow <pattern>      Persistently allow skill(s) via pattern',
+              '/path-allow-read <glob>      Persistently allow local reads for matching paths',
+              '/path-allow-write <glob>     Persistently allow local writes for matching paths',
               '/skill-use <name>           Activate a discovered skill for prompts',
               '/skill-clear [name]         Clear active skills (or one skill)',
               '/bookmark [label]          Set context bookmark',
@@ -598,19 +602,16 @@ async function runChat(options: ChatOptions): Promise<void> {
               break;
             }
           }
-          const policy = toolPolicy.canCallPcpTool(tool, runtime.sessionId);
-          if (!policy.allowed) {
-            const approved = await promptForToolApproval(
-              rl,
-              toolPolicy,
-              runtime.sessionId,
-              tool,
-              policy.reason
-            );
-            if (!approved) {
-              console.log(chalk.yellow(`Skipped ${tool}`));
-              break;
-            }
+          const approved = await ensurePcpToolAllowed({
+            policy: toolPolicy,
+            tool,
+            sessionId: runtime.sessionId,
+            prompt: (reason) =>
+              promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason),
+          });
+          if (!approved) {
+            console.log(chalk.yellow(`Skipped ${tool}`));
+            break;
           }
           const result = await pcp.callTool(tool, pcpArgs).catch((error) => ({ error: String(error) }));
           const rendered = JSON.stringify(result, null, 2);
@@ -625,8 +626,10 @@ async function runChat(options: ChatOptions): Promise<void> {
             console.log(chalk.dim('No local skills discovered.'));
             break;
           }
-          const visible = skills.filter((skill) => toolPolicy.isSkillAllowed(skill.name));
-          const blocked = skills.length - visible.length;
+          const filtered = filterSkillsByPolicy(skills, toolPolicy);
+          const visible = filtered.visible;
+          const blockedByPolicy = filtered.blockedBySkill.length;
+          const blockedByPath = filtered.blockedByPath.length;
           console.log(chalk.bold(`Discovered skills (${skills.length})`));
           for (const skill of visible.slice(0, 80)) {
             const active = runtime.activeSkills.some((entry) => entry.path === skill.path) ? ' *active*' : '';
@@ -635,8 +638,11 @@ async function runChat(options: ChatOptions): Promise<void> {
           if (visible.length > 80) {
             console.log(chalk.dim(`... and ${visible.length - 80} more visible skills`));
           }
-          if (blocked > 0) {
-            console.log(chalk.yellow(`${blocked} skills hidden by skill policy allowlist`));
+          if (blockedByPolicy > 0) {
+            console.log(chalk.yellow(`${blockedByPolicy} skills hidden by skill allowlist policy`));
+          }
+          if (blockedByPath > 0) {
+            console.log(chalk.yellow(`${blockedByPath} skills hidden by read-path allowlist policy`));
           }
           break;
         }
@@ -648,6 +654,26 @@ async function runChat(options: ChatOptions): Promise<void> {
           }
           toolPolicy.allowSkill(skill);
           console.log(chalk.green(`Allowed skill: ${skill}`));
+          break;
+        }
+        case 'path-allow-read': {
+          const pattern = slash.args.join(' ').trim();
+          if (!pattern) {
+            console.log(chalk.yellow('Usage: /path-allow-read <glob>'));
+            break;
+          }
+          toolPolicy.addReadPathAllow(pattern);
+          console.log(chalk.green(`Allowed read path: ${pattern}`));
+          break;
+        }
+        case 'path-allow-write': {
+          const pattern = slash.args.join(' ').trim();
+          if (!pattern) {
+            console.log(chalk.yellow('Usage: /path-allow-write <glob>'));
+            break;
+          }
+          toolPolicy.addWritePathAllow(pattern);
+          console.log(chalk.green(`Allowed write path: ${pattern}`));
           break;
         }
         case 'skill-use': {
@@ -662,8 +688,9 @@ async function runChat(options: ChatOptions): Promise<void> {
             break;
           }
           const [skill] = skills;
-          if (!toolPolicy.isSkillAllowed(skill.name)) {
-            console.log(chalk.yellow(`Skill blocked by allowlist policy: ${skill.name}`));
+          const activation = canActivateSkill(skill, toolPolicy);
+          if (!activation.allowed) {
+            console.log(chalk.yellow(activation.reason || 'Skill blocked by policy'));
             break;
           }
           const loaded = loadSkillInstruction(skill);
