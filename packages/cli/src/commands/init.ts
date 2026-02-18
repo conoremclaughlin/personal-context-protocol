@@ -83,6 +83,21 @@ function ensureMcpJson(cwd: string): InitStepResult {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf-8')) as Record<string, unknown>;
       const servers = existing.mcpServers as Record<string, unknown> | undefined;
       if (servers?.pcp) {
+        // Migrate existing pcp entry to include auth header if missing
+        const pcpEntry = servers.pcp as Record<string, unknown>;
+        const headers = pcpEntry.headers as Record<string, string> | undefined;
+        if (!headers?.Authorization) {
+          const updatedPcp = {
+            ...pcpEntry,
+            headers: { ...headers, Authorization: 'Bearer ${PCP_ACCESS_TOKEN}' },
+          };
+          const updated = {
+            ...existing,
+            mcpServers: { ...servers, pcp: updatedPcp },
+          };
+          writeFileSync(mcpPath, JSON.stringify(updated, null, 2) + '\n');
+          return { label: '.mcp.json', status: 'updated', detail: 'added auth header to pcp entry' };
+        }
         return { label: '.mcp.json', status: 'exists', detail: 'pcp server configured' };
       }
       // Add pcp server to existing config
