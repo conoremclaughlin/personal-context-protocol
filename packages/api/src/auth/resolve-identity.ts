@@ -17,10 +17,10 @@ export async function resolveIdentityId(
 ): Promise<string | null> {
   const { data, error } = await supabase
     .from('agent_identities')
-    .select('id')
+    .select('id, workspace_id, updated_at')
     .eq('user_id', userId)
     .eq('agent_id', agentId)
-    .maybeSingle();
+    .order('updated_at', { ascending: false });
 
   if (error) {
     logger.warn('Failed to resolve identity UUID for agent slug', {
@@ -31,5 +31,20 @@ export async function resolveIdentityId(
     return null;
   }
 
-  return data?.id ?? null;
+  if (!data || data.length === 0) return null;
+
+  if (data.length > 1) {
+    // Prefer workspace-scoped identities over legacy null workspace rows.
+    const scoped = data.find((row) => row.workspace_id !== null);
+    if (scoped) {
+      logger.warn('Resolved identity UUID from multiple candidates (preferred workspace-scoped row)', {
+        userId,
+        agentId,
+        chosenIdentityId: scoped.id,
+      });
+      return scoped.id;
+    }
+  }
+
+  return data[0]?.id ?? null;
 }

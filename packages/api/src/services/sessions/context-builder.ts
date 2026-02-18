@@ -120,7 +120,7 @@ export class ContextBuilder implements IContextBuilder {
   async buildContext(userId: string, agentId: string, session: Session): Promise<InjectedContext> {
     // Fetch all required data in parallel
     const [agentIdentity, user, contacts, recentMemories, activeProjects] = await Promise.all([
-      this.getAgentIdentity(userId, agentId),
+      this.getAgentIdentity(userId, agentId, session.identityId),
       this.getUser(userId),
       this.getContacts(userId),
       this.getRecentMemories(userId, agentId),
@@ -170,10 +170,11 @@ export class ContextBuilder implements IContextBuilder {
 
   async buildMinimalContext(
     userId: string,
-    agentId: string
+    agentId: string,
+    session?: Session
   ): Promise<Pick<InjectedContext, 'temporal' | 'agent'>> {
     const [agentIdentity, user] = await Promise.all([
-      this.getAgentIdentity(userId, agentId),
+      this.getAgentIdentity(userId, agentId, session?.identityId),
       this.getUser(userId),
     ]);
 
@@ -207,24 +208,68 @@ export class ContextBuilder implements IContextBuilder {
     return data?.backend || null;
   }
 
-  private async getAgentIdentity(userId: string, agentId: string): Promise<AgentIdentity | null> {
+  private async getAgentIdentity(
+    userId: string,
+    agentId: string,
+    identityId?: string
+  ): Promise<AgentIdentity | null> {
+    if (identityId) {
+      const { data: byId, error: byIdError } = await this.supabase
+        .from('agent_identities')
+        .select('*')
+        .eq('id', identityId)
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .maybeSingle();
+
+      if (byIdError) {
+        logger.error('Error fetching agent identity by identityId', { userId, agentId, identityId, error: byIdError });
+        throw byIdError;
+      }
+
+      if (byId) {
+        return mapAgentIdentity(byId);
+      }
+
+      logger.warn('Session identityId did not resolve; falling back to slug lookup', {
+        userId,
+        agentId,
+        identityId,
+      });
+    }
+
     const { data, error } = await this.supabase
       .from('agent_identities')
       .select('*')
       .eq('user_id', userId)
       .eq('agent_id', agentId)
-      .single();
+      .order('updated_at', { ascending: false });
 
     if (error) {
-      if (error.code === 'PGRST116') {
-        logger.warn('Agent identity not found', { userId, agentId });
-        return null;
-      }
       logger.error('Error fetching agent identity', { userId, agentId, error });
       throw error;
     }
 
-    return data ? mapAgentIdentity(data) : null;
+    if (!data || data.length === 0) {
+      logger.warn('Agent identity not found', { userId, agentId });
+      return null;
+    }
+
+    let chosen = data[0];
+    if (data.length > 1) {
+      const scoped = data.find((row) => row.workspace_id !== null);
+      if (scoped) {
+        chosen = scoped;
+      }
+      logger.warn('Multiple agent identities found; choosing deterministic row', {
+        userId,
+        agentId,
+        chosenIdentityId: chosen.id,
+        candidateCount: data.length,
+      });
+    }
+
+    return mapAgentIdentity(chosen);
   }
 
   private async getUser(userId: string): Promise<DbUser | null> {
