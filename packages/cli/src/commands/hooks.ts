@@ -82,12 +82,12 @@ const GEMINI: HookCapabilities = {
   configFormat: 'json',
   events: {
     sessionStart: 'session_start',
-    preCompact: null,
+    preCompact: 'PreCompress',
     postCompact: null,
     onPrompt: null,
     onStop: 'session_end',
   },
-  supportsCompaction: false,
+  supportsCompaction: true,
   supportsPromptHook: false,
 };
 

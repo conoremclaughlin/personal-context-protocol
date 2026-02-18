@@ -38,7 +38,10 @@ Each working directory (studio/worktree) needs a `.mcp.json` file so the agent c
   "mcpServers": {
     "supabase": {
       "type": "http",
-      "url": "https://mcp.supabase.com/mcp?project_ref=<your-project-ref>"
+      "url": "https://mcp.supabase.com/mcp",
+      "headers": {
+        "x-supabase-project-ref": "<your-project-ref>"
+      }
     },
     "pcp": {
       "type": "http",

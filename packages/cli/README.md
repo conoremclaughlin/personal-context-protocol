@@ -152,18 +152,19 @@ sb --help                       # Full help
 
 ### SB Options
 
-| Flag | Description | Default |
-|------|-------------|---------|
-| `-a, --agent <id>` | Agent identity | `wren` (or from `.pcp/identity.json`) |
-| `-m, --model <model>` | Model (sonnet, opus, haiku) | `sonnet` |
-| `--no-session` | Disable session tracking | enabled |
-| `-v, --verbose` | Show debug output | off |
+| Flag                  | Description                 | Default                               |
+| --------------------- | --------------------------- | ------------------------------------- |
+| `-a, --agent <id>`    | Agent identity              | `wren` (or from `.pcp/identity.json`) |
+| `-m, --model <model>` | Model (sonnet, opus, haiku) | `sonnet`                              |
+| `--no-session`        | Disable session tracking    | enabled                               |
+| `-v, --verbose`       | Show debug output           | off                                   |
 
 Any flag not listed above is forwarded to Claude Code.
 
 ### Identity Resolution
 
 The agent ID is resolved in order:
+
 1. `-a` / `--agent` flag
 2. `.pcp/identity.json` in current directory
 3. `~/.pcp/config.json` → `agentMapping.claude-code`
@@ -189,10 +190,12 @@ sb studio cli --unlink          # Remove linked binary
 ```
 
 Backwards compatibility aliases still work:
+
 - `sb ws ...`
 - `sb workspace ...`
 
 Options for `create`:
+
 - `-a, --agent <agent>` — Agent ID for this studio (default: wren)
 - `-p, --purpose <desc>` — Description
 - `-b, --backend <name>` — Primary backend (claude-code, codex, gemini)
@@ -226,13 +229,13 @@ Hooks are installed to **local-only** config by default (e.g., `.claude/settings
 
 **Hook events:**
 
-| PCP Event | What it does | Claude Code | Codex | Gemini |
-|---|---|---|---|---|
-| `on-session-start` | Bootstrap identity + inbox | `SessionStart` | `session_start` | `session_start` |
-| `pre-compact` | Save context before compaction | `PreCompact` | — | — |
-| `post-compact` | Re-bootstrap after compaction | `SessionStart` | — | — |
-| `on-prompt` | Periodic inbox check | `UserPromptSubmit` | — | — |
-| `on-stop` | Session nudge + inbox check | `Stop` | `session_end` | `session_end` |
+| PCP Event          | What it does                   | Claude Code        | Codex           | Gemini          |
+| ------------------ | ------------------------------ | ------------------ | --------------- | --------------- |
+| `on-session-start` | Bootstrap identity + inbox     | `SessionStart`     | `session_start` | `session_start` |
+| `pre-compact`      | Save context before compaction | `PreCompact`       | —               | `PreCompress`   |
+| `post-compact`     | Re-bootstrap after compaction  | `SessionStart`     | —               | —               |
+| `on-prompt`        | Periodic inbox check           | `UserPromptSubmit` | —               | —               |
+| `on-stop`          | Session nudge + inbox check    | `Stop`             | `session_end`   | `session_end`   |
 
 ### Sessions (`sb session`)
 
@@ -245,10 +248,10 @@ sb session end [id]             # End a session
 
 ## Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PCP_SERVER_URL` | PCP server URL | `http://localhost:3001` |
-| `AGENT_ID` | Override agent identity | (from identity resolution) |
+| Variable         | Description             | Default                    |
+| ---------------- | ----------------------- | -------------------------- |
+| `PCP_SERVER_URL` | PCP server URL          | `http://localhost:3001`    |
+| `AGENT_ID`       | Override agent identity | (from identity resolution) |
 
 ## Development
 
