@@ -28,6 +28,7 @@ import { registerHooksCommands } from './commands/hooks.js';
 import { registerInitCommand } from './commands/init.js';
 import { registerAuthCommands } from './commands/auth.js';
 import { registerChatCommand } from './commands/chat.js';
+import { registerDoctorCommand } from './commands/doctor.js';
 import { runClaude, runClaudeInteractive } from './commands/claude.js';
 import { resolveBackend } from './backends/index.js';
 
@@ -179,6 +180,7 @@ registerHooksCommands(program);
 registerInitCommand(program);
 registerAuthCommands(program);
 registerChatCommand(program);
+registerDoctorCommand(program);
 
 // ============================================================================
 // Subcommand detection
