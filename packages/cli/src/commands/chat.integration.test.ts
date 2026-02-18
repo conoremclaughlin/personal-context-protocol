@@ -199,6 +199,7 @@ describe('runChat integration', () => {
                 status: 'active',
                 currentPhase: 'implementing',
                 threadKey: 'pr:61',
+                backendSessionId: 'codex-backend-a',
               },
               {
                 id: 'sess-b222',
@@ -206,6 +207,7 @@ describe('runChat integration', () => {
                 status: 'active',
                 currentPhase: 'reviewing',
                 threadKey: 'spec:cli-session-hooks',
+                backendSessionId: 'codex-backend-b',
               },
             ],
           };
@@ -231,6 +233,53 @@ describe('runChat integration', () => {
     const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(sessionStatusLine).toContain('Session: sess-b222');
     expect(sessionStatusLine).toContain('Thread: spec:cli-session-hooks');
+    expect(sessionStatusLine).toContain('codex-backend-a');
+    expect(sessionStatusLine).toContain('codex-backend-b');
+  });
+
+  it('supports attach-latest without prompting', async () => {
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'list_sessions':
+          return {
+            sessions: [
+              {
+                id: 'sess-old',
+                agentId: 'lumen',
+                status: 'active',
+                threadKey: 'pr:1',
+                startedAt: '2026-02-18T18:00:00.000Z',
+              },
+              {
+                id: 'sess-new',
+                agentId: 'lumen',
+                status: 'active',
+                threadKey: 'pr:2',
+                startedAt: '2026-02-18T19:00:00.000Z',
+              },
+            ],
+          };
+        case 'get_inbox':
+          return { messages: [] };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      attachLatest: true,
+      pollSeconds: '999',
+    });
+
+    const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(sessionStatusLine).not.toContain('Select session to attach');
+    expect(sessionStatusLine).toContain('Session: sess-new');
+    expect(sessionStatusLine).toContain('Thread: pr:2');
   });
 
   it('supports gated /pcp tool execution with inline approval', async () => {

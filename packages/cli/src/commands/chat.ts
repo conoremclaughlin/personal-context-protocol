@@ -30,6 +30,7 @@ type ChatOptions = {
   model?: string;
   threadKey?: string;
   attach?: string | boolean;
+  attachLatest?: string | boolean;
   sessionId?: string;
   maxContextTokens?: string;
   pollSeconds?: string;
@@ -69,6 +70,8 @@ interface SessionSummary {
   currentPhase?: string;
   threadKey?: string;
   startedAt?: string;
+  backendSessionId?: string;
+  claudeSessionId?: string;
 }
 
 function ensureRuntimeTranscriptPath(sessionId?: string): string {
@@ -251,6 +254,18 @@ function extractSessionSummaries(result: Record<string, unknown> | null | undefi
         currentPhase: typeof row.currentPhase === 'string' ? row.currentPhase : undefined,
         threadKey: typeof row.threadKey === 'string' ? row.threadKey : undefined,
         startedAt: typeof row.startedAt === 'string' ? row.startedAt : undefined,
+        backendSessionId:
+          typeof row.backendSessionId === 'string'
+            ? row.backendSessionId
+            : typeof row.backend_session_id === 'string'
+              ? row.backend_session_id
+              : undefined,
+        claudeSessionId:
+          typeof row.claudeSessionId === 'string'
+            ? row.claudeSessionId
+            : typeof row.claude_session_id === 'string'
+              ? row.claude_session_id
+              : undefined,
       };
     })
     .filter((session): session is SessionSummary => Boolean(session));
@@ -290,14 +305,15 @@ function printSessionsSnapshot(sessions: SessionSummary[]): void {
   }
 
   console.log(chalk.bold('\nActive sessions'));
-  console.log(chalk.dim('id       agent   status/phase            thread        started'));
+  console.log(chalk.dim('id       agent   status/phase            thread        started   backend'));
   for (const session of sessions) {
     const id = session.id.slice(0, 7).padEnd(7);
     const agent = (session.agentId || '-').slice(0, 6).padEnd(6);
     const status = (session.currentPhase || session.status || '-').slice(0, 22).padEnd(22);
     const thread = (session.threadKey || '-').slice(0, 12).padEnd(12);
     const started = formatStartedAt(session.startedAt);
-    console.log(chalk.dim(`${id}  ${agent}  ${status}  ${thread}  ${started}`));
+    const backend = (session.backendSessionId || session.claudeSessionId || '-').slice(0, 10);
+    console.log(chalk.dim(`${id}  ${agent}  ${status}  ${thread}  ${started.padEnd(7)}  ${backend}`));
   }
   console.log('');
 }
@@ -306,7 +322,7 @@ function matchesAttachQuery(session: SessionSummary, query?: string): boolean {
   if (!query) return true;
   const haystack = `${session.id} ${session.agentId || ''} ${session.threadKey || ''} ${
     session.currentPhase || session.status || ''
-  }`.toLowerCase();
+  } ${session.backendSessionId || session.claudeSessionId || ''}`.toLowerCase();
   return haystack.includes(query.toLowerCase());
 }
 
@@ -326,7 +342,7 @@ async function pickSessionToAttach(
       chalk.dim(
         `  ${String(i + 1).padStart(2, ' ')}. ${session.id.slice(0, 8)}  ${
           session.agentId || '-'
-        }  ${phase}  ${session.threadKey || '-'}`
+        }  ${phase}  ${session.threadKey || '-'}  ${session.backendSessionId || session.claudeSessionId || '-'}`
       )
     );
   }
@@ -342,6 +358,16 @@ async function pickSessionToAttach(
   } finally {
     rl.close();
   }
+}
+
+function pickLatestSession(sessions: SessionSummary[], query?: string): SessionSummary | undefined {
+  const candidates = sessions.filter((session) => matchesAttachQuery(session, query));
+  if (candidates.length === 0) return undefined;
+  return candidates.sort((a, b) => {
+    const ams = a.startedAt ? Date.parse(a.startedAt) : 0;
+    const bms = b.startedAt ? Date.parse(b.startedAt) : 0;
+    return bms - ams;
+  })[0];
 }
 
 async function promptForToolApproval(
@@ -478,8 +504,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
     );
   }
 
-  if (options.attach && !runtime.sessionId) {
+  if ((options.attach || options.attachLatest) && !runtime.sessionId) {
     const attachQuery = typeof options.attach === 'string' ? options.attach.trim() : undefined;
+    const attachLatestQuery =
+      typeof options.attachLatest === 'string' ? options.attachLatest.trim() : undefined;
+    const query = attachLatestQuery || attachQuery;
     const sessionsResult = (await pcp
       .callTool('list_sessions', { agentId, status: 'active', limit: 30 })
       .catch((error) => ({ error: String(error) }))) as Record<string, unknown>;
@@ -489,7 +518,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
 
     const sessions = extractSessionSummaries(sessionsResult);
-    const selected = await pickSessionToAttach(sessions, attachQuery);
+    const selected = options.attachLatest
+      ? pickLatestSession(sessions, query)
+      : await pickSessionToAttach(sessions, query);
     if (!selected) {
       throw new Error('No matching active session selected for attach.');
     }
@@ -1125,6 +1156,10 @@ export function registerChatCommand(program: Command): void {
       .option('-m, --model <model>', 'Model override for backend')
       .option('--thread-key <key>', 'Thread key for PCP session routing')
       .option('--attach [query]', 'Attach to an active session for this SB (optional query filter)')
+      .option(
+        '--attach-latest [query]',
+        'Attach to newest active session for this SB (optional query filter)'
+      )
       .option('--session-id <id>', 'Attach chat to an existing PCP session id')
       .option('--max-context-tokens <n>', 'Approximate context budget for transcript', '12000')
       .option('--poll-seconds <n>', 'Inbox polling interval seconds', '20')
