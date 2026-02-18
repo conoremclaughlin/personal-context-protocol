@@ -9,6 +9,8 @@ import { PcpClient } from '../lib/pcp-client.js';
 import { runBackendTurn } from '../repl/backend-runner.js';
 import { ContextLedger, estimateTokens } from '../repl/context-ledger.js';
 import { parseSlashCommand } from '../repl/slash.js';
+import { ToolMode, ToolPolicyState } from '../repl/tool-policy.js';
+import { discoverSkills } from '../repl/skills.js';
 
 type ChatOptions = {
   agent?: string;
@@ -33,12 +35,22 @@ interface ChatRuntime {
   backend: string;
   model?: string;
   verbose: boolean;
-  toolMode: 'backend' | 'off';
+  toolMode: ToolMode;
   threadKey?: string;
   sessionId?: string;
   maxContextTokens: number;
   pollSeconds: number;
+  showSessionsWatch: boolean;
   transcriptPath: string;
+}
+
+interface SessionSummary {
+  id: string;
+  agentId?: string;
+  status?: string;
+  currentPhase?: string;
+  threadKey?: string;
+  startedAt?: string;
 }
 
 function ensureRuntimeTranscriptPath(sessionId?: string): string {
@@ -90,6 +102,30 @@ function extractInboxMessages(result: Record<string, unknown> | null | undefined
     .filter((m): m is InboxMessage => Boolean(m));
 }
 
+function extractSessionSummaries(result: Record<string, unknown> | null | undefined): SessionSummary[] {
+  if (!result) return [];
+  const candidate =
+    (Array.isArray(result.sessions) ? result.sessions : undefined) ||
+    (Array.isArray(result.data) ? result.data : undefined) ||
+    [];
+
+  return candidate
+    .map((entry): SessionSummary | undefined => {
+      const row = entry as Record<string, unknown>;
+      const id = row.id;
+      if (typeof id !== 'string') return undefined;
+      return {
+        id,
+        agentId: typeof row.agentId === 'string' ? row.agentId : undefined,
+        status: typeof row.status === 'string' ? row.status : undefined,
+        currentPhase: typeof row.currentPhase === 'string' ? row.currentPhase : undefined,
+        threadKey: typeof row.threadKey === 'string' ? row.threadKey : undefined,
+        startedAt: typeof row.startedAt === 'string' ? row.startedAt : undefined,
+      };
+    })
+    .filter((session): session is SessionSummary => Boolean(session));
+}
+
 function summarizeForSessionEnd(ledger: ContextLedger): string {
   const entries = ledger.listEntries().slice(-8);
   const snippets = entries
@@ -108,6 +144,32 @@ function printUsage(ledger: ContextLedger, maxContextTokens: number): void {
       `Context: ~${total.toLocaleString()} tok / ${maxContextTokens.toLocaleString()} (${pct.toFixed(1)}%)`
     )
   );
+}
+
+function formatStartedAt(value?: string): string {
+  if (!value) return '-';
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return value;
+  return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function printSessionsSnapshot(sessions: SessionSummary[]): void {
+  if (sessions.length === 0) {
+    console.log(chalk.dim('No active sessions found.'));
+    return;
+  }
+
+  console.log(chalk.bold('\nActive sessions'));
+  console.log(chalk.dim('id       agent   status/phase            thread        started'));
+  for (const session of sessions) {
+    const id = session.id.slice(0, 7).padEnd(7);
+    const agent = (session.agentId || '-').slice(0, 6).padEnd(6);
+    const status = (session.currentPhase || session.status || '-').slice(0, 22).padEnd(22);
+    const thread = (session.threadKey || '-').slice(0, 12).padEnd(12);
+    const started = formatStartedAt(session.startedAt);
+    console.log(chalk.dim(`${id}  ${agent}  ${status}  ${thread}  ${started}`));
+  }
+  console.log('');
 }
 
 function buildPromptEnvelope(
@@ -130,6 +192,9 @@ function buildPromptEnvelope(
     runtime.toolMode === 'off'
       ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
       : '',
+    runtime.toolMode === 'privileged'
+      ? 'Backend-native tools are enabled and external actions are allowed when needed.'
+      : '',
     runtime.threadKey ? `Thread key: ${runtime.threadKey}.` : '',
     '',
     'Conversation transcript:',
@@ -151,16 +216,21 @@ async function runChat(options: ChatOptions): Promise<void> {
     backend: options.backend || 'claude',
     model: options.model,
     verbose: options.verbose ?? false,
-    toolMode: options.tools === 'off' ? 'off' : 'backend',
+    toolMode:
+      options.tools === 'off' ? 'off' : options.tools === 'privileged' ? 'privileged' : 'backend',
     threadKey: options.threadKey,
     maxContextTokens: Number.parseInt(options.maxContextTokens || '12000', 10),
     pollSeconds: Number.parseInt(options.pollSeconds || '20', 10),
+    showSessionsWatch: false,
     transcriptPath: ensureRuntimeTranscriptPath(),
   };
+  const toolPolicy = new ToolPolicyState(runtime.toolMode);
 
   const ledger = new ContextLedger();
   const seenInboxIds = new Set<string>();
   let pollTimer: NodeJS.Timeout | null = null;
+  let sessionsCache: SessionSummary[] = [];
+  let sessionsCacheAt = 0;
 
   const bootstrapResult = (await pcp
     .callTool('bootstrap', { agentId })
@@ -225,6 +295,17 @@ async function runChat(options: ChatOptions): Promise<void> {
   console.log(chalk.dim(`Transcript: ${runtime.transcriptPath}`));
   console.log(chalk.dim('Type /help for commands.\n'));
 
+  const refreshSessionsSnapshot = async (force = false): Promise<SessionSummary[]> => {
+    const stale = Date.now() - sessionsCacheAt > 15_000;
+    if (!force && !stale) return sessionsCache;
+    const result = (await pcp
+      .callTool('list_sessions', { limit: 20, status: 'active' })
+      .catch(() => null)) as Record<string, unknown> | null;
+    sessionsCache = extractSessionSummaries(result);
+    sessionsCacheAt = Date.now();
+    return sessionsCache;
+  };
+
   const pollInbox = async (force = false): Promise<number> => {
     const inboxResult = (await pcp
       .callTool('get_inbox', { agentId, status: 'unread', limit: 10 })
@@ -261,6 +342,10 @@ async function runChat(options: ChatOptions): Promise<void> {
   let keepRunning = true;
 
   while (keepRunning) {
+    if (runtime.showSessionsWatch) {
+      const snapshot = await refreshSessionsSnapshot(false);
+      printSessionsSnapshot(snapshot);
+    }
     printUsage(ledger, runtime.maxContextTokens);
     const raw = (await rl.question(chalk.green(`${agentId}> `))).trim();
     if (!raw) continue;
@@ -278,9 +363,12 @@ async function runChat(options: ChatOptions): Promise<void> {
               '/session                   Show active session info',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
-              '/tools <backend|off>       Toggle backend-native tools',
+              '/tools <backend|off|privileged>  Toggle backend-native tools/policy',
+              '/grant <tool> [uses]       Grant blocked PCP tool for limited uses',
               '/pcp <tool> [jsonArgs]     Call a PCP tool directly',
               '/thread [key]              Show/set active thread key',
+              '/sessions [watch|off]      Show active sessions (or stream each turn)',
+              '/skills                    List discovered local skills',
               '/bookmark [label]          Set context bookmark',
               '/bookmarks                 List bookmarks',
               '/eject <bookmark|last>     Eject context up to bookmark',
@@ -307,6 +395,20 @@ async function runChat(options: ChatOptions): Promise<void> {
             )
           );
           break;
+        case 'sessions': {
+          const mode = slash.args[0];
+          if (mode === 'watch') {
+            runtime.showSessionsWatch = true;
+            console.log(chalk.green('Session watch enabled.'));
+          } else if (mode === 'off') {
+            runtime.showSessionsWatch = false;
+            console.log(chalk.green('Session watch disabled.'));
+          } else {
+            const snapshot = await refreshSessionsSnapshot(true);
+            printSessionsSnapshot(snapshot);
+          }
+          break;
+        }
         case 'backend': {
           const next = slash.args[0];
           if (!next || !['claude', 'codex', 'gemini'].includes(next)) {
@@ -326,15 +428,31 @@ async function runChat(options: ChatOptions): Promise<void> {
         case 'tools': {
           const next = slash.args[0];
           if (!next) {
+            const grants = toolPolicy.listGrants();
             console.log(chalk.dim(`Tool mode: ${runtime.toolMode}`));
+            if (grants.length > 0) {
+              console.log(chalk.dim(`Grants: ${grants.map((g) => `${g.tool}(${g.uses})`).join(', ')}`));
+            }
             break;
           }
-          if (next !== 'backend' && next !== 'off') {
-            console.log(chalk.yellow('Usage: /tools <backend|off>'));
+          if (next !== 'backend' && next !== 'off' && next !== 'privileged') {
+            console.log(chalk.yellow('Usage: /tools <backend|off|privileged>'));
             break;
           }
           runtime.toolMode = next;
+          toolPolicy.setMode(next);
           console.log(chalk.green(`Tool mode set to ${next}`));
+          break;
+        }
+        case 'grant': {
+          const tool = slash.args[0];
+          if (!tool) {
+            console.log(chalk.yellow('Usage: /grant <tool> [uses]'));
+            break;
+          }
+          const uses = Number.parseInt(slash.args[1] || '1', 10);
+          toolPolicy.grantTool(tool, Number.isNaN(uses) ? 1 : uses);
+          console.log(chalk.green(`Granted ${tool} for ${Number.isNaN(uses) ? 1 : uses} use(s).`));
           break;
         }
         case 'pcp': {
@@ -353,11 +471,31 @@ async function runChat(options: ChatOptions): Promise<void> {
               break;
             }
           }
+          const policy = toolPolicy.canCallPcpTool(tool);
+          if (!policy.allowed) {
+            console.log(chalk.yellow(policy.reason));
+            break;
+          }
           const result = await pcp.callTool(tool, pcpArgs).catch((error) => ({ error: String(error) }));
           const rendered = JSON.stringify(result, null, 2);
           ledger.addEntry('system', `PCP ${tool} -> ${rendered}`, 'pcp');
           appendTranscript(runtime.transcriptPath, { type: 'pcp_tool', tool, args: pcpArgs, result });
           console.log(rendered);
+          break;
+        }
+        case 'skills': {
+          const skills = discoverSkills(process.cwd());
+          if (skills.length === 0) {
+            console.log(chalk.dim('No local skills discovered.'));
+            break;
+          }
+          console.log(chalk.bold(`Discovered skills (${skills.length})`));
+          for (const skill of skills.slice(0, 80)) {
+            console.log(chalk.dim(`- ${skill.name} [${skill.source}]`));
+          }
+          if (skills.length > 80) {
+            console.log(chalk.dim(`... and ${skills.length - 80} more`));
+          }
           break;
         }
         case 'thread': {
@@ -470,6 +608,8 @@ async function runChat(options: ChatOptions): Promise<void> {
       model: runtime.model,
       prompt,
       verbose: runtime.verbose,
+      // When tools are off, do not pass through backend tool passthrough flags.
+      passthroughArgs: toolPolicy.canUseBackendTools() ? [] : ['--allowedTools', ''],
     });
 
     let responseText = runResult.stdout.trim();
@@ -522,16 +662,20 @@ async function runChat(options: ChatOptions): Promise<void> {
 }
 
 export function registerChatCommand(program: Command): void {
-  program
-    .command('chat')
-    .description('Start first-class PCP REPL (experimental)')
-    .option('-a, --agent <id>', 'Agent identity to use')
-    .option('-b, --backend <name>', 'Backend: claude, codex, gemini', 'claude')
-    .option('-m, --model <model>', 'Model override for backend')
-    .option('--thread-key <key>', 'Thread key for PCP session routing')
-    .option('--max-context-tokens <n>', 'Approximate context budget for transcript', '12000')
-    .option('--poll-seconds <n>', 'Inbox polling interval seconds', '20')
-    .option('--tools <mode>', 'Tool mode: backend|off', 'backend')
-    .option('-v, --verbose', 'Verbose backend passthrough output')
-    .action((options: ChatOptions) => runChat(options));
+  const register = (name: string, description: string) =>
+    program
+      .command(name)
+      .description(description)
+      .option('-a, --agent <id>', 'Agent identity to use')
+      .option('-b, --backend <name>', 'Backend: claude, codex, gemini', 'claude')
+      .option('-m, --model <model>', 'Model override for backend')
+      .option('--thread-key <key>', 'Thread key for PCP session routing')
+      .option('--max-context-tokens <n>', 'Approximate context budget for transcript', '12000')
+      .option('--poll-seconds <n>', 'Inbox polling interval seconds', '20')
+      .option('--tools <mode>', 'Tool mode: backend|off|privileged', 'backend')
+      .option('-v, --verbose', 'Verbose backend passthrough output')
+      .action((options: ChatOptions) => runChat(options));
+
+  register('chat', 'Start first-class PCP REPL (experimental)');
+  register('alpha', 'Alias for `sb chat` (experimental)');
 }

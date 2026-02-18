@@ -317,22 +317,27 @@ Options for `invite`:
 
 ```bash
 sb chat                          # Start REPL (default backend: claude)
+sb alpha                         # Alias for sb chat
 sb chat -b codex                 # Use codex backend
 sb chat -b gemini                # Use gemini backend
 sb chat --thread-key pr:123      # Bind to collaborative thread
 sb chat --max-context-tokens 16000
 sb chat --poll-seconds 10
 sb chat --tools off              # Disable backend-native tool usage
+sb chat --tools privileged       # Allow broad tool execution
 ```
 
 Inside REPL:
 
 - `/inbox` force inbox refresh
+- `/sessions [watch|off]` show active sessions (id + SB + status + thread)
 - `/bookmark [label]` create a context bookmark
 - `/eject <bookmark|last>` eject context up to bookmark (and persist a `remember` checkpoint)
 - `/backend <claude|codex|gemini>` switch backend
 - `/model <id>` set/clear model override
-- `/tools <backend|off>` toggle backend-native tools
+- `/tools <backend|off|privileged>` adjust tool policy mode
+- `/grant <tool> [uses]` scoped grant for blocked PCP tool calls
+- `/skills` list discovered local skills from .codex/.pcp/.claude/.gemini roots
 - `/pcp <tool> [jsonArgs]` invoke PCP tools directly from REPL
 - `/usage` show approximate context token usage
 - `/session` show session/thread routing info
