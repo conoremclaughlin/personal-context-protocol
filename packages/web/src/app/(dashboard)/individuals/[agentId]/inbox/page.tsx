@@ -1,21 +1,28 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from '@/components/ui/sheet';
+import {
   ArrowLeft,
   ChevronRight,
   ChevronLeft,
   Inbox,
+  Info,
   Mail,
   MessageSquare,
   AlertCircle,
   User,
-  X,
 } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
@@ -28,8 +35,11 @@ interface InboxMessage {
   priority: string;
   status: string;
   senderAgentId: string | null;
+  senderIdentityId: string | null;
+  recipientAgentId: string;
+  recipientIdentityId: string | null;
   threadKey: string | null;
-  relatedSessionId: string | null;
+  recipientSessionId: string | null;
   relatedArtifactUri: string | null;
   metadata: Record<string, unknown> | null;
   createdAt: string;
@@ -40,6 +50,7 @@ interface InboxMessage {
 
 interface ThreadGroup {
   threadKey: string;
+  counterpart: string;
   messageCount: number;
   unreadCount: number;
   latestMessage: InboxMessage;
@@ -134,9 +145,20 @@ function agentColor(name: string): string {
 // MessageItem — Discord/Slack-style chat bubble
 // ---------------------------------------------------------------------------
 
-function MessageItem({ message, compact }: { message: InboxMessage; compact?: boolean }) {
+function MessageItem({
+  message,
+  compact,
+  inboxAgentId,
+  onShowRouting,
+}: {
+  message: InboxMessage;
+  compact?: boolean;
+  inboxAgentId: string;
+  onShowRouting?: (message: InboxMessage) => void;
+}) {
   const sender = message.senderAgentId || 'unknown';
   const isAgent = !!message.senderAgentId;
+  const isSent = message.senderAgentId === inboxAgentId;
 
   return (
     <div
@@ -164,6 +186,9 @@ function MessageItem({ message, compact }: { message: InboxMessage; compact?: bo
         {!compact && (
           <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-sm font-semibold text-gray-900">{sender}</span>
+            {isSent && (
+              <span className="text-xs text-gray-400">&rarr; {message.recipientAgentId}</span>
+            )}
             <span className="text-xs text-gray-400">{formatTimestamp(message.createdAt)}</span>
             {message.messageType !== 'message' && (
               <Badge
@@ -185,9 +210,9 @@ function MessageItem({ message, compact }: { message: InboxMessage; compact?: bo
                 {message.priority}
               </Badge>
             )}
-            {message.relatedSessionId && (
+            {message.recipientSessionId && (
               <Link
-                href={`/sessions/${message.relatedSessionId}`}
+                href={`/sessions/${message.recipientSessionId}`}
                 className="text-[10px] text-blue-500 hover:text-blue-700 hover:underline"
               >
                 session
@@ -204,6 +229,20 @@ function MessageItem({ message, compact }: { message: InboxMessage; compact?: bo
           </div>
         )}
       </div>
+
+      {/* Routing info button (hover) */}
+      {onShowRouting && (
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onShowRouting(message);
+          }}
+          className="shrink-0 self-center rounded p-1 text-gray-300 opacity-0 transition-opacity hover:bg-gray-100 hover:text-gray-500 group-hover:opacity-100"
+          title="Routing details"
+        >
+          <Info className="h-3.5 w-3.5" />
+        </button>
+      )}
 
       {/* Hover timestamp for compact messages */}
       {compact && (
@@ -241,26 +280,23 @@ function ThreadRow({
           : 'border-gray-200 bg-white hover:bg-gray-50/50'
       )}
     >
-      {/* Stacked participant avatars */}
-      <div className="flex -space-x-2 shrink-0">
-        {thread.participants.slice(0, 3).map((p) => (
-          <div
-            key={p}
-            className={clsx(
-              'flex h-7 w-7 items-center justify-center rounded-full text-white text-[10px] font-semibold ring-2 ring-white',
-              agentColor(p)
-            )}
-            title={p}
-          >
-            {p.slice(0, 2).toUpperCase()}
-          </div>
-        ))}
+      {/* Counterpart avatar */}
+      <div
+        className={clsx(
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white text-xs font-semibold',
+          agentColor(thread.counterpart)
+        )}
+        title={thread.counterpart}
+      >
+        {thread.counterpart.slice(0, 2).toUpperCase()}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="font-mono text-xs shrink-0">
             {thread.threadKey}
           </Badge>
+          <span className="text-xs text-gray-400">&middot;</span>
+          <span className="text-xs font-medium text-gray-700">{thread.counterpart}</span>
           <span className="text-xs text-gray-500">{thread.messageCount} msgs</span>
           {thread.unreadCount > 0 && (
             <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-semibold text-white">
@@ -281,21 +317,20 @@ function ThreadRow({
 }
 
 // ---------------------------------------------------------------------------
-// ThreadPanel — slide-out from right showing full conversation
+// ThreadMessages — chat message list rendered inside the Sheet
 // ---------------------------------------------------------------------------
 
-function ThreadPanel({
+function ThreadMessages({
   thread,
   messages,
   agentId,
-  onClose,
+  onShowRouting,
 }: {
   thread?: ThreadGroup;
   messages?: InboxMessage[];
   agentId: string;
-  onClose: () => void;
+  onShowRouting: (message: InboxMessage) => void;
 }) {
-  const panelRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   // Scroll to bottom when thread changes
@@ -304,44 +339,55 @@ function ThreadPanel({
   }, [thread?.threadKey, messages?.[0]?.id]);
 
   const displayMessages = thread?.messages || messages || [];
-  const title = thread?.threadKey || 'Message';
 
   return (
-    <div
-      ref={panelRef}
-      className="fixed inset-y-0 right-0 z-40 flex w-full max-w-lg flex-col border-l border-gray-200 bg-white shadow-xl animate-in slide-in-from-right duration-500"
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <MessageSquare className="h-4 w-4 text-gray-500" />
-            <h2 className="text-sm font-semibold text-gray-900 truncate">{title}</h2>
-          </div>
-          {thread && (
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-gray-500">
-              <span>{thread.messageCount} messages</span>
-              <span>&middot;</span>
-              <span>
-                {thread.participants.join(', ')} &rarr; {agentId}
-              </span>
-            </div>
-          )}
-        </div>
-        <Button variant="ghost" size="sm" onClick={onClose} className="shrink-0">
-          <X className="h-4 w-4" />
-        </Button>
-      </div>
+    <div className="flex-1 overflow-y-auto px-1 py-3">
+      {displayMessages.map((msg, i) => {
+        const prevMsg = i > 0 ? displayMessages[i - 1] : null;
+        const sameSender = prevMsg?.senderAgentId === msg.senderAgentId;
+        return (
+          <MessageItem
+            key={msg.id}
+            message={msg}
+            compact={sameSender}
+            inboxAgentId={agentId}
+            onShowRouting={onShowRouting}
+          />
+        );
+      })}
+      <div ref={bottomRef} />
+    </div>
+  );
+}
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-1 py-3">
-        {displayMessages.map((msg, i) => {
-          const prevMsg = i > 0 ? displayMessages[i - 1] : null;
-          const sameSender = prevMsg?.senderAgentId === msg.senderAgentId;
-          return <MessageItem key={msg.id} message={msg} compact={sameSender} />;
-        })}
-        <div ref={bottomRef} />
-      </div>
+// ---------------------------------------------------------------------------
+// RoutingField — key/value row for the routing detail sheet
+// ---------------------------------------------------------------------------
+
+function RoutingField({
+  label,
+  value,
+  mono,
+  href,
+}: {
+  label: string;
+  value: string | null | undefined;
+  mono?: boolean;
+  href?: string;
+}) {
+  const display = value || <span className="text-gray-300">--</span>;
+  return (
+    <div>
+      <dt className="text-xs text-gray-500">{label}</dt>
+      <dd className={clsx('mt-0.5', mono && 'font-mono text-xs', !mono && 'text-sm')}>
+        {href ? (
+          <Link href={href} className="text-blue-600 hover:text-blue-800 hover:underline">
+            {display}
+          </Link>
+        ) : (
+          display
+        )}
+      </dd>
     </div>
   );
 }
@@ -363,19 +409,8 @@ export default function InboxPage() {
   const [activeThread, setActiveThread] = useState<string | null>(null);
   const [activeMessage, setActiveMessage] = useState<string | null>(null);
 
-  const closePanel = useCallback(() => {
-    setActiveThread(null);
-    setActiveMessage(null);
-  }, []);
-
-  // Close panel on Escape
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') closePanel();
-    };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
-  }, [closePanel]);
+  // Routing detail sheet
+  const [routingMessage, setRoutingMessage] = useState<InboxMessage | null>(null);
 
   const queryPath = useMemo(() => {
     const qp = new URLSearchParams();
@@ -405,8 +440,9 @@ export default function InboxPage() {
   const flatMessages = data?.flatMessages || [];
   const pagination = data?.pagination;
 
+  const threadGroupKey = (t: ThreadGroup) => `${t.threadKey}|${t.counterpart}`;
   const selectedThread = activeThread
-    ? threads.find((t) => t.threadKey === activeThread)
+    ? threads.find((t) => threadGroupKey(t) === activeThread)
     : undefined;
   const selectedMessage = activeMessage
     ? flatMessages.find((m) => m.id === activeMessage)
@@ -518,17 +554,20 @@ export default function InboxPage() {
                 <CardDescription>Click a thread to view the full conversation.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2">
-                {threads.map((thread) => (
-                  <ThreadRow
-                    key={thread.threadKey}
-                    thread={thread}
-                    isActive={activeThread === thread.threadKey}
-                    onClick={() => {
-                      setActiveMessage(null);
-                      setActiveThread(activeThread === thread.threadKey ? null : thread.threadKey);
-                    }}
-                  />
-                ))}
+                {threads.map((thread) => {
+                  const gk = threadGroupKey(thread);
+                  return (
+                    <ThreadRow
+                      key={gk}
+                      thread={thread}
+                      isActive={activeThread === gk}
+                      onClick={() => {
+                        setActiveMessage(null);
+                        setActiveThread(activeThread === gk ? null : gk);
+                      }}
+                    />
+                  );
+                })}
               </CardContent>
             </Card>
           )}
@@ -558,7 +597,11 @@ export default function InboxPage() {
                       activeMessage === msg.id && 'ring-1 ring-blue-200 bg-blue-50/50'
                     )}
                   >
-                    <MessageItem message={msg} />
+                    <MessageItem
+                      message={msg}
+                      inboxAgentId={agentId}
+                      onShowRouting={setRoutingMessage}
+                    />
                   </button>
                 ))}
               </CardContent>
@@ -598,21 +641,163 @@ export default function InboxPage() {
         </div>
       )}
 
-      {/* Backdrop */}
-      {panelOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/20 animate-in fade-in duration-500"
-          onClick={closePanel}
-        />
-      )}
-
       {/* Slide-out panel */}
-      {selectedThread && (
-        <ThreadPanel thread={selectedThread} agentId={agentId} onClose={closePanel} />
-      )}
-      {selectedMessage && (
-        <ThreadPanel messages={[selectedMessage]} agentId={agentId} onClose={closePanel} />
-      )}
+      <Sheet
+        open={panelOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setActiveThread(null);
+            setActiveMessage(null);
+          }
+        }}
+      >
+        <SheetContent side="right" className="flex flex-col p-0">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-gray-500" />
+              {selectedThread
+                ? `${selectedThread.threadKey} · ${selectedThread.counterpart}`
+                : 'Message'}
+            </SheetTitle>
+            {selectedThread && (
+              <SheetDescription>
+                {selectedThread.messageCount} messages &middot; {agentId} &harr;{' '}
+                {selectedThread.counterpart}
+              </SheetDescription>
+            )}
+          </SheetHeader>
+          {(selectedThread || selectedMessage) && (
+            <ThreadMessages
+              thread={selectedThread}
+              messages={selectedMessage ? [selectedMessage] : undefined}
+              agentId={agentId}
+              onShowRouting={setRoutingMessage}
+            />
+          )}
+        </SheetContent>
+      </Sheet>
+
+      {/* Routing detail sheet */}
+      <Sheet open={!!routingMessage} onOpenChange={(open) => !open && setRoutingMessage(null)}>
+        <SheetContent side="right" className="p-0">
+          <SheetHeader>
+            <SheetTitle className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-gray-500" />
+              Message Routing
+            </SheetTitle>
+            <SheetDescription>Routing and identity details for debugging.</SheetDescription>
+          </SheetHeader>
+          {routingMessage && (
+            <div className="overflow-y-auto px-6 py-4">
+              <dl className="space-y-4 text-sm">
+                <RoutingField label="Message ID" value={routingMessage.id} mono />
+                <RoutingField label="Status" value={routingMessage.status} />
+                <RoutingField label="Type" value={routingMessage.messageType} />
+                <RoutingField label="Priority" value={routingMessage.priority} />
+                <RoutingField
+                  label="Created"
+                  value={new Date(routingMessage.createdAt).toLocaleString()}
+                />
+
+                <div className="border-t pt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                    Sender
+                  </h3>
+                  <div className="space-y-3">
+                    <RoutingField label="Agent ID" value={routingMessage.senderAgentId} />
+                    <RoutingField
+                      label="Identity ID"
+                      value={routingMessage.senderIdentityId}
+                      mono
+                    />
+                  </div>
+                </div>
+
+                <div className="border-t pt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                    Recipient
+                  </h3>
+                  <div className="space-y-3">
+                    <RoutingField label="Agent ID" value={routingMessage.recipientAgentId} />
+                    <RoutingField
+                      label="Identity ID"
+                      value={routingMessage.recipientIdentityId}
+                      mono
+                    />
+                  </div>
+                </div>
+
+                <div className="border-t pt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                    Routing
+                  </h3>
+                  <div className="space-y-3">
+                    <RoutingField label="Thread Key" value={routingMessage.threadKey} />
+                    <RoutingField
+                      label="Recipient Session"
+                      value={routingMessage.recipientSessionId}
+                      mono
+                      href={
+                        routingMessage.recipientSessionId
+                          ? `/sessions/${routingMessage.recipientSessionId}`
+                          : undefined
+                      }
+                    />
+                    <RoutingField
+                      label="Artifact URI"
+                      value={routingMessage.relatedArtifactUri}
+                      mono
+                    />
+                  </div>
+                </div>
+
+                {routingMessage.metadata && Object.keys(routingMessage.metadata).length > 0 && (
+                  <div className="border-t pt-4">
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                      Metadata
+                    </h3>
+                    <pre className="rounded-md bg-gray-50 p-3 text-xs text-gray-700 overflow-x-auto">
+                      {JSON.stringify(routingMessage.metadata, null, 2)}
+                    </pre>
+                  </div>
+                )}
+
+                <div className="border-t pt-4">
+                  <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-3">
+                    Timestamps
+                  </h3>
+                  <div className="space-y-3">
+                    <RoutingField
+                      label="Read"
+                      value={
+                        routingMessage.readAt
+                          ? new Date(routingMessage.readAt).toLocaleString()
+                          : null
+                      }
+                    />
+                    <RoutingField
+                      label="Acknowledged"
+                      value={
+                        routingMessage.acknowledgedAt
+                          ? new Date(routingMessage.acknowledgedAt).toLocaleString()
+                          : null
+                      }
+                    />
+                    <RoutingField
+                      label="Expires"
+                      value={
+                        routingMessage.expiresAt
+                          ? new Date(routingMessage.expiresAt).toLocaleString()
+                          : null
+                      }
+                    />
+                  </div>
+                </div>
+              </dl>
+            </div>
+          )}
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
