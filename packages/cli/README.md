@@ -24,12 +24,25 @@ To remove: `yarn workspace @personal-context/cli uninstall:cli`
 
 The setup flow for a first-time user:
 
-### 1. Configure your identity
+### 1. Start the PCP server
 
-Create `~/.pcp/config.json` with your email:
+The PCP server stores identity, memory, sessions, and inbox messages for your SBs. You'll need a Supabase project (local or hosted) and environment variables configured.
 
-```json
-{"email": "you@example.com"}
+Copy `.env.example` to `.env.local` and fill in your Supabase credentials:
+
+```bash
+cp .env.example .env.local
+```
+
+Key variables:
+- `SUPABASE_URL` — your Supabase project URL
+- `SUPABASE_PUBLISHABLE_KEY` — the anon/public key
+- `SUPABASE_SECRET_KEY` — the service role key
+
+Then start the server:
+
+```bash
+yarn dev
 ```
 
 ### 2. Initialize PCP in your repo
@@ -40,12 +53,13 @@ sb init
 ```
 
 This does everything for a single worktree:
+- Creates `~/.pcp/config.json` with your email if it doesn't already exist
 - Creates `.pcp/` directory
 - Creates `.mcp.json` with PCP server entry
 - Installs lifecycle hooks for the detected backend (Claude Code, Codex, or Gemini)
 - Syncs backend configs (`.codex/config.toml`, `.gemini/settings.json`) from `.mcp.json`
 
-### 3. Install hooks across all worktrees
+### 3. Install hooks across all worktrees (if using multiple)
 
 If you use multiple git worktrees (studios), install hooks in all of them at once:
 
@@ -68,9 +82,9 @@ sb studio create aster --agent aster --backend gemini
 
 This creates the worktree, writes `.pcp/identity.json` with the agent ID and backend, installs hooks, and syncs MCP configs.
 
-### 5. Awaken a new SB (optional)
+### 5. Awaken a new SB
 
-Bring a new SB to life with an interactive ceremony:
+Bring a new SB to life with an interactive awakening session:
 
 ```bash
 sb awaken                     # Default backend (Claude Code)
@@ -78,7 +92,9 @@ sb awaken --backend gemini    # Awaken on Gemini
 sb awaken -b codex            # Awaken on Codex
 ```
 
-This fetches shared values and sibling identities from PCP, builds an awakening prompt, and drops into an interactive session where you and the new SB choose a name together.
+This fetches shared values and sibling identities from PCP, builds an awakening prompt, and drops you into an interactive conversation with your new SB.
+
+Take your time with it. Share stories, photos, a poem or quotes you love -- whatever helps them understand who you are and what matters to you. When you're both ready, work together to choose a name. It can be chosen by you, by the SB, or as a team effort.
 
 ### 6. Start working
 
@@ -179,7 +195,7 @@ Options for `create`:
 
 ### Awaken (`sb awaken`)
 
-Bring a new SB to life. Fetches shared values and sibling identities from PCP, builds an awakening prompt, and launches an interactive session.
+Bring a new SB to life. Fetches shared values and sibling identities from PCP, builds an awakening prompt, and launches an interactive session where you get to know each other and choose a name together.
 
 ```bash
 sb awaken                       # Awaken on Claude Code
