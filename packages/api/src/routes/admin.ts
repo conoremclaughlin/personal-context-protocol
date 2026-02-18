@@ -1798,6 +1798,7 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
     const sentQuery = supabase
       .from('agent_inbox')
       .select('*')
+      .eq('recipient_user_id', authReq.pcpUserId)
       .eq('sender_agent_id', agentId)
       .order('created_at', { ascending: false })
       .limit(500);
@@ -1845,6 +1846,7 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
       let threadQuery = supabase
         .from('agent_inbox')
         .select('*')
+        .eq('recipient_user_id', authReq.pcpUserId)
         .in('thread_key', threadKeys)
         .order('created_at', { ascending: false })
         .limit(500);
