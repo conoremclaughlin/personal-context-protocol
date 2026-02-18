@@ -586,14 +586,23 @@ export default function InboxPage() {
               </CardHeader>
               <CardContent className="space-y-1">
                 {flatMessages.map((msg) => (
-                  <button
+                  <div
                     key={msg.id}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => {
                       setActiveThread(null);
                       setActiveMessage(activeMessage === msg.id ? null : msg.id);
                     }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        setActiveThread(null);
+                        setActiveMessage(activeMessage === msg.id ? null : msg.id);
+                      }
+                    }}
                     className={clsx(
-                      'w-full text-left rounded-md transition-colors',
+                      'w-full text-left rounded-md transition-colors cursor-pointer',
                       activeMessage === msg.id && 'ring-1 ring-blue-200 bg-blue-50/50'
                     )}
                   >
@@ -602,7 +611,7 @@ export default function InboxPage() {
                       inboxAgentId={agentId}
                       onShowRouting={setRoutingMessage}
                     />
-                  </button>
+                  </div>
                 ))}
               </CardContent>
             </Card>
