@@ -149,7 +149,10 @@ function toActivityLogItem(row: {
     role: roleFromActivityType(row.type),
     content: truncateText(combined),
     timestamp: row.created_at,
-    metadata: row.payload && typeof row.payload === 'object' ? (row.payload as Record<string, unknown>) : undefined,
+    metadata:
+      row.payload && typeof row.payload === 'object'
+        ? (row.payload as Record<string, unknown>)
+        : undefined,
   };
 }
 
@@ -320,9 +323,7 @@ async function fetchCloudSessionLogs(
   const activityItems = (activityRows || []).map(toActivityLogItem);
   const sessionItems = (sessionLogRows || [])
     .filter(
-      (
-        row
-      ): row is { id: string; content: string; salience: string; created_at: string } =>
+      (row): row is { id: string; content: string; salience: string; created_at: string } =>
         typeof row.created_at === 'string' && row.created_at.length > 0
     )
     .map(toSessionLogItem);
@@ -1762,6 +1763,158 @@ router.get(
 );
 
 // =============================================================================
+// Agent Inbox
+// =============================================================================
+
+/**
+ * GET /api/admin/individuals/:agentId/inbox
+ * Get threaded inbox view for an agent, grouped by thread_key.
+ * Messages without a thread_key are returned as flat messages (routed to the SB's main process).
+ */
+router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) => {
+  try {
+    const { agentId } = req.params;
+    const authReq = req as AdminAuthRequest;
+    const status = (req.query.status as string) || 'all';
+    const messageType = req.query.messageType as string | undefined;
+    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
+    const offset = parseInt(req.query.offset as string) || 0;
+
+    const supabase: SupabaseClient<Database> = createClient(
+      env.SUPABASE_URL,
+      env.SUPABASE_SECRET_KEY
+    );
+
+    let query = supabase
+      .from('agent_inbox')
+      .select('*')
+      .eq('recipient_user_id', authReq.pcpUserId)
+      .eq('recipient_agent_id', agentId)
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    if (status !== 'all') query = query.eq('status', status);
+    if (messageType) query = query.eq('message_type', messageType);
+
+    const { data: messages, error } = await query;
+
+    if (error) {
+      logger.error('Failed to fetch inbox:', error);
+      res.status(500).json({ error: 'Failed to fetch inbox' });
+      return;
+    }
+
+    const allMessages = messages || [];
+
+    interface MappedMessage {
+      id: string;
+      subject: string | null;
+      content: string;
+      messageType: string;
+      priority: string;
+      status: string;
+      senderAgentId: string | null;
+      threadKey: string | null;
+      relatedSessionId: string | null;
+      relatedArtifactUri: string | null;
+      metadata: Record<string, unknown> | null;
+      createdAt: string;
+      readAt: string | null;
+      acknowledgedAt: string | null;
+      expiresAt: string | null;
+    }
+
+    const mapMessage = (m: (typeof allMessages)[0]): MappedMessage => ({
+      id: m.id,
+      subject: m.subject,
+      content: m.content,
+      messageType: m.message_type,
+      priority: m.priority,
+      status: m.status,
+      senderAgentId: m.sender_agent_id,
+      threadKey: m.thread_key,
+      relatedSessionId: m.related_session_id,
+      relatedArtifactUri: m.related_artifact_uri,
+      metadata: m.metadata as Record<string, unknown> | null,
+      createdAt: m.created_at,
+      readAt: m.read_at,
+      acknowledgedAt: m.acknowledged_at,
+      expiresAt: m.expires_at,
+    });
+
+    // Group by thread_key — messages without thread_key go to flatMessages
+    // (these are routed to the SB's main process, not a specific thread)
+    const threadedMap = new Map<string, MappedMessage[]>();
+    const flatMessages: MappedMessage[] = [];
+
+    for (const m of allMessages) {
+      const mapped = mapMessage(m);
+      if (m.thread_key) {
+        const existing = threadedMap.get(m.thread_key) || [];
+        existing.push(mapped);
+        threadedMap.set(m.thread_key, existing);
+      } else {
+        flatMessages.push(mapped);
+      }
+    }
+
+    // Build thread groups
+    const threads = [];
+    for (const [threadKey, msgs] of threadedMap) {
+      const sorted = msgs.sort(
+        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
+      threads.push({
+        threadKey,
+        messageCount: sorted.length,
+        unreadCount: sorted.filter((m) => m.status === 'unread').length,
+        latestMessage: sorted[sorted.length - 1],
+        participants: [...new Set(sorted.map((m) => m.senderAgentId).filter(Boolean))] as string[],
+        firstMessageAt: sorted[0].createdAt,
+        lastMessageAt: sorted[sorted.length - 1].createdAt,
+        messages: sorted,
+      });
+    }
+
+    // Sort threads by latest message descending
+    threads.sort(
+      (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
+
+    const totalItems = threads.length + flatMessages.length;
+    const unreadCount = allMessages.filter((m) => m.status === 'unread').length;
+
+    // Paginate: threads first, then flat messages
+    const paginatedThreads = threads.slice(offset, offset + limit);
+    const remainingSlots = limit - paginatedThreads.length;
+    const flatOffset = Math.max(0, offset - threads.length);
+    const paginatedFlat =
+      remainingSlots > 0 ? flatMessages.slice(flatOffset, flatOffset + remainingSlots) : [];
+
+    res.json({
+      agentId,
+      stats: {
+        totalMessages: allMessages.length,
+        unreadCount,
+        threadCount: threads.length,
+        flatCount: flatMessages.length,
+      },
+      threads: paginatedThreads,
+      flatMessages: paginatedFlat,
+      pagination: {
+        limit,
+        offset,
+        totalThreads: totalItems,
+        hasMore: offset + limit < totalItems,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to get inbox:', error);
+    res.status(500).json({ error: 'Failed to get inbox' });
+  }
+});
+
+// =============================================================================
 // Connected Accounts (OAuth)
 // =============================================================================
 
@@ -2757,7 +2910,9 @@ router.get('/sessions', async (req: Request, res: Response) => {
           preview: previewsBySessionId.get(s.id) || [],
           workspace: workspacesBySessionId.get(s.id) || null,
           studio:
-            studiosById.get(s.studio_id || s.workspace_id || '') || workspacesBySessionId.get(s.id) || null,
+            studiosById.get(s.studio_id || s.workspace_id || '') ||
+            workspacesBySessionId.get(s.id) ||
+            null,
         };
       }),
     });
@@ -2777,7 +2932,11 @@ router.get('/sessions/:id/logs', async (req: Request, res: Response) => {
     const authReq = req as AdminAuthRequest;
     const limit = Math.min(
       MAX_SESSION_LOG_LIMIT,
-      Math.max(1, Number.parseInt(String(req.query.limit || DEFAULT_SESSION_LOG_LIMIT), 10) || DEFAULT_SESSION_LOG_LIMIT)
+      Math.max(
+        1,
+        Number.parseInt(String(req.query.limit || DEFAULT_SESSION_LOG_LIMIT), 10) ||
+          DEFAULT_SESSION_LOG_LIMIT
+      )
     );
     const offset = Math.max(0, Number.parseInt(String(req.query.offset || 0), 10) || 0);
     const includeLocal = req.query.includeLocal !== 'false';
@@ -2788,7 +2947,9 @@ router.get('/sessions/:id/logs', async (req: Request, res: Response) => {
 
     const { data: session, error: sessionError } = await supabase
       .from('sessions')
-      .select('id, agent_id, status, current_phase, started_at, updated_at, ended_at, backend, backend_session_id, claude_session_id')
+      .select(
+        'id, agent_id, status, current_phase, started_at, updated_at, ended_at, backend, backend_session_id, claude_session_id'
+      )
       .eq('id', sessionId)
       .eq('user_id', authReq.pcpUserId)
       .single();
@@ -2801,7 +2962,10 @@ router.get('/sessions/:id/logs', async (req: Request, res: Response) => {
     const [cloudLogs, localLogs] = await Promise.all([
       fetchCloudSessionLogs(supabase, authReq.pcpUserId, sessionId),
       includeLocal
-        ? tryReadLocalTranscript(session.backend_session_id || session.claude_session_id, session.backend)
+        ? tryReadLocalTranscript(
+            session.backend_session_id || session.claude_session_id,
+            session.backend
+          )
         : Promise.resolve([]),
     ]);
 
