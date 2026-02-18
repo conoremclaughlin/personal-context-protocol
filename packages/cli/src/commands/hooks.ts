@@ -22,7 +22,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
-import { resolveAgentId } from '../backends/identity.js';
+import { resolveAgentId, readIdentityJson } from '../backends/identity.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -101,6 +101,14 @@ interface PcpConfig {
 // ============================================================================
 
 function detectBackend(cwd: string): HookCapabilities {
+  // 1. Check .pcp/identity.json for explicit backend
+  const identity = readIdentityJson(cwd);
+  if (identity?.backend) {
+    const fromIdentity = getBackendByName(identity.backend);
+    if (fromIdentity) return fromIdentity;
+  }
+
+  // 2. Fallback to filesystem detection
   if (existsSync(join(cwd, '.claude'))) return CLAUDE_CODE;
   if (existsSync(join(cwd, '.gemini'))) return GEMINI;
   if (existsSync(join(cwd, 'codex.toml')) || existsSync(join(cwd, '.codex'))) return CODEX;
