@@ -217,7 +217,7 @@ async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<Int
   let configDirs: string[] = [];
   if (candidateDirs.length > 0) {
     configDirs = await checkbox({
-      message: 'Copy config folders?',
+      message: 'Copy config folders? (space to toggle, enter to confirm)',
       choices: candidateDirs.map((dir) => ({
         name: dir,
         value: dir,
