@@ -15,6 +15,8 @@ export interface Memory {
   id: string;
   userId: string;
   content: string;
+  summary?: string; // One-liner for bootstrap injection. Falls back to truncated content.
+  topicKey?: string; // Primary structured topic key (e.g., "project:pcp/memory"). Follows type:identifier convention.
   source: MemorySource;
   salience: Salience;
   topics: string[];
@@ -46,6 +48,8 @@ export interface MemoryHistory {
 export interface MemoryCreateInput {
   userId: string;
   content: string;
+  summary?: string; // One-liner for bootstrap injection
+  topicKey?: string; // Primary structured topic key (e.g., "decision:jwt-auth")
   source?: MemorySource;
   salience?: Salience;
   topics?: string[];
@@ -123,6 +127,8 @@ export interface MemoryRow {
   id: string;
   user_id: string;
   content: string;
+  summary: string | null;
+  topic_key: string | null;
   source: MemorySource;
   salience: Salience;
   topics: string[];
@@ -139,6 +145,8 @@ export interface MemoryHistoryRow {
   memory_id: string;
   user_id: string;
   content: string;
+  summary: string | null;
+  topic_key: string | null;
   source: MemorySource;
   salience: Salience;
   topics: string[];
