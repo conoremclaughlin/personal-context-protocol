@@ -1142,32 +1142,6 @@ describe('MemoryRepository', () => {
       expect(limitCalls).toContainEqual([30]);
       expect(limitCalls).toContainEqual([25]);
     });
-
-    it('should apply time window filter for high memories', async () => {
-      mockSupabase._setArrayData([]);
-
-      await repo.getKnowledgeMemories('user-456', undefined, 10, 14);
-
-      // gte should be called for the time window on the high query
-      const gteCalls = (mockSupabase._queryBuilder.gte as ReturnType<typeof vi.fn>).mock.calls;
-      const createdAtFilter = gteCalls.find(([col]: [string]) => col === 'created_at');
-      expect(createdAtFilter).toBeDefined();
-      // The cutoff should be roughly 14 days ago
-      const cutoff = new Date(createdAtFilter![1]);
-      const daysAgo = (Date.now() - cutoff.getTime()) / (24 * 60 * 60 * 1000);
-      expect(daysAgo).toBeGreaterThan(13);
-      expect(daysAgo).toBeLessThan(15);
-    });
-
-    it('should not apply time window when highWindowDays is 0', async () => {
-      mockSupabase._setArrayData([]);
-
-      await repo.getKnowledgeMemories('user-456', undefined, 10, 0);
-
-      const gteCalls = (mockSupabase._queryBuilder.gte as ReturnType<typeof vi.fn>).mock.calls;
-      const createdAtFilter = gteCalls.filter(([col]: [string]) => col === 'created_at');
-      expect(createdAtFilter).toHaveLength(0);
-    });
   });
 
   describe('getCachedSummary', () => {

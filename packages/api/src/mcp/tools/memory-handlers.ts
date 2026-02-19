@@ -480,7 +480,7 @@ export const bootstrapSchema = userIdentifierBaseSchema.extend({
     .max(100)
     .optional()
     .describe(
-      '[Deprecated — use BOOTSTRAP_HIGH_MEMORY_LIMIT env var] Max high-salience memories. Defaults are now controlled server-side.'
+      'Max high-salience memories to fetch for knowledge summary (default: 50). Critical memories always included regardless.'
     ),
   agentId: z
     .string()
@@ -1536,14 +1536,9 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     dataComposer.repositories.sessionFocus.findLatestByUser(user.id),
     // All active sessions (filter by agentId if provided) — client picks the right one
     dataComposer.repositories.memory.getActiveSessions(user.id, agentId),
-    // Knowledge memories: critical (uncapped by time) + recent high (windowed)
+    // Knowledge memories: all critical + recent high (for knowledge summary)
     includeMemories
-      ? dataComposer.repositories.memory.getKnowledgeMemories(
-          user.id,
-          agentId,
-          parseInt(process.env.BOOTSTRAP_HIGH_MEMORY_LIMIT || '10', 10),
-          parseInt(process.env.BOOTSTRAP_HIGH_WINDOW_DAYS || '7', 10)
-        )
+      ? dataComposer.repositories.memory.getKnowledgeMemories(user.id, agentId)
       : Promise.resolve([]),
     // Database identity (for cloud agents, includes metadata, heartbeat, soul)
     agentId

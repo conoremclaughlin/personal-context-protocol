@@ -137,17 +137,15 @@ export class MemoryRepository {
    * Fetch memories for the bootstrap knowledge summary.
    * Returns all critical memories + recent high memories, ordered by salience (critical first) then recency.
    *
-   * @param highLimit Max high-salience memories (default 10)
-   * @param highWindowDays Only include high memories from the last N days (default 7). 0 = no time filter.
+   * @param highLimit Max high-salience memories (default 50)
    */
   async getKnowledgeMemories(
     userId: string,
     agentId?: string,
-    highLimit: number = 10,
-    highWindowDays: number = 7
+    highLimit: number = 50
   ): Promise<Memory[]> {
     // Fetch critical and high in parallel
-    const buildQuery = (salience: string, limit: number, windowDays?: number) => {
+    const buildQuery = (salience: string, limit: number) => {
       let q = this.supabase
         .from('memories')
         .select('*')
@@ -160,16 +158,12 @@ export class MemoryRepository {
       if (agentId) {
         q = q.or(`agent_id.eq.${agentId},agent_id.is.null`);
       }
-      if (windowDays && windowDays > 0) {
-        const cutoff = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000).toISOString();
-        q = q.gte('created_at', cutoff);
-      }
       return q;
     };
 
     const [criticalResult, highResult] = await Promise.all([
       buildQuery('critical', 30),
-      buildQuery('high', highLimit, highWindowDays),
+      buildQuery('high', highLimit),
     ]);
 
     if (criticalResult.error) {
