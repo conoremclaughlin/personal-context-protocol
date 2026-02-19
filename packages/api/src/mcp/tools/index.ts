@@ -1041,10 +1041,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
           .describe(
             'Short description of the topic (shown in bootstrap topic index header). Only needed when creating a new topic or updating its description.'
           ),
-        source: z
-          .enum(['conversation', 'observation', 'user_stated', 'inferred', 'session', 'reflection'])
-          .optional()
-          .describe('Source of the memory (default: observation)'),
+        source: z.string().optional().describe('Source of the memory (default: observation)'),
         salience: z
           .enum(['low', 'medium', 'high', 'critical'])
           .optional()
@@ -1106,10 +1103,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       inputSchema: {
         ...userIdentifierFields,
         query: z.string().optional().describe('Search query (text search for now)'),
-        source: z
-          .enum(['conversation', 'observation', 'user_stated', 'inferred', 'session', 'reflection'])
-          .optional()
-          .describe('Filter by source'),
+        source: z.string().optional().describe('Filter by source'),
         salience: z
           .enum(['low', 'medium', 'high', 'critical'])
           .optional()

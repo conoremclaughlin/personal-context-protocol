@@ -2,13 +2,15 @@
  * Memory and Session types for long-term memory storage
  */
 
+// Common source values — not exhaustive, DB accepts any string
 export type MemorySource =
   | 'conversation'
   | 'observation'
   | 'user_stated'
   | 'inferred'
   | 'session'
-  | 'reflection';
+  | 'reflection'
+  | (string & {});
 export type Salience = 'low' | 'medium' | 'high' | 'critical';
 
 export interface Memory {
