@@ -355,6 +355,7 @@ When a blocked `/pcp` tool is attempted, REPL prompts inline to allow once, allo
 Inside REPL:
 
 - `/inbox` force inbox refresh
+- `/events [now|on|off]` poll or toggle merged PCP activity stream during chat
 - `/sessions [watch|off]` show active sessions (id + SB + status + thread)
 - `/bookmark [label]` create a context bookmark
 - `/eject <bookmark|last>` eject context up to bookmark (and persist a `remember` checkpoint)

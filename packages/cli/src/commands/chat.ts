@@ -59,6 +59,7 @@ interface ChatRuntime {
   maxContextTokens: number;
   pollSeconds: number;
   showSessionsWatch: boolean;
+  eventPolling: boolean;
   transcriptPath: string;
   activeSkills: SkillInstruction[];
 }
@@ -72,6 +73,16 @@ interface SessionSummary {
   startedAt?: string;
   backendSessionId?: string;
   claudeSessionId?: string;
+}
+
+interface ActivitySummary {
+  id: string;
+  type?: string;
+  subtype?: string;
+  content?: string;
+  agentId?: string;
+  sessionId?: string;
+  createdAt?: string;
 }
 
 function ensureRuntimeTranscriptPath(sessionId?: string): string {
@@ -269,6 +280,46 @@ function extractSessionSummaries(result: Record<string, unknown> | null | undefi
       };
     })
     .filter((session): session is SessionSummary => Boolean(session));
+}
+
+function extractActivitySummaries(result: Record<string, unknown> | null | undefined): ActivitySummary[] {
+  if (!result) return [];
+  const candidate =
+    (Array.isArray(result.activities) ? result.activities : undefined) ||
+    (Array.isArray(result.data) ? result.data : undefined) ||
+    [];
+
+  return candidate
+    .map((entry): ActivitySummary | undefined => {
+      const row = entry as Record<string, unknown>;
+      const id = row.id;
+      if (typeof id !== 'string') return undefined;
+      return {
+        id,
+        type: typeof row.type === 'string' ? row.type : undefined,
+        subtype: typeof row.subtype === 'string' ? row.subtype : undefined,
+        content: typeof row.content === 'string' ? row.content : undefined,
+        agentId:
+          typeof row.agentId === 'string'
+            ? row.agentId
+            : typeof row.agent_id === 'string'
+              ? row.agent_id
+              : undefined,
+        sessionId:
+          typeof row.sessionId === 'string'
+            ? row.sessionId
+            : typeof row.session_id === 'string'
+              ? row.session_id
+              : undefined,
+        createdAt:
+          typeof row.createdAt === 'string'
+            ? row.createdAt
+            : typeof row.created_at === 'string'
+              ? row.created_at
+              : undefined,
+      };
+    })
+    .filter((activity): activity is ActivitySummary => Boolean(activity));
 }
 
 function summarizeForSessionEnd(ledger: ContextLedger): string {
@@ -503,6 +554,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     maxContextTokens: Number.parseInt(options.maxContextTokens || '12000', 10),
     pollSeconds: Number.parseInt(options.pollSeconds || '20', 10),
     showSessionsWatch: false,
+    eventPolling: true,
     transcriptPath: ensureRuntimeTranscriptPath(),
     activeSkills: [],
   };
@@ -514,9 +566,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   const ledger = new ContextLedger();
   const seenInboxIds = new Set<string>();
+  const seenActivityIds = new Set<string>();
   let pollTimer: NodeJS.Timeout | null = null;
   let sessionsCache: SessionSummary[] = [];
   let sessionsCacheAt = 0;
+  let activitySince = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
   const bootstrapResult = (await pcp
     .callTool('bootstrap', { agentId })
@@ -652,11 +706,64 @@ export async function runChat(options: ChatOptions): Promise<void> {
     return fresh.length;
   };
 
+  const pollActivity = async (force = false): Promise<number> => {
+    const activityResult = (await pcp
+      .callTool('get_activity', {
+        agentId,
+        limit: 40,
+        since: activitySince,
+      })
+      .catch(() => null)) as Record<string, unknown> | null;
+
+    const activities = extractActivitySummaries(activityResult)
+      .filter((activity) => !seenActivityIds.has(activity.id))
+      // Ignore raw local transcript echoes for this same session; inbox handles human-facing notices.
+      .filter((activity) => !(activity.sessionId && runtime.sessionId && activity.sessionId === runtime.sessionId))
+      .sort((a, b) => Date.parse(a.createdAt || '') - Date.parse(b.createdAt || ''));
+
+    for (const activity of activities) {
+      seenActivityIds.add(activity.id);
+      if (activity.createdAt && activity.createdAt > activitySince) {
+        activitySince = activity.createdAt;
+      }
+
+      const type = activity.subtype ? `${activity.type}:${activity.subtype}` : activity.type || 'activity';
+      const actor = activity.agentId || 'system';
+      const preview = (activity.content || '')
+        .replace(/\\s+/g, ' ')
+        .trim()
+        .slice(0, 200);
+      const rendered = `⚡ ${actor} ${type}${preview ? ` — ${preview}` : ''}`;
+
+      ledger.addEntry('system', rendered, 'pcp-activity');
+      appendTranscript(runtime.transcriptPath, {
+        type: 'activity',
+        activityId: activity.id,
+        activityType: activity.type || null,
+        activitySubtype: activity.subtype || null,
+        agentId: activity.agentId || null,
+        sessionId: activity.sessionId || null,
+        content: activity.content || null,
+      });
+      console.log(`\n${chalk.magenta(rendered)}\n`);
+    }
+
+    if (force && activities.length === 0) {
+      console.log(chalk.dim('No new activity events.'));
+    }
+
+    return activities.length;
+  };
+
   // Prime with current unread queue (without force banner).
   await pollInbox(false);
+  await pollActivity(false);
 
   pollTimer = setInterval(() => {
     void pollInbox(false);
+    if (runtime.eventPolling) {
+      void pollActivity(false);
+    }
   }, Math.max(runtime.pollSeconds, 5) * 1000);
 
   const runUserTurn = async (raw: string) => {
@@ -762,6 +869,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/help                      Show this help',
               '/quit | /exit              End chat',
               '/inbox                     Poll inbox now',
+              '/events [now|on|off]       Poll/toggle merged activity stream',
               '/session                   Show active session info',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
@@ -797,12 +905,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
         case 'inbox':
           await pollInbox(true);
           break;
+        case 'events': {
+          const mode = slash.args[0];
+          if (mode === 'off') {
+            runtime.eventPolling = false;
+            console.log(chalk.yellow('Activity polling disabled.'));
+          } else if (mode === 'on') {
+            runtime.eventPolling = true;
+            console.log(chalk.green('Activity polling enabled.'));
+          } else {
+            await pollActivity(true);
+          }
+          break;
+        }
         case 'session':
           console.log(
             chalk.dim(
               `session=${runtime.sessionId || 'none'} backend=${runtime.backend} model=${
                 runtime.model || '(default)'
-              } thread=${runtime.threadKey || '(none)'}`
+              } thread=${runtime.threadKey || '(none)'} events=${runtime.eventPolling ? 'on' : 'off'}`
             )
           );
           break;
