@@ -190,6 +190,8 @@ Any flag not listed above is forwarded to the backend.
 sb init                         # Set up PCP in current repo
 sb doctor                       # Check linked studio CLI binary health
 sb doctor --fix                 # Prompt to relink current studio binary
+sb mission                      # Mission control (sessions + unread inbox by SB)
+sb mission --watch              # Live-refresh mission dashboard
 sb chat                         # First-class PCP REPL (experimental)
 sb chat -b codex                # REPL using Codex backend
 sb hooks install --all          # Install hooks across all worktrees
@@ -317,6 +319,14 @@ Options for `invite`:
 
 - `--role <role>` — Role: `owner`, `admin`, `member`, or `viewer` (default: member)
 
+### Mission Control (`sb mission`)
+
+```bash
+sb mission                     # Snapshot of active sessions + unread inbox by SB
+sb mission --watch             # Live refresh dashboard
+sb mission -a lumen            # Filter to one SB
+sb mission --json              # Machine-readable output
+```
 ### First-Class REPL (`sb chat`) (experimental)
 
 `sb chat` is the native PCP REPL where PCP controls session lifecycle and context instead of relying solely on backend CLI compaction behavior.
