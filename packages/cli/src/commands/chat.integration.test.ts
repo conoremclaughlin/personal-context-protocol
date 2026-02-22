@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { mintDelegationToken, verifyDelegationToken } from '@personal-context/shared';
 
 const testState = vi.hoisted(() => ({
   inputs: [] as string[],
@@ -59,6 +60,7 @@ function stripAnsi(value: string): string {
 describe('runChat integration', () => {
   const originalCwd = process.cwd();
   const originalPolicyPath = process.env.PCP_TOOL_POLICY_PATH;
+  const originalDelegationSecret = process.env.PCP_DELEGATION_SECRET;
   let testCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -105,6 +107,7 @@ describe('runChat integration', () => {
     testCwd = mkdtempSync(join(tmpdir(), 'pcp-chat-int-'));
     process.chdir(testCwd);
     process.env.PCP_TOOL_POLICY_PATH = join(testCwd, '.pcp', 'security', 'tool-policy.json');
+    process.env.PCP_DELEGATION_SECRET = 'pcp-delegation-test-secret';
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
@@ -112,6 +115,8 @@ describe('runChat integration', () => {
     logSpy.mockRestore();
     if (originalPolicyPath === undefined) delete process.env.PCP_TOOL_POLICY_PATH;
     else process.env.PCP_TOOL_POLICY_PATH = originalPolicyPath;
+    if (originalDelegationSecret === undefined) delete process.env.PCP_DELEGATION_SECRET;
+    else process.env.PCP_DELEGATION_SECRET = originalDelegationSecret;
     process.chdir(originalCwd);
     rmSync(testCwd, { recursive: true, force: true });
   });
@@ -435,5 +440,86 @@ describe('runChat integration', () => {
     const transcriptFiles = readdirSync(replDir).filter((entry) => entry.endsWith('.jsonl'));
     const transcript = readFileSync(join(replDir, transcriptFiles[0]!), 'utf-8');
     expect(transcript).not.toContain('"type":"context_eject"');
+  });
+
+  it('sends delegated inbox message with signed token metadata', async () => {
+    testState.inputs = [
+      '/delegate-send wren send_to_inbox,trigger_agent please review this',
+      'y',
+      '/quit',
+    ];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      threadKey: 'pr:123',
+      pollSeconds: '999',
+    });
+
+    const sendCall = testState.pcpCalls.find((call) => call.tool === 'send_to_inbox');
+    expect(sendCall).toBeTruthy();
+    const metadata = sendCall?.args?.metadata as Record<string, unknown> | undefined;
+    const token = metadata?.delegationToken;
+    expect(typeof token).toBe('string');
+
+    const verified = verifyDelegationToken(String(token), process.env.PCP_DELEGATION_SECRET || '', {
+      expectedIssuerAgentId: 'lumen',
+      expectedDelegateeAgentId: 'wren',
+      expectedThreadKey: 'pr:123',
+      requiredScopes: ['send_to_inbox', 'trigger_agent'],
+    });
+    expect(verified.valid).toBe(true);
+  });
+
+  it('renders delegation metadata label for inbox messages', async () => {
+    const delegationToken = mintDelegationToken(
+      {
+        issuerAgentId: 'wren',
+        delegateeAgentId: 'lumen',
+        scopes: ['send_to_inbox'],
+        threadKey: 'pr:50',
+      },
+      process.env.PCP_DELEGATION_SECRET || ''
+    );
+
+    let inboxPolls = 0;
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'start_session':
+          return { session: { id: 'sess-1' } };
+        case 'get_inbox':
+          inboxPolls += 1;
+          if (inboxPolls === 1) {
+            return {
+              messages: [
+                {
+                  id: 'delegated-1',
+                  content: 'please take this action',
+                  senderAgentId: 'wren',
+                  subject: 'Delegated task',
+                  threadKey: 'pr:50',
+                  metadata: { delegationToken },
+                },
+              ],
+            };
+          }
+          return { messages: [] };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      threadKey: 'pr:50',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('[delegation:wren->lumen:send_to_inbox]');
   });
 });

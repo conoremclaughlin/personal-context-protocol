@@ -24,6 +24,12 @@ import { discoverSkills, loadSkillInstruction, type SkillInstruction } from '../
 import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-approval.js';
 import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
 import { canActivateSkill, filterSkillsByPolicy } from '../repl/skill-policy.js';
+import {
+  decodeDelegationToken,
+  mintDelegationToken,
+  verifyDelegationToken,
+  type DelegationTokenPayload,
+} from '@personal-context/shared';
 
 type ChatOptions = {
   agent?: string;
@@ -48,6 +54,7 @@ interface InboxMessage {
   from?: string;
   subject?: string;
   threadKey?: string;
+  delegationToken?: string;
 }
 
 interface ChatRuntime {
@@ -84,6 +91,30 @@ interface ActivitySummary {
   agentId?: string;
   sessionId?: string;
   createdAt?: string;
+}
+
+interface DelegationState {
+  token: string;
+  payload: DelegationTokenPayload;
+}
+
+function getDelegationSecret(): string | undefined {
+  const fromEnv = process.env.PCP_DELEGATION_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  const jwtSecret = process.env.JWT_SECRET?.trim();
+  if (jwtSecret) return jwtSecret;
+  return undefined;
+}
+
+function parseToolScopes(raw: string): string[] {
+  return Array.from(
+    new Set(
+      raw
+        .split(',')
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean)
+    )
+  );
 }
 
 function ensureRuntimeTranscriptPath(sessionId?: string): string {
@@ -236,12 +267,20 @@ function extractInboxMessages(result: Record<string, unknown> | null | undefined
       const msg = entry as Record<string, unknown>;
       const id = msg.id;
       if (typeof id !== 'string') return undefined;
+      const metadata = msg.metadata as Record<string, unknown> | undefined;
+      const delegationToken =
+        typeof metadata?.delegationToken === 'string'
+          ? metadata.delegationToken
+          : typeof msg.delegationToken === 'string'
+            ? msg.delegationToken
+            : undefined;
       return {
         id,
         content: String(msg.content || ''),
         from: msg.senderAgentId ? String(msg.senderAgentId) : msg.from ? String(msg.from) : undefined,
         subject: msg.subject ? String(msg.subject) : undefined,
         threadKey: msg.threadKey ? String(msg.threadKey) : undefined,
+        delegationToken,
       } satisfies InboxMessage;
     })
     .filter((m): m is InboxMessage => Boolean(m));
@@ -581,6 +620,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let sessionsCacheAt = 0;
   let activitySince = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   let lastBackendUsage: BackendTokenUsage | undefined;
+  let lastDelegation: DelegationState | undefined;
 
   const bootstrapResult = (await pcp
     .callTool('bootstrap', { agentId })
@@ -704,9 +744,32 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       const from = msg.from || 'unknown';
       const heading = msg.subject ? `${from} — ${msg.subject}` : from;
-      const rendered = `📥 ${heading}: ${msg.content}`.trim();
+      let delegationLabel = '';
+      if (msg.delegationToken) {
+        const secret = getDelegationSecret();
+        if (!secret) {
+          delegationLabel = ' [delegation:unverified:no-secret]';
+        } else {
+          const verified = verifyDelegationToken(msg.delegationToken, secret, {
+            expectedDelegateeAgentId: agentId,
+            expectedThreadKey: runtime.threadKey,
+          });
+          if (verified.valid && verified.payload) {
+            const scopes = verified.payload.scopes.join(',');
+            delegationLabel = ` [delegation:${verified.payload.iss}->${verified.payload.sub}:${scopes}]`;
+          } else {
+            delegationLabel = ` [delegation:invalid:${verified.error}]`;
+          }
+        }
+      }
+      const rendered = `📥 ${heading}${delegationLabel}: ${msg.content}`.trim();
       ledger.addEntry('inbox', rendered, 'pcp-inbox');
-      appendTranscript(runtime.transcriptPath, { type: 'inbox', messageId: msg.id, rendered });
+      appendTranscript(runtime.transcriptPath, {
+        type: 'inbox',
+        messageId: msg.id,
+        rendered,
+        delegationToken: msg.delegationToken || null,
+      });
       console.log(`\n${chalk.cyan(rendered)}\n`);
     }
 
@@ -902,6 +965,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/skill-allow <pattern>      Persistently allow skill(s) via pattern',
               '/path-allow-read <glob>      Persistently allow local reads for matching paths',
               '/path-allow-write <glob>     Persistently allow local writes for matching paths',
+              '/delegate-create <to> <scopes> [ttlMin]  Mint delegation token',
+              '/delegate-show               Show last minted delegation token payload',
+              '/delegate-verify <token|last> Verify delegation token with local secret',
+              '/delegate-send <to> <scopes> <message>  Send inbox message with delegation token',
               '/skill-use <name>           Activate a discovered skill for prompts',
               '/skill-clear [name]         Clear active skills (or one skill)',
               '/bookmark [label]          Set context bookmark',
@@ -1225,6 +1292,165 @@ export async function runChat(options: ChatOptions): Promise<void> {
           } else {
             console.log(chalk.green(`Cleared ${removed} active skill(s) for ${name}`));
           }
+          break;
+        }
+        case 'delegate-create': {
+          const toAgent = (slash.args[0] || '').trim().toLowerCase();
+          const scopeSpec = (slash.args[1] || '').trim();
+          const ttlMinutes = Number.parseInt(slash.args[2] || '15', 10);
+          const secret = getDelegationSecret();
+          if (!secret) {
+            console.log(chalk.yellow('Delegation secret missing. Set PCP_DELEGATION_SECRET (or JWT_SECRET).'));
+            break;
+          }
+          if (!toAgent || !scopeSpec) {
+            console.log(chalk.yellow('Usage: /delegate-create <to-agent> <scope1,scope2> [ttl-minutes]'));
+            break;
+          }
+          const scopes = parseToolScopes(scopeSpec);
+          if (scopes.length === 0) {
+            console.log(chalk.yellow('Provide at least one scope.'));
+            break;
+          }
+          const token = mintDelegationToken(
+            {
+              issuerAgentId: agentId,
+              delegateeAgentId: toAgent,
+              scopes,
+              ttlSeconds: Number.isFinite(ttlMinutes) ? Math.max(1, ttlMinutes) * 60 : 15 * 60,
+              sessionId: runtime.sessionId,
+              threadKey: runtime.threadKey,
+              studioId: identity?.workspaceId,
+            },
+            secret
+          );
+          const payload = decodeDelegationToken(token);
+          lastDelegation = { token, payload };
+
+          const summary = `Delegation token minted: ${payload.iss} -> ${payload.sub} scopes=${payload.scopes.join(',')} exp=${new Date(payload.exp * 1000).toISOString()}`;
+          ledger.addEntry('system', summary, 'delegation');
+          appendTranscript(runtime.transcriptPath, {
+            type: 'delegation_create',
+            payload,
+            token,
+          });
+          console.log(chalk.green(summary));
+          console.log(chalk.dim(token));
+          break;
+        }
+        case 'delegate-show': {
+          if (!lastDelegation) {
+            console.log(chalk.dim('No delegation token minted in this chat session yet.'));
+            break;
+          }
+          console.log(JSON.stringify(lastDelegation.payload, null, 2));
+          console.log(chalk.dim(lastDelegation.token));
+          break;
+        }
+        case 'delegate-verify': {
+          const target = (slash.args[0] || 'last').trim();
+          const token = target === 'last' ? lastDelegation?.token : target;
+          if (!token) {
+            console.log(chalk.yellow('No token available. Use /delegate-create first or pass a token.'));
+            break;
+          }
+          const secret = getDelegationSecret();
+          if (!secret) {
+            console.log(chalk.yellow('Delegation secret missing. Set PCP_DELEGATION_SECRET (or JWT_SECRET).'));
+            break;
+          }
+          const verified = verifyDelegationToken(token, secret);
+          if (!verified.valid || !verified.payload) {
+            console.log(chalk.red(`Invalid delegation token: ${verified.error}`));
+            break;
+          }
+          console.log(chalk.green('Delegation token valid.'));
+          console.log(JSON.stringify(verified.payload, null, 2));
+          break;
+        }
+        case 'delegate-send': {
+          const toAgent = (slash.args[0] || '').trim().toLowerCase();
+          const scopeSpec = (slash.args[1] || '').trim();
+          const message = slash.args.slice(2).join(' ').trim();
+          if (!toAgent || !scopeSpec || !message) {
+            console.log(
+              chalk.yellow('Usage: /delegate-send <to-agent> <scope1,scope2> <message...>')
+            );
+            break;
+          }
+          const secret = getDelegationSecret();
+          if (!secret) {
+            console.log(chalk.yellow('Delegation secret missing. Set PCP_DELEGATION_SECRET (or JWT_SECRET).'));
+            break;
+          }
+
+          const scopes = parseToolScopes(scopeSpec);
+          if (scopes.length === 0) {
+            console.log(chalk.yellow('Provide at least one scope.'));
+            break;
+          }
+
+          const token = mintDelegationToken(
+            {
+              issuerAgentId: agentId,
+              delegateeAgentId: toAgent,
+              scopes,
+              ttlSeconds: 15 * 60,
+              sessionId: runtime.sessionId,
+              threadKey: runtime.threadKey,
+              studioId: identity?.workspaceId,
+            },
+            secret
+          );
+          const payload = decodeDelegationToken(token);
+          lastDelegation = { token, payload };
+
+          const approved = await ensurePcpToolAllowed({
+            policy: toolPolicy,
+            tool: 'send_to_inbox',
+            sessionId: runtime.sessionId,
+            prompt: (reason) =>
+              promptForToolApproval(rl, toolPolicy, runtime.sessionId, 'send_to_inbox', reason),
+          });
+          if (!approved) {
+            console.log(chalk.yellow('Skipped delegated send_to_inbox (policy blocked).'));
+            break;
+          }
+
+          const inboxArgs: Record<string, unknown> = {
+            recipientAgentId: toAgent,
+            senderAgentId: agentId,
+            messageType: 'task_request',
+            subject: `Delegated task from ${agentId}`,
+            content: message,
+            trigger: true,
+            ...(runtime.threadKey ? { threadKey: runtime.threadKey } : {}),
+            metadata: {
+              delegationToken: token,
+              delegation: {
+                iss: payload.iss,
+                sub: payload.sub,
+                scopes: payload.scopes,
+                exp: payload.exp,
+                iat: payload.iat,
+                threadKey: payload.threadKey || null,
+                sessionId: payload.sessionId || null,
+                studioId: payload.studioId || null,
+              },
+            },
+          };
+          const result = await pcp
+            .callTool('send_to_inbox', inboxArgs)
+            .catch((error) => ({ error: String(error) }));
+          appendTranscript(runtime.transcriptPath, {
+            type: 'delegation_send',
+            toAgent,
+            scopes,
+            message,
+            result,
+          });
+          console.log(chalk.green(`Delegated message sent to ${toAgent}.`));
+          console.log(JSON.stringify(result, null, 2));
           break;
         }
         case 'thread': {

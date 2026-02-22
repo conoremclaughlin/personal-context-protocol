@@ -374,6 +374,10 @@ Inside REPL:
 - `/skill-allow <pattern>` add skill pattern to persistent skill allowlist
 - `/path-allow-read <glob>` add a persistent local read allowlist pattern for skills/context files
 - `/path-allow-write <glob>` add a persistent local write allowlist pattern
+- `/delegate-create <to> <scopes> [ttl-min]` mint an SB delegation token
+- `/delegate-show` show last minted delegation token payload
+- `/delegate-verify <token|last>` verify delegation token locally
+- `/delegate-send <to> <scopes> <message>` send inbox task with delegation token metadata
 - `/skill-use <name>` activate a discovered skill and inject SKILL.md guidance into prompt context
 - `/skill-clear [name]` clear active skills
 - `/pcp <tool> [jsonArgs]` invoke PCP tools directly from REPL
