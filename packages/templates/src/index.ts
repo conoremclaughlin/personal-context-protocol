@@ -14,16 +14,12 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+// Always read .md files from src/ — they're static text and don't need compilation.
+// join(__dirname, '..', 'src') resolves correctly from both dist/ and src/.
+const SRC_DIR = join(__dirname, '..', 'src');
+
 function loadTemplate(relativePath: string): string {
-  // Try compiled output first (dist/), fall back to source tree (src/)
-  const distPath = join(__dirname, relativePath);
-  try {
-    return readFileSync(distPath, 'utf-8');
-  } catch {
-    // Development fallback: src/ tree
-    const srcPath = join(__dirname, '..', 'src', relativePath);
-    return readFileSync(srcPath, 'utf-8');
-  }
+  return readFileSync(join(SRC_DIR, relativePath), 'utf-8');
 }
 
 /**

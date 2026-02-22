@@ -7,7 +7,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc && cp src/awaken.md dist/awaken.md && cp -r src/starters dist/starters",
+    "build": "tsc",
     "clean": "rm -rf dist"
   },
   "devDependencies": {
