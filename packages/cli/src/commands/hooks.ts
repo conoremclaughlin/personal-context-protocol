@@ -69,11 +69,11 @@ const CODEX: HookCapabilities = {
     sessionStart: 'session_start',
     preCompact: null,
     postCompact: null,
-    onPrompt: null,
+    onPrompt: 'user_prompt',
     onStop: 'session_end',
   },
   supportsCompaction: false,
-  supportsPromptHook: false,
+  supportsPromptHook: true,
 };
 
 const GEMINI: HookCapabilities = {

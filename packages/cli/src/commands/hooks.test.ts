@@ -257,6 +257,7 @@ describe('installHooks: Codex', () => {
     expect(content).toContain('[hooks]');
     expect(content).toMatch(/session_start = ".*sb hooks on-session-start"/);
     expect(content).toMatch(/session_end = ".*sb hooks on-stop"/);
+    expect(content).toMatch(/user_prompt = ".*sb hooks on-prompt"/);
     expect(content).toContain('# end pcp-managed');
   });
 
