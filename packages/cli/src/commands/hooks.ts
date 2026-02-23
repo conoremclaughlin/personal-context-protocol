@@ -23,6 +23,7 @@ import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
 import { resolveAgentId, readIdentityJson } from '../backends/identity.js';
+import { setCurrentRuntimeSession, upsertRuntimeSession } from '../session/runtime.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -278,6 +279,25 @@ function readRuntimeFile(cwd: string, filename: string): string | null {
 function writeRuntimeFile(cwd: string, filename: string, content: string): void {
   const dir = ensureRuntimeDir(cwd);
   writeFileSync(join(dir, filename), content);
+}
+
+function extractBackendSessionId(stdin: Record<string, unknown>): string | undefined {
+  const candidates: unknown[] = [
+    stdin.session_id,
+    stdin.sessionId,
+    (stdin.session as Record<string, unknown> | undefined)?.id,
+    (stdin.session as Record<string, unknown> | undefined)?.session_id,
+    (stdin.data as Record<string, unknown> | undefined)?.session_id,
+    (stdin.data as Record<string, unknown> | undefined)?.sessionId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
 }
 
 // ============================================================================
@@ -905,11 +925,13 @@ async function onSessionStartHandler(): Promise<void> {
   // Read studio/workspace ID from identity.json
   const identityPath = join(cwd, '.pcp', 'identity.json');
   let studioId: string | undefined;
+  let identityId: string | undefined;
   let studioLine = '';
   if (existsSync(identityPath)) {
     try {
       const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
       studioId = identity.studioId || identity.workspaceId;
+      identityId = identity.identityId;
       const studioName = identity.studio || identity.workspace;
       if (studioName) {
         studioLine = `Studio: ${studioName}`;
@@ -958,14 +980,36 @@ async function onSessionStartHandler(): Promise<void> {
 
   // Register PCP session with detected backend
   const detectedBackend = detectBackend(cwd);
+  // Hook backend names and session backend names differ for Claude:
+  // - hooks backend: "claude-code"
+  // - session/backend adapter: "claude"
+  const sessionBackend = detectedBackend.name === 'claude-code' ? 'claude' : detectedBackend.name;
+  let pcpSessionId: string | undefined;
+  let pcpThreadKey: string | undefined;
+  const backendSessionId = extractBackendSessionId(stdin);
+
+  // If provided by sb launcher, prefer that explicit session id.
+  if (process.env.PCP_SESSION_ID) {
+    pcpSessionId = process.env.PCP_SESSION_ID;
+  }
+
   try {
-    const startArgs: Record<string, unknown> = {
-      email: config?.email,
-      agentId,
-      backend: detectedBackend.name,
-    };
-    if (studioId) startArgs.studioId = studioId;
-    await callPcpTool('start_session', startArgs);
+    if (!pcpSessionId) {
+      const startArgs: Record<string, unknown> = {
+        email: config?.email,
+        agentId,
+        backend: sessionBackend,
+      };
+      if (studioId) startArgs.studioId = studioId;
+      const started = await callPcpTool('start_session', startArgs);
+      const startedSession = started.session as Record<string, unknown> | undefined;
+      if (startedSession && typeof startedSession.id === 'string') {
+        pcpSessionId = startedSession.id;
+        if (typeof startedSession.threadKey === 'string') {
+          pcpThreadKey = startedSession.threadKey;
+        }
+      }
+    }
   } catch {
     // Session tracking failure isn't shown to the SB (no block for it),
     // but it means the session won't be tracked. The bootstrap failure
@@ -973,8 +1017,42 @@ async function onSessionStartHandler(): Promise<void> {
   }
 
   // Store session ID if provided in stdin
-  if (stdin.session_id) {
-    writeRuntimeFile(cwd, 'session-id', String(stdin.session_id));
+  if (backendSessionId) {
+    writeRuntimeFile(cwd, 'session-id', backendSessionId);
+  }
+
+  if (pcpSessionId) {
+    writeRuntimeFile(cwd, 'pcp-session-id', pcpSessionId);
+    upsertRuntimeSession(cwd, {
+      pcpSessionId,
+      backend: sessionBackend,
+      agentId,
+      ...(identityId ? { identityId } : {}),
+      ...(studioId ? { studioId } : {}),
+      ...(pcpThreadKey ? { threadKey: pcpThreadKey } : {}),
+      ...(backendSessionId ? { backendSessionId } : {}),
+      startedAt: new Date().toISOString(),
+    });
+    setCurrentRuntimeSession(cwd, pcpSessionId, sessionBackend, {
+      agentId,
+      ...(identityId ? { identityId } : {}),
+      ...(studioId ? { studioId } : {}),
+    });
+  }
+
+  // Link backend-specific session id to the PCP session for deterministic routing/resume.
+  if (pcpSessionId && backendSessionId) {
+    try {
+      await callPcpTool('update_session_phase', {
+        email: config?.email,
+        agentId,
+        sessionId: pcpSessionId,
+        backendSessionId,
+        status: 'active',
+      });
+    } catch {
+      // Non-fatal; startup should continue even if linkage fails.
+    }
   }
 
   const template = loadTemplate('hook-session-start');

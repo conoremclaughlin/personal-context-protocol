@@ -102,13 +102,18 @@ export async function handleTriggerAgent(
       metadata: args.metadata,
     };
 
-    const result = await gateway.processTrigger(payload);
+    const result = gateway.dispatchTrigger(payload);
 
     if (result.success) {
       return mcpResponse({
         success: true,
         triggerId: result.triggerId,
-        message: `Agent ${args.toAgentId} triggered successfully`,
+        accepted: result.accepted === true,
+        processed: result.processed,
+        message:
+          result.accepted === true
+            ? `Agent ${args.toAgentId} trigger accepted`
+            : `Agent ${args.toAgentId} triggered successfully`,
       });
     } else {
       return mcpResponse(

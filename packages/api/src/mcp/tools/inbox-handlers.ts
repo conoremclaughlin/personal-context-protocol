@@ -220,6 +220,7 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     triggered: boolean;
     triggerId?: string;
     processed?: boolean;
+    accepted?: boolean;
     error?: string;
   } = {
     triggered: false,
@@ -240,47 +241,28 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       studioHint: recipientStudioHint,
     };
 
-    // Await trigger with timeout so the sender sees the real result
-    const TRIGGER_TIMEOUT_MS = 30_000;
-    logger.info('Inbox message trigger dispatched', {
+    logger.info('Inbox message trigger dispatched (async)', {
       messageId: message.id,
       recipientAgentId,
     });
 
-    try {
-      const result = await Promise.race([
-        gateway.processTrigger(payload),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Trigger timed out (30s)')), TRIGGER_TIMEOUT_MS)
-        ),
-      ]);
+    const result = gateway.dispatchTrigger(payload);
 
-      logger.info('Inbox message trigger completed', {
-        messageId: message.id,
-        triggerId: result.triggerId,
-        processed: result.processed,
-        error: result.error,
-      });
+    logger.info('Inbox message trigger accepted', {
+      messageId: message.id,
+      triggerId: result.triggerId,
+      accepted: result.accepted,
+      processed: result.processed,
+      error: result.error,
+    });
 
-      triggerResult = {
-        triggered: true,
-        triggerId: result.triggerId,
-        processed: result.processed,
-        error: result.error,
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.error('Inbox message trigger failed', {
-        messageId: message.id,
-        error: errorMessage,
-      });
-
-      triggerResult = {
-        triggered: true,
-        processed: false,
-        error: errorMessage,
-      };
-    }
+    triggerResult = {
+      triggered: true,
+      triggerId: result.triggerId,
+      processed: result.processed,
+      accepted: result.accepted,
+      error: result.error,
+    };
   }
 
   return {

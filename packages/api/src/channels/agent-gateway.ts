@@ -44,6 +44,7 @@ export interface AgentTriggerResponse {
   success: boolean;
   triggerId: string;
   processed: boolean;
+  accepted?: boolean;
   error?: string;
 }
 
@@ -104,26 +105,51 @@ export class AgentGateway extends EventEmitter {
   }
 
   /**
-   * Process an incoming trigger
-   * Called by the HTTP endpoint or MCP tool
+   * Resolve handler for target agent (specific handler first, then default)
    */
-  async processTrigger(payload: AgentTriggerPayload): Promise<AgentTriggerResponse> {
-    const triggerId = `trigger_${++this.triggerCounter}_${Date.now()}`;
+  private resolveHandler(payload: AgentTriggerPayload): {
+    handler: TriggerCallback | null;
+    isDefaultHandler: boolean;
+  } {
+    const handler = this.handlers.get(payload.toAgentId) || this.defaultHandler;
+    const isDefaultHandler = !this.handlers.has(payload.toAgentId);
+    return { handler, isDefaultHandler };
+  }
 
-    logger.info(`[AgentGateway] Processing trigger ${triggerId}`, {
+  /**
+   * Execute a trigger handler lifecycle (shared by sync/async entrypoints)
+   */
+  private async executeTrigger(
+    triggerId: string,
+    payload: AgentTriggerPayload,
+    handler: TriggerCallback,
+    isDefaultHandler: boolean
+  ): Promise<void> {
+    if (isDefaultHandler) {
+      logger.info(`[AgentGateway] Using default handler for agent: ${payload.toAgentId}`);
+    }
+
+    await handler(payload);
+    this.emit('trigger:processed', { triggerId, payload });
+    logger.info(`[AgentGateway] Trigger ${triggerId} processed successfully`);
+  }
+
+  /**
+   * Dispatch an incoming trigger asynchronously (fast-ack pattern).
+   * Returns as soon as trigger is accepted, without waiting for full processing.
+   */
+  dispatchTrigger(payload: AgentTriggerPayload): AgentTriggerResponse {
+    const triggerId = `trigger_${++this.triggerCounter}_${Date.now()}`;
+    logger.info(`[AgentGateway] Dispatching trigger ${triggerId} (async)`, {
       from: payload.fromAgentId,
       to: payload.toAgentId,
       type: payload.triggerType,
       priority: payload.priority,
     });
 
-    // Find handler for target agent (specific handler takes precedence over default)
-    const handler = this.handlers.get(payload.toAgentId) || this.defaultHandler;
-
+    const { handler, isDefaultHandler } = this.resolveHandler(payload);
     if (!handler) {
       logger.warn(`[AgentGateway] No handler for agent: ${payload.toAgentId}`);
-
-      // Emit event even if no handler - allows listeners to catch unhandled triggers
       this.emit('trigger:unhandled', { triggerId, payload });
 
       return {
@@ -134,31 +160,58 @@ export class AgentGateway extends EventEmitter {
       };
     }
 
-    const isDefaultHandler = !this.handlers.has(payload.toAgentId);
-    if (isDefaultHandler) {
-      logger.info(`[AgentGateway] Using default handler for agent: ${payload.toAgentId}`);
+    this.emit('trigger:accepted', { triggerId, payload });
+
+    // Fire-and-forget execution
+    void (async () => {
+      try {
+        await this.executeTrigger(triggerId, payload, handler, isDefaultHandler);
+      } catch (error) {
+        logger.error(`[AgentGateway] Trigger ${triggerId} failed:`, error);
+        this.emit('trigger:error', { triggerId, payload, error });
+      }
+    })();
+
+    return {
+      success: true,
+      triggerId,
+      processed: false,
+      accepted: true,
+    };
+  }
+
+  /**
+   * Process an incoming trigger synchronously (waits for handler completion).
+   * Called where strong delivery/processing semantics are required.
+   */
+  async processTrigger(payload: AgentTriggerPayload): Promise<AgentTriggerResponse> {
+    const triggerId = `trigger_${++this.triggerCounter}_${Date.now()}`;
+    logger.info(`[AgentGateway] Processing trigger ${triggerId}`, {
+      from: payload.fromAgentId,
+      to: payload.toAgentId,
+      type: payload.triggerType,
+      priority: payload.priority,
+    });
+
+    const { handler, isDefaultHandler } = this.resolveHandler(payload);
+    if (!handler) {
+      logger.warn(`[AgentGateway] No handler for agent: ${payload.toAgentId}`);
+      this.emit('trigger:unhandled', { triggerId, payload });
+      return {
+        success: false,
+        triggerId,
+        processed: false,
+        error: `No handler registered for agent: ${payload.toAgentId}`,
+      };
     }
 
     try {
-      // Execute the handler
-      await handler(payload);
-
-      this.emit('trigger:processed', { triggerId, payload });
-
-      logger.info(`[AgentGateway] Trigger ${triggerId} processed successfully`);
-
-      return {
-        success: true,
-        triggerId,
-        processed: true,
-      };
+      await this.executeTrigger(triggerId, payload, handler, isDefaultHandler);
+      return { success: true, triggerId, processed: true };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-
       logger.error(`[AgentGateway] Trigger ${triggerId} failed:`, error);
-
       this.emit('trigger:error', { triggerId, payload, error });
-
       return {
         success: false,
         triggerId,
@@ -225,7 +278,7 @@ export function createAgentGatewayRoutes(app: {
         return;
       }
 
-      const result = await gateway.processTrigger(payload);
+      const result = gateway.dispatchTrigger(payload);
 
       if (result.success) {
         response.json(result);
