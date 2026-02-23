@@ -281,6 +281,25 @@ function writeRuntimeFile(cwd: string, filename: string, content: string): void 
   writeFileSync(join(dir, filename), content);
 }
 
+function extractBackendSessionId(stdin: Record<string, unknown>): string | undefined {
+  const candidates: unknown[] = [
+    stdin.session_id,
+    stdin.sessionId,
+    (stdin.session as Record<string, unknown> | undefined)?.id,
+    (stdin.session as Record<string, unknown> | undefined)?.session_id,
+    (stdin.data as Record<string, unknown> | undefined)?.session_id,
+    (stdin.data as Record<string, unknown> | undefined)?.sessionId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+
+  return undefined;
+}
+
 // ============================================================================
 // Template Loading
 // ============================================================================
@@ -961,9 +980,13 @@ async function onSessionStartHandler(): Promise<void> {
 
   // Register PCP session with detected backend
   const detectedBackend = detectBackend(cwd);
+  // Hook backend names and session backend names differ for Claude:
+  // - hooks backend: "claude-code"
+  // - session/backend adapter: "claude"
   const sessionBackend = detectedBackend.name === 'claude-code' ? 'claude' : detectedBackend.name;
   let pcpSessionId: string | undefined;
   let pcpThreadKey: string | undefined;
+  const backendSessionId = extractBackendSessionId(stdin);
 
   // If provided by sb launcher, prefer that explicit session id.
   if (process.env.PCP_SESSION_ID) {
@@ -994,8 +1017,8 @@ async function onSessionStartHandler(): Promise<void> {
   }
 
   // Store session ID if provided in stdin
-  if (stdin.session_id) {
-    writeRuntimeFile(cwd, 'session-id', String(stdin.session_id));
+  if (backendSessionId) {
+    writeRuntimeFile(cwd, 'session-id', backendSessionId);
   }
 
   if (pcpSessionId) {
@@ -1007,7 +1030,7 @@ async function onSessionStartHandler(): Promise<void> {
       ...(identityId ? { identityId } : {}),
       ...(studioId ? { studioId } : {}),
       ...(pcpThreadKey ? { threadKey: pcpThreadKey } : {}),
-      ...(stdin.session_id ? { backendSessionId: String(stdin.session_id) } : {}),
+      ...(backendSessionId ? { backendSessionId } : {}),
       startedAt: new Date().toISOString(),
     });
     setCurrentRuntimeSession(cwd, pcpSessionId, sessionBackend, {
@@ -1018,13 +1041,13 @@ async function onSessionStartHandler(): Promise<void> {
   }
 
   // Link backend-specific session id to the PCP session for deterministic routing/resume.
-  if (pcpSessionId && stdin.session_id) {
+  if (pcpSessionId && backendSessionId) {
     try {
       await callPcpTool('update_session_phase', {
         email: config?.email,
         agentId,
         sessionId: pcpSessionId,
-        backendSessionId: String(stdin.session_id),
+        backendSessionId,
         status: 'active',
       });
     } catch {

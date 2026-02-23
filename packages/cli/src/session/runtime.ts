@@ -91,6 +91,8 @@ export function upsertRuntimeSession(
   cwd: string,
   input: Omit<RuntimeSessionRecord, 'updatedAt'> & { updatedAt?: string }
 ): RuntimeSessionRecord {
+  // NOTE: This is a best-effort local runtime cache (non-atomic read/modify/write).
+  // Concurrent writers can race and last-write-wins.
   const state = readRuntimeState(cwd);
   const now = input.updatedAt || new Date().toISOString();
 
