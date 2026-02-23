@@ -4,7 +4,7 @@
 
 CREATE TABLE channel_routes (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   identity_id uuid NOT NULL REFERENCES agent_identities(id) ON DELETE CASCADE,
   platform text NOT NULL,              -- 'telegram', 'whatsapp', 'discord'
   platform_account_id text,            -- bot username/id (nullable = any account on this platform)
@@ -48,23 +48,24 @@ CREATE POLICY "Users can delete own channel routes" ON channel_routes
   FOR DELETE USING (auth.uid() = user_id);
 
 -- Seed: route all Telegram messages to Myra (platform-level default)
+-- Uses DISTINCT ON to pick the latest Myra identity per user, regardless of workspace.
 INSERT INTO channel_routes (user_id, identity_id, platform)
-SELECT
+SELECT DISTINCT ON (ai.user_id)
   ai.user_id,
   ai.id,
   'telegram'
 FROM agent_identities ai
 WHERE ai.agent_id = 'myra'
-  AND ai.workspace_id IS NULL
+ORDER BY ai.user_id, ai.updated_at DESC
 ON CONFLICT DO NOTHING;
 
 -- Seed: route all WhatsApp messages to Myra
 INSERT INTO channel_routes (user_id, identity_id, platform)
-SELECT
+SELECT DISTINCT ON (ai.user_id)
   ai.user_id,
   ai.id,
   'whatsapp'
 FROM agent_identities ai
 WHERE ai.agent_id = 'myra'
-  AND ai.workspace_id IS NULL
+ORDER BY ai.user_id, ai.updated_at DESC
 ON CONFLICT DO NOTHING;
