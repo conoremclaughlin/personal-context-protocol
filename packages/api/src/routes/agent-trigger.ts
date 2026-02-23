@@ -37,7 +37,7 @@ router.post('/trigger', async (req, res) => {
     });
 
     const gateway = getAgentGateway();
-    const result = await gateway.processTrigger(payload);
+    const result = gateway.dispatchTrigger(payload);
 
     if (result.success) {
       res.json(result);

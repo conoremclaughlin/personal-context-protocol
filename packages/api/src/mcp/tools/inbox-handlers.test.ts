@@ -32,10 +32,11 @@ vi.mock('../../utils/logger', () => ({
 // Mock agent gateway
 vi.mock('../../channels/agent-gateway.js', () => ({
   getAgentGateway: vi.fn().mockReturnValue({
-    processTrigger: vi.fn().mockResolvedValue({
+    dispatchTrigger: vi.fn().mockReturnValue({
       success: true,
       triggerId: 'trigger-1',
-      processed: true,
+      processed: false,
+      accepted: true,
     }),
   }),
 }));
@@ -244,7 +245,7 @@ describe('handleSendToInbox - threadKey', () => {
     );
 
     // The trigger is fire-and-forget, so check the gateway was called with threadKey
-    expect(mockGateway.processTrigger).toHaveBeenCalledWith(
+    expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
       expect.objectContaining({
         threadKey: 'pr:32',
       })
@@ -270,7 +271,7 @@ describe('handleSendToInbox - threadKey', () => {
       mockDc as never
     );
 
-    expect(mockGateway.processTrigger).toHaveBeenCalledWith(
+    expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
       expect.objectContaining({
         toAgentId: 'myra',
       })
@@ -296,7 +297,7 @@ describe('handleSendToInbox - threadKey', () => {
       mockDc as never
     );
 
-    expect(mockGateway.processTrigger).toHaveBeenCalledWith(
+    expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
       expect.objectContaining({
         recipientSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
       })
@@ -327,7 +328,7 @@ describe('handleSendToInbox - threadKey', () => {
         recipient_session_id: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
       })
     );
-    expect(mockGateway.processTrigger).toHaveBeenCalledWith(
+    expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
       expect.objectContaining({
         recipientSessionId: 'b85490f5-0836-4bdd-8193-f6cfa2562a41',
       })
@@ -353,7 +354,7 @@ describe('handleSendToInbox - threadKey', () => {
       mockDc as never
     );
 
-    expect(mockGateway.processTrigger).toHaveBeenCalledWith(
+    expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
       expect.objectContaining({
         fromAgentId: 'system',
       })
@@ -380,7 +381,7 @@ describe('handleSendToInbox - threadKey', () => {
 
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.trigger.triggered).toBe(false);
-    expect(mockGateway.processTrigger).not.toHaveBeenCalled();
+    expect(mockGateway.dispatchTrigger).not.toHaveBeenCalled();
   });
 
   it('should deliver actionable handoff without anchor and return routing hint', async () => {
@@ -404,7 +405,7 @@ describe('handleSendToInbox - threadKey', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.success).toBe(true);
     expect(parsed.routingHint).toContain('routing anchor');
-    expect(mockGateway.processTrigger).toHaveBeenCalled();
+    expect(mockGateway.dispatchTrigger).toHaveBeenCalled();
   });
 });
 

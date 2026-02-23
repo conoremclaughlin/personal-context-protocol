@@ -145,6 +145,36 @@ describe('AgentGateway', () => {
     });
   });
 
+  describe('dispatchTrigger', () => {
+    const basePayload: AgentTriggerPayload = {
+      fromAgentId: 'wren',
+      toAgentId: 'myra',
+      triggerType: 'message',
+      summary: 'Async trigger',
+    };
+
+    it('should return accepted immediately without waiting for processing', () => {
+      let resolved = false;
+      gateway.registerHandler('myra', async () => {
+        await new Promise((r) => setTimeout(r, 25));
+        resolved = true;
+      });
+
+      const result = gateway.dispatchTrigger(basePayload);
+      expect(result.success).toBe(true);
+      expect(result.accepted).toBe(true);
+      expect(result.processed).toBe(false);
+      expect(resolved).toBe(false);
+    });
+
+    it('should return unhandled when no handler exists', () => {
+      const result = gateway.dispatchTrigger(basePayload);
+      expect(result.success).toBe(false);
+      expect(result.processed).toBe(false);
+      expect(result.error).toContain('No handler registered');
+    });
+  });
+
   describe('dynamic agent routing (stateless pattern)', () => {
     it('should route to any agent via default handler', async () => {
       const processedAgents: string[] = [];
