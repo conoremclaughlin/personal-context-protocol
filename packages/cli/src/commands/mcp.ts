@@ -31,6 +31,106 @@ interface McpJson {
 }
 
 // ============================================================================
+// Env file parsing
+// ============================================================================
+
+/**
+ * Parse a .env file into key-value pairs.
+ * Handles comments, empty lines, quoted values, and inline comments.
+ */
+export function parseEnvFile(filePath: string): Record<string, string> {
+  if (!existsSync(filePath)) return {};
+
+  const vars: Record<string, string> = {};
+  const content = readFileSync(filePath, 'utf-8');
+
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+
+    const eqIdx = trimmed.indexOf('=');
+    if (eqIdx === -1) continue;
+
+    const key = trimmed.slice(0, eqIdx).trim();
+    let value = trimmed.slice(eqIdx + 1).trim();
+
+    // Strip surrounding quotes
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    } else {
+      // Strip inline comments for unquoted values
+      const commentIdx = value.indexOf(' #');
+      if (commentIdx !== -1) {
+        value = value.slice(0, commentIdx).trim();
+      }
+    }
+
+    if (key) vars[key] = value;
+  }
+
+  return vars;
+}
+
+/**
+ * Scan a server config for ${VAR} template references.
+ * Returns the set of variable names referenced.
+ */
+function findTemplateVars(config: McpServerConfig): Set<string> {
+  const vars = new Set<string>();
+  const pattern = /\$\{(\w+)\}/g;
+
+  function scan(val: unknown): void {
+    if (typeof val === 'string') {
+      for (const match of val.matchAll(pattern)) {
+        vars.add(match[1]);
+      }
+    } else if (val && typeof val === 'object') {
+      for (const v of Object.values(val)) {
+        scan(v);
+      }
+    }
+  }
+
+  scan(config);
+  return vars;
+}
+
+/**
+ * Inject .env.local values into server configs for vars referenced via ${VAR} syntax.
+ * Returns a new servers map with env vars injected — does not mutate the input.
+ */
+function injectEnvLocal(
+  servers: Record<string, McpServerConfig>,
+  envVars: Record<string, string>
+): Record<string, McpServerConfig> {
+  if (Object.keys(envVars).length === 0) return servers;
+
+  const result: Record<string, McpServerConfig> = {};
+
+  for (const [name, config] of Object.entries(servers)) {
+    const referencedVars = findTemplateVars(config);
+    const injected: Record<string, string> = {};
+
+    for (const varName of referencedVars) {
+      if (envVars[varName] && !config.env?.[varName]) {
+        injected[varName] = envVars[varName];
+      }
+    }
+
+    if (Object.keys(injected).length > 0) {
+      result[name] = {
+        ...config,
+        env: { ...injected, ...config.env },
+      };
+    } else {
+      result[name] = config;
+    }
+  }
+
+  return result;
+}
+
+// ============================================================================
 // Format converters
 // ============================================================================
 
@@ -198,11 +298,15 @@ export function syncMcpConfig(targetDir: string): { codex: boolean; gemini: bool
     return { codex: false, gemini: false };
   }
 
+  // --- Resolve env vars from .env.local ---
+  const envLocal = parseEnvFile(join(targetDir, '.env.local'));
+  const servers = injectEnvLocal(mcpJson.mcpServers, envLocal);
+
   // --- Codex: .codex/config.toml ---
   const codexDir = join(targetDir, '.codex');
   const codexPath = join(codexDir, 'config.toml');
   mkdirSync(codexDir, { recursive: true });
-  writeFileSync(codexPath, toCodexToml(mcpJson.mcpServers));
+  writeFileSync(codexPath, toCodexToml(servers));
 
   // --- Gemini: .gemini/settings.json ---
   const geminiDir = join(targetDir, '.gemini');
@@ -218,7 +322,7 @@ export function syncMcpConfig(targetDir: string): { codex: boolean; gemini: bool
     }
   }
 
-  const geminiSettings = toGeminiSettings(mcpJson.mcpServers, existingGemini);
+  const geminiSettings = toGeminiSettings(servers, existingGemini);
   writeFileSync(geminiPath, JSON.stringify(geminiSettings, null, 2) + '\n');
 
   // --- Gitignore ---
@@ -250,7 +354,9 @@ async function syncCommand(): Promise<void> {
   }
 
   const serverCount = Object.keys(mcpJson.mcpServers).length;
-  console.log(chalk.dim(`Found ${serverCount} server(s) in .mcp.json\n`));
+  const envLocalPath = join(cwd, '.env.local');
+  const hasEnvLocal = existsSync(envLocalPath);
+  console.log(chalk.dim(`Found ${serverCount} server(s) in .mcp.json${hasEnvLocal ? ' + .env.local' : ''}\n`));
 
   const result = syncMcpConfig(cwd);
 
@@ -259,6 +365,18 @@ async function syncCommand(): Promise<void> {
   }
   if (result.gemini) {
     console.log(chalk.green('  wrote'), chalk.cyan('.gemini/settings.json'));
+  }
+
+  if (hasEnvLocal) {
+    const envVars = parseEnvFile(envLocalPath);
+    const allRefs = new Set<string>();
+    for (const config of Object.values(mcpJson.mcpServers)) {
+      for (const v of findTemplateVars(config)) allRefs.add(v);
+    }
+    const resolved = [...allRefs].filter((v) => envVars[v]);
+    if (resolved.length > 0) {
+      console.log(chalk.green('  injected'), chalk.dim(`.env.local vars: ${resolved.join(', ')}`));
+    }
   }
 
   console.log(chalk.dim(`\nDone. All backends can now discover MCP servers.`));

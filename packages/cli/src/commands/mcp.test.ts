@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { syncMcpConfig } from './mcp.js';
+import { syncMcpConfig, parseEnvFile } from './mcp.js';
 
 const TEST_DIR = join(tmpdir(), 'pcp-mcp-test-' + Date.now());
 
@@ -232,5 +232,144 @@ describe('syncMcpConfig', () => {
     expect(existsSync(join(subDir, '.codex', 'config.toml'))).toBe(true);
     // Should NOT exist in the parent
     expect(existsSync(join(TEST_DIR, '.codex'))).toBe(false);
+  });
+
+  it('should inject .env.local vars referenced by ${VAR} into Codex env', () => {
+    writeFileSync(
+      join(TEST_DIR, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: {
+            type: 'http',
+            url: 'https://api.githubcopilot.com/mcp/',
+            headers: { Authorization: 'Bearer ${GITHUB_TOKEN}' },
+          },
+        },
+      })
+    );
+    writeFileSync(join(TEST_DIR, '.env.local'), 'GITHUB_TOKEN=ghp_test123\n');
+
+    syncMcpConfig(TEST_DIR);
+
+    const toml = readFileSync(join(TEST_DIR, '.codex', 'config.toml'), 'utf-8');
+    expect(toml).toContain('bearer_token_env_var = "GITHUB_TOKEN"');
+    expect(toml).toContain('"GITHUB_TOKEN" = "ghp_test123"');
+  });
+
+  it('should inject .env.local vars into Gemini env', () => {
+    writeFileSync(
+      join(TEST_DIR, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: {
+            type: 'http',
+            url: 'https://api.githubcopilot.com/mcp/',
+            headers: { Authorization: 'Bearer ${GITHUB_TOKEN}' },
+          },
+        },
+      })
+    );
+    writeFileSync(join(TEST_DIR, '.env.local'), 'GITHUB_TOKEN=ghp_test123\n');
+
+    syncMcpConfig(TEST_DIR);
+
+    const settings = JSON.parse(readFileSync(join(TEST_DIR, '.gemini', 'settings.json'), 'utf-8'));
+    expect(settings.mcpServers.github.env).toBeDefined();
+    expect(settings.mcpServers.github.env.GITHUB_TOKEN).toBe('ghp_test123');
+  });
+
+  it('should not overwrite existing env vars with .env.local', () => {
+    writeFileSync(
+      join(TEST_DIR, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          myserver: {
+            url: 'https://example.com/${API_KEY}',
+            env: { API_KEY: 'explicit-value' },
+          },
+        },
+      })
+    );
+    writeFileSync(join(TEST_DIR, '.env.local'), 'API_KEY=env-local-value\n');
+
+    syncMcpConfig(TEST_DIR);
+
+    const settings = JSON.parse(readFileSync(join(TEST_DIR, '.gemini', 'settings.json'), 'utf-8'));
+    expect(settings.mcpServers.myserver.env.API_KEY).toBe('explicit-value');
+  });
+
+  it('should not inject vars that are not referenced in config', () => {
+    writeFileSync(
+      join(TEST_DIR, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          pcp: { url: 'http://localhost:3001/mcp' },
+        },
+      })
+    );
+    writeFileSync(join(TEST_DIR, '.env.local'), 'SECRET_KEY=should-not-appear\n');
+
+    syncMcpConfig(TEST_DIR);
+
+    const settings = JSON.parse(readFileSync(join(TEST_DIR, '.gemini', 'settings.json'), 'utf-8'));
+    expect(settings.mcpServers.pcp.env).toBeUndefined();
+  });
+
+  it('should work fine without .env.local present', () => {
+    writeFileSync(
+      join(TEST_DIR, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          github: {
+            url: 'https://api.githubcopilot.com/mcp/',
+            headers: { Authorization: 'Bearer ${GITHUB_TOKEN}' },
+          },
+        },
+      })
+    );
+    // No .env.local
+
+    const result = syncMcpConfig(TEST_DIR);
+    expect(result.codex).toBe(true);
+    expect(result.gemini).toBe(true);
+
+    // Should still generate configs, just without injected env
+    const settings = JSON.parse(readFileSync(join(TEST_DIR, '.gemini', 'settings.json'), 'utf-8'));
+    expect(settings.mcpServers.github.env).toBeUndefined();
+  });
+});
+
+describe('parseEnvFile', () => {
+  it('should parse simple key=value pairs', () => {
+    const envPath = join(TEST_DIR, '.env.test');
+    writeFileSync(envPath, 'FOO=bar\nBAZ=qux\n');
+    const result = parseEnvFile(envPath);
+    expect(result).toEqual({ FOO: 'bar', BAZ: 'qux' });
+  });
+
+  it('should skip comments and empty lines', () => {
+    const envPath = join(TEST_DIR, '.env.test');
+    writeFileSync(envPath, '# Comment\n\nFOO=bar\n# Another comment\n');
+    const result = parseEnvFile(envPath);
+    expect(result).toEqual({ FOO: 'bar' });
+  });
+
+  it('should handle quoted values', () => {
+    const envPath = join(TEST_DIR, '.env.test');
+    writeFileSync(envPath, 'FOO="bar baz"\nQUX=\'hello world\'\n');
+    const result = parseEnvFile(envPath);
+    expect(result).toEqual({ FOO: 'bar baz', QUX: 'hello world' });
+  });
+
+  it('should strip inline comments from unquoted values', () => {
+    const envPath = join(TEST_DIR, '.env.test');
+    writeFileSync(envPath, 'TOKEN=abc123 # my token\n');
+    const result = parseEnvFile(envPath);
+    expect(result).toEqual({ TOKEN: 'abc123' });
+  });
+
+  it('should return empty object for non-existent file', () => {
+    const result = parseEnvFile(join(TEST_DIR, 'nonexistent'));
+    expect(result).toEqual({});
   });
 });
