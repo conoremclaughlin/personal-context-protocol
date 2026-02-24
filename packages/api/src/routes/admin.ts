@@ -20,7 +20,7 @@ import crypto from 'crypto';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
-import type { WorkspaceMemberRole } from '../data/repositories/workspace-containers.repository';
+import type { WorkspaceMemberRole } from '../data/repositories/workspaces.repository';
 import { slugifyWorkspaceName } from '../utils/workspace-slug';
 import {
   signPcpAccessToken,
@@ -546,7 +546,7 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
 
     // --- Workspace resolution (all tiers, 1 DB query) ---
     const dataComposer = await getDataComposer();
-    const workspaceRepo = dataComposer.repositories.workspaceContainers;
+    const workspaceRepo = dataComposer.repositories.workspaces;
     const requestedWorkspaceId = req.header('x-pcp-workspace-id')?.trim();
 
     // For trusted-user resolution we need telegram/whatsapp IDs.
@@ -733,18 +733,18 @@ router.post('/auth/logout', async (req: Request, res: Response) => {
 router.use(adminAuthMiddleware);
 
 // =============================================================================
-// Workspace Containers
+// Workspaces
 // =============================================================================
 
 /**
  * GET /api/admin/workspaces
- * List workspace containers available to the authenticated user.
+ * List workspaces available to the authenticated user.
  */
 router.get('/workspaces', async (req: Request, res: Response) => {
   try {
     const authReq = req as AdminAuthRequest;
     const dataComposer = await getDataComposer();
-    const workspaceRepo = dataComposer.repositories.workspaceContainers;
+    const workspaceRepo = dataComposer.repositories.workspaces;
     const workspaces = await workspaceRepo.listMembershipsByUser(authReq.pcpUserId, {
       includeArchived: false,
     });
@@ -772,20 +772,20 @@ router.get('/workspaces', async (req: Request, res: Response) => {
       })),
     });
   } catch (error) {
-    logger.error('Failed to list workspace containers:', error);
-    res.status(500).json({ error: 'Failed to list workspace containers' });
+    logger.error('Failed to list workspaces:', error);
+    res.status(500).json({ error: 'Failed to list workspaces' });
   }
 });
 
 /**
  * POST /api/admin/workspaces
- * Create a new workspace container and make the caller owner.
+ * Create a new workspace and make the caller owner.
  */
 router.post('/workspaces', async (req: Request, res: Response) => {
   try {
     const authReq = req as AdminAuthRequest;
     const dataComposer = await getDataComposer();
-    const workspaceRepo = dataComposer.repositories.workspaceContainers;
+    const workspaceRepo = dataComposer.repositories.workspaces;
 
     const rawName = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
     if (!rawName) {
@@ -829,13 +829,13 @@ router.post('/workspaces', async (req: Request, res: Response) => {
       },
     });
   } catch (error) {
-    logger.error('Failed to create workspace container:', error);
+    logger.error('Failed to create workspace:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     if (message.toLowerCase().includes('duplicate')) {
       res.status(409).json({ error: 'A workspace with that slug already exists for this owner' });
       return;
     }
-    res.status(500).json({ error: 'Failed to create workspace container' });
+    res.status(500).json({ error: 'Failed to create workspace' });
   }
 });
 
@@ -847,7 +847,7 @@ router.get('/workspaces/:workspaceId/members', async (req: Request, res: Respons
   try {
     const authReq = req as AdminAuthRequest;
     const dataComposer = await getDataComposer();
-    const workspaceRepo = dataComposer.repositories.workspaceContainers;
+    const workspaceRepo = dataComposer.repositories.workspaces;
     const workspaceId = req.params.workspaceId;
 
     const workspace = await workspaceRepo.findById(workspaceId, authReq.pcpUserId);
@@ -889,7 +889,7 @@ router.post('/workspaces/:workspaceId/members', async (req: Request, res: Respon
   try {
     const authReq = req as AdminAuthRequest;
     const dataComposer = await getDataComposer();
-    const workspaceRepo = dataComposer.repositories.workspaceContainers;
+    const workspaceRepo = dataComposer.repositories.workspaces;
     const usersRepo = dataComposer.repositories.users;
     const workspaceId = req.params.workspaceId;
 
