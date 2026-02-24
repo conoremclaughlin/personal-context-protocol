@@ -32,6 +32,8 @@ Skills are loaded from a 4-tier precedence cascade (lowest → highest). When na
    - Per-worktree / per-SB skills
    - Highest precedence — overrides everything
 
+> **Note:** The MCP `list_skills` endpoint covers tiers 1–3 (builtin, extra dirs, managed). Workspace skills (tier 4) require knowing the agent's working directory, which the PCP server doesn't have. Instead, workspace skills are picked up by the session start hooks running inside the agent's process and injected into the `{{SKILLS_BLOCK}}`.
+
 ### Configuring Extra Directories
 
 Add `skills.extraDirs` to `~/.pcp/config.json`:
