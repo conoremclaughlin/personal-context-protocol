@@ -191,6 +191,9 @@ export class CodexRunner implements IClaudeRunner {
             parsedEventCount += 1;
             if (typeof parsed.type === 'string') {
               parsedEventTypes.push(parsed.type);
+              if (parsedEventTypes.length > DIAGNOSTIC_MAX_LINES) {
+                parsedEventTypes.shift();
+              }
             }
             if (parsed.type === 'error' && typeof parsed.message === 'string') {
               parsedErrorMessages.push(parsed.message);
@@ -247,6 +250,9 @@ export class CodexRunner implements IClaudeRunner {
             parsedEventCount += 1;
             if (typeof parsed.type === 'string') {
               parsedEventTypes.push(parsed.type);
+              if (parsedEventTypes.length > DIAGNOSTIC_MAX_LINES) {
+                parsedEventTypes.shift();
+              }
             }
             if (parsed.type === 'error' && typeof parsed.message === 'string') {
               parsedErrorMessages.push(parsed.message);
