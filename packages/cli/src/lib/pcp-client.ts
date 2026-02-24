@@ -232,7 +232,26 @@ export class PcpClient {
     }
 
     if (!response.ok) {
-      return null;
+      const body = await response.text().catch(() => '');
+      const bodySnippet = body.replace(/\s+/g, ' ').trim().slice(0, 240);
+
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          `PCP MCP auth failed (${response.status}) at ${this.baseUrl}/mcp.\n` +
+            `Run: PCP_SERVER_URL=${this.baseUrl} sb auth login\n` +
+            (bodySnippet ? `Server response: ${bodySnippet}` : '')
+        );
+      }
+
+      // Fall back to legacy endpoint only when /mcp is unavailable.
+      if (response.status === 404 || response.status === 405) {
+        return null;
+      }
+
+      throw new Error(
+        `PCP MCP call failed (${response.status}) at ${this.baseUrl}/mcp` +
+          (bodySnippet ? `: ${bodySnippet}` : '')
+      );
     }
 
     const payload = (await response.json()) as JsonRpcResponse;
