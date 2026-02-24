@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { getValidAccessToken } from '../auth/tokens.js';
 
 export interface PcpToolCallResult {
   [key: string]: unknown;
@@ -57,16 +58,26 @@ export class PcpClient {
   }
 
   public async callTool(tool: string, args: Record<string, unknown>): Promise<PcpToolCallResult> {
-    // Prefer authenticated /mcp JSON-RPC when a token is available.
-    if (this.config.accessToken || this.config.refreshToken) {
-      const result = await this.callToolJsonRpc(tool, args);
-      if (result) {
-        return result;
-      }
+    // Prefer authenticated /mcp JSON-RPC whenever possible.
+    const result = await this.callToolJsonRpc(tool, args);
+    if (result) {
+      return result;
     }
 
     // Fallback for local/dev flows.
-    return this.callToolLegacy(tool, args);
+    try {
+      return await this.callToolLegacy(tool, args);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes('Cannot POST /api/mcp/call') || message.includes('legacy tool call failed (404)')) {
+        throw new Error(
+          `PCP server at ${this.baseUrl} does not expose legacy /api/mcp/call.\n` +
+            `Run 'sb auth login' and ensure PCP_SERVER_URL points to the same server.\n` +
+            `Original error: ${message}`
+        );
+      }
+      throw error;
+    }
   }
 
   private loadConfig(): PcpAuthConfig {
@@ -103,6 +114,13 @@ export class PcpClient {
   }
 
   private async ensureAccessToken(): Promise<string | null> {
+    // Primary source: ~/.pcp/auth.json from sb auth login.
+    const authToken = await getValidAccessToken(this.baseUrl);
+    if (authToken) {
+      return authToken;
+    }
+
+    // Secondary source: legacy config.json token fields.
     if (this.config.accessToken && !this.isTokenExpiredSkewed(this.config.tokenExpiresAt)) {
       return this.config.accessToken;
     }
@@ -183,6 +201,8 @@ export class PcpClient {
     tool: string,
     args: Record<string, unknown>
   ): Promise<PcpToolCallResult | null> {
+    // Pick up user/email and any legacy token updates.
+    this.reloadConfig();
     const token = await this.ensureAccessToken();
     if (!token) return null;
 
@@ -240,4 +260,3 @@ export class PcpClient {
     return (await response.json()) as PcpToolCallResult;
   }
 }
-
