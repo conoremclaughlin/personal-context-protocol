@@ -1284,8 +1284,22 @@ router.post('/whatsapp/logout', async (_req: Request, res: Response) => {
  * Process heartbeat - check for due reminders and execute them
  * Called by pg_cron in production or node-cron locally
  */
-router.post('/heartbeat', async (_req: Request, res: Response) => {
+router.post('/heartbeat', async (req: Request, res: Response) => {
   try {
+    const heartbeatEnabled =
+      process.env.ENABLE_HEARTBEAT_SERVICE !== 'false' &&
+      process.env.ENABLE_HEARTBEATS !== 'false' &&
+      process.env.ENABLE_REMINDERS !== 'false';
+    const forceRun = req.query.force === 'true';
+
+    if (!heartbeatEnabled && !forceRun) {
+      res.status(503).json({
+        error:
+          'Heartbeat processing is disabled on this server. Set ENABLE_HEARTBEAT_SERVICE=true or call with ?force=true for a manual run.',
+      });
+      return;
+    }
+
     // Import dynamically to avoid circular dependencies
     const { processHeartbeat } = await import('../services/heartbeat.js');
     const stats = await processHeartbeat();
