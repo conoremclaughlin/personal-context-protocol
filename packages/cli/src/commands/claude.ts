@@ -109,9 +109,25 @@ function getIdentityContextFromIdentityJson(cwd = process.cwd()): {
   }
 }
 
-function hasBackendSessionOverride(backend: string, passthroughArgs: string[]): boolean {
+export function hasBackendSessionOverride(
+  backend: string,
+  passthroughArgs: string[],
+  promptParts: string[] = []
+): boolean {
   const lowered = passthroughArgs.map((arg) => arg.toLowerCase());
   const has = (flag: string) => lowered.includes(flag.toLowerCase());
+  const isCodexResumePrompt =
+    backend === 'codex' &&
+    promptParts[0]?.toLowerCase() === 'resume' &&
+    Boolean(promptParts[1]) &&
+    !promptParts[1]?.startsWith('-');
+  const isCodexResumePassthrough =
+    backend === 'codex' &&
+    passthroughArgs[0]?.toLowerCase() === 'resume' &&
+    Boolean(passthroughArgs[1]) &&
+    !passthroughArgs[1]?.startsWith('-');
+
+  if (isCodexResumePrompt || isCodexResumePassthrough) return true;
 
   if (backend === 'claude') {
     return (
@@ -219,9 +235,10 @@ async function ensurePcpSessionContext(
   agentId: string,
   backend: string,
   passthroughArgs: string[],
-  verbose: boolean
+  verbose: boolean,
+  promptParts: string[] = []
 ): Promise<{ pcpSessionId?: string; backendSessionId?: string }> {
-  if (hasBackendSessionOverride(backend, passthroughArgs)) return {};
+  if (hasBackendSessionOverride(backend, passthroughArgs, promptParts)) return {};
 
   const config = getPcpConfig();
   const email = config?.email;
@@ -362,7 +379,13 @@ export async function runClaude(
   }
   const adapter = getBackend(options.backend);
   const sessionContext = options.session
-    ? await ensurePcpSessionContext(agentId, options.backend, passthroughArgs, options.verbose)
+    ? await ensurePcpSessionContext(
+        agentId,
+        options.backend,
+        passthroughArgs,
+        options.verbose,
+        promptParts
+      )
     : {};
   const runtimeLinkId = options.session ? randomUUID() : undefined;
   const { studioId, identityId } = getIdentityContextFromIdentityJson(process.cwd());
@@ -479,7 +502,7 @@ export async function runClaudeInteractive(
   }
   const adapter = getBackend(options.backend);
   const sessionContext = options.session
-    ? await ensurePcpSessionContext(agentId, options.backend, passthroughArgs, options.verbose)
+    ? await ensurePcpSessionContext(agentId, options.backend, passthroughArgs, [], options.verbose)
     : {};
   const runtimeLinkId = options.session ? randomUUID() : undefined;
   const { studioId, identityId } = getIdentityContextFromIdentityJson(process.cwd());
