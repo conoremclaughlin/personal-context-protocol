@@ -22,7 +22,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { homedir } from 'os';
-import { resolveAgentId, readIdentityJson } from '../backends/identity.js';
+import { resolveAgentId, readIdentityJson, readRoleMd } from '../backends/identity.js';
 import { getValidAccessToken } from '../auth/tokens.js';
 import {
   findRuntimeSessionByLinkId,
@@ -383,7 +383,11 @@ async function findPcpSessionByBackendSessionId(
 
     const matched = sessions.find((session) => {
       if (session.endedAt) return false;
-      if (typeof session.backend === 'string' && session.backend && session.backend !== sessionBackend) {
+      if (
+        typeof session.backend === 'string' &&
+        session.backend &&
+        session.backend !== sessionBackend
+      ) {
         return false;
       }
       const backendCandidate =
@@ -1272,6 +1276,15 @@ async function onSessionStartHandler(): Promise<void> {
   let sessionsBlock = '';
   let inboxBlock = '';
   let skillsBlock = '';
+  let roleBlock = '';
+
+  // Load ROLE.md if present in this studio
+  const roleMd = readRoleMd(cwd);
+  if (roleMd) {
+    const identity = readIdentityJson(cwd);
+    const roleName = identity?.role || 'Studio Role';
+    roleBlock = `## ${roleName}\n\n${roleMd}`;
+  }
 
   // Bootstrap
   try {
@@ -1382,6 +1395,7 @@ async function onSessionStartHandler(): Promise<void> {
   const output = renderTemplate(template, {
     AGENT_ID: agentId,
     WORKSPACE_LINE: studioLine,
+    ROLE_BLOCK: roleBlock,
     IDENTITY_BLOCK: identityBlock,
     MEMORIES_BLOCK: memoriesBlock,
     SESSIONS_BLOCK: sessionsBlock,
