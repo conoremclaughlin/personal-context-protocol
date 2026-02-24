@@ -1,8 +1,9 @@
 'use client';
 
+import { useState, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Bell, Clock, CheckCircle, XCircle, PauseCircle } from 'lucide-react';
+import { Bell, Clock, CheckCircle, XCircle, PauseCircle, User, Repeat, Hash } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
 
@@ -17,11 +18,24 @@ interface Reminder {
   deliveryChannel: string;
   status: 'active' | 'paused' | 'completed' | 'cancelled';
   runCount: number;
+  maxRuns: number | null;
+  agentId: string | null;
+  agentName: string | null;
+  createdAt: string | null;
 }
 
 interface RemindersResponse {
   reminders: Reminder[];
 }
+
+type StatusFilter = 'all' | 'active' | 'paused' | 'completed' | 'cancelled';
+
+const STATUS_ORDER: Record<string, number> = {
+  active: 0,
+  paused: 1,
+  completed: 2,
+  cancelled: 3,
+};
 
 const statusConfig = {
   active: {
@@ -58,32 +72,30 @@ const channelLabels: Record<string, string> = {
 };
 
 function formatCron(cron: string | null): string {
-  if (!cron) return 'No schedule';
+  if (!cron) return 'One-time';
 
-  // Simple cron formatting - could be enhanced with a library like cronstrue
   const parts = cron.split(' ');
   if (parts.length !== 5) return cron;
 
   const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  const timeStr = `${hour}:${minute.padStart(2, '0')}`;
 
-  // Common patterns
   if (dayOfMonth === '*' && month === '*' && dayOfWeek === '*') {
-    if (minute === '0' && hour === '9') return 'Daily at 9:00 AM';
-    if (minute === '0' && hour === '8') return 'Daily at 8:00 AM';
-    if (minute === '0') return `Daily at ${hour}:00`;
-    return `Daily at ${hour}:${minute.padStart(2, '0')}`;
+    return `Daily at ${timeStr}`;
   }
-
   if (dayOfMonth === '*' && month === '*' && dayOfWeek === '1-5') {
-    return `Weekdays at ${hour}:${minute.padStart(2, '0')}`;
+    return `Weekdays at ${timeStr}`;
   }
-
-  if (dayOfMonth === '*' && month === '*' && dayOfWeek === '0') {
-    return `Sundays at ${hour}:${minute.padStart(2, '0')}`;
+  if (dayOfMonth === '*' && month === '*' && dayOfWeek === '0,6') {
+    return `Weekends at ${timeStr}`;
   }
-
-  if (dayOfMonth === '*' && month === '*' && dayOfWeek === '1') {
-    return `Mondays at ${hour}:${minute.padStart(2, '0')}`;
+  if (dayOfMonth === '*' && month === '*') {
+    const dayNames: Record<string, string> = {
+      '0': 'Sun', '1': 'Mon', '2': 'Tue', '3': 'Wed',
+      '4': 'Thu', '5': 'Fri', '6': 'Sat',
+    };
+    const dayLabel = dayNames[dayOfWeek] || dayOfWeek;
+    return `${dayLabel} at ${timeStr}`;
   }
 
   return cron;
@@ -98,12 +110,10 @@ function formatRelativeTime(date: string): string {
   const diffDays = Math.round(diffMs / 86400000);
 
   if (diffMs < 0) {
-    // Past
     if (diffMins > -60) return `${Math.abs(diffMins)} min ago`;
     if (diffHours > -24) return `${Math.abs(diffHours)} hours ago`;
     return `${Math.abs(diffDays)} days ago`;
   } else {
-    // Future
     if (diffMins < 60) return `in ${diffMins} min`;
     if (diffHours < 24) return `in ${diffHours} hours`;
     return `in ${diffDays} days`;
@@ -111,27 +121,52 @@ function formatRelativeTime(date: string): string {
 }
 
 export default function RemindersPage() {
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+
   const { data, isLoading, error } = useApiQuery<RemindersResponse>(
     ['reminders'],
     '/api/admin/reminders'
   );
 
-  const reminders = data?.reminders ?? [];
+  const allReminders = data?.reminders ?? [];
 
-  // Stats
+  // Sort: active first, then paused, then completed/cancelled. Within each group, by next_run_at.
+  const sortedReminders = useMemo(() => {
+    return [...allReminders].sort((a, b) => {
+      const statusDiff = (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9);
+      if (statusDiff !== 0) return statusDiff;
+      // Within same status: soonest next_run_at first (nulls last)
+      if (a.nextRunAt && b.nextRunAt) return new Date(a.nextRunAt).getTime() - new Date(b.nextRunAt).getTime();
+      if (a.nextRunAt) return -1;
+      if (b.nextRunAt) return 1;
+      return 0;
+    });
+  }, [allReminders]);
+
+  const reminders = statusFilter === 'all'
+    ? sortedReminders
+    : sortedReminders.filter((r) => r.status === statusFilter);
+
   const stats = {
-    active: reminders.filter((r) => r.status === 'active').length,
-    paused: reminders.filter((r) => r.status === 'paused').length,
-    completed: reminders.filter((r) => r.status === 'completed').length,
-    total: reminders.length,
+    active: allReminders.filter((r) => r.status === 'active').length,
+    paused: allReminders.filter((r) => r.status === 'paused').length,
+    completed: allReminders.filter((r) => r.status === 'completed').length,
+    total: allReminders.length,
   };
+
+  const filterButtons: { key: StatusFilter; label: string; count: number }[] = [
+    { key: 'all', label: 'All', count: stats.total },
+    { key: 'active', label: 'Active', count: stats.active },
+    { key: 'paused', label: 'Paused', count: stats.paused },
+    { key: 'completed', label: 'Completed', count: stats.completed },
+  ];
 
   return (
     <div>
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Reminders</h1>
-          <p className="mt-2 text-gray-600">View scheduled reminders across all users.</p>
+          <p className="mt-2 text-gray-600">Scheduled reminders and recurring check-ins.</p>
         </div>
       </div>
 
@@ -169,11 +204,39 @@ export default function RemindersPage() {
         </Card>
       </div>
 
-      {/* Reminders List */}
+      {/* Filter Tabs + List */}
       <Card className="mt-6">
         <CardHeader>
-          <CardTitle>All Reminders</CardTitle>
-          <CardDescription>Sorted by next scheduled run time</CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle>Reminders</CardTitle>
+              <CardDescription>Active reminders sorted first, then by next run time</CardDescription>
+            </div>
+            <div className="flex gap-1">
+              {filterButtons.map((btn) => (
+                <button
+                  key={btn.key}
+                  onClick={() => setStatusFilter(btn.key)}
+                  className={clsx(
+                    'px-3 py-1.5 text-xs font-medium rounded-md transition-colors',
+                    statusFilter === btn.key
+                      ? 'bg-gray-900 text-white'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  )}
+                >
+                  {btn.label}
+                  {btn.count > 0 && (
+                    <span className={clsx(
+                      'ml-1.5 px-1.5 py-0.5 rounded-full text-[10px]',
+                      statusFilter === btn.key ? 'bg-white/20' : 'bg-gray-200'
+                    )}>
+                      {btn.count}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading ? (
@@ -181,56 +244,78 @@ export default function RemindersPage() {
           ) : reminders.length === 0 ? (
             <div className="text-center py-8">
               <Bell className="h-12 w-12 mx-auto text-gray-300 mb-3" />
-              <p className="text-gray-500">No reminders scheduled yet.</p>
-              <p className="text-sm text-gray-400 mt-1">
-                Use the <code className="bg-gray-100 px-1 rounded">create_reminder</code> tool to
-                schedule one.
-              </p>
+              {statusFilter !== 'all' ? (
+                <p className="text-gray-500">No {statusFilter} reminders.</p>
+              ) : (
+                <>
+                  <p className="text-gray-500">No reminders scheduled yet.</p>
+                  <p className="text-sm text-gray-400 mt-1">
+                    Use the <code className="bg-gray-100 px-1 rounded">create_reminder</code> tool to
+                    schedule one.
+                  </p>
+                </>
+              )}
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {reminders.map((reminder) => {
                 const config = statusConfig[reminder.status] || statusConfig.active;
                 const StatusIcon = config.icon;
+                const isRecurring = !!reminder.cronExpression;
 
                 return (
                   <div
                     key={reminder.id}
                     className={clsx(
-                      'rounded-lg border p-4',
+                      'rounded-lg border p-4 transition-colors',
                       reminder.status === 'active'
                         ? 'border-green-200 bg-green-50/50'
-                        : 'border-gray-200'
+                        : reminder.status === 'paused'
+                          ? 'border-yellow-200 bg-yellow-50/30'
+                          : 'border-gray-200'
                     )}
                   >
                     <div className="flex items-start justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-semibold text-gray-900">{reminder.title}</h3>
                           <Badge className={clsx('text-xs', config.bgColor, config.color)}>
                             <StatusIcon className="h-3 w-3 mr-1" />
                             {config.label}
                           </Badge>
-                          <Badge variant="outline" className="text-xs">
-                            {channelLabels[reminder.deliveryChannel] || reminder.deliveryChannel}
-                          </Badge>
+                          {isRecurring && (
+                            <Badge variant="outline" className="text-xs text-purple-600 border-purple-200">
+                              <Repeat className="h-3 w-3 mr-1" />
+                              Recurring
+                            </Badge>
+                          )}
                         </div>
                         {reminder.description && (
                           <p className="text-sm text-gray-600 mt-1">{reminder.description}</p>
                         )}
-                        <div className="flex items-center gap-4 mt-3 text-xs text-gray-500">
+                        <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 flex-wrap">
                           <span className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
                             {formatCron(reminder.cronExpression)}
                           </span>
+                          <span className="flex items-center gap-1">
+                            {channelLabels[reminder.deliveryChannel] || reminder.deliveryChannel}
+                          </span>
+                          {reminder.agentName && (
+                            <span className="flex items-center gap-1">
+                              <User className="h-3 w-3" />
+                              {reminder.agentName}
+                            </span>
+                          )}
                           {reminder.runCount > 0 && (
-                            <span>
-                              Ran {reminder.runCount} time{reminder.runCount !== 1 ? 's' : ''}
+                            <span className="flex items-center gap-1">
+                              <Hash className="h-3 w-3" />
+                              {reminder.runCount}{reminder.maxRuns ? `/${reminder.maxRuns}` : ''} run{reminder.runCount !== 1 ? 's' : ''}
                             </span>
                           )}
                         </div>
                       </div>
-                      <div className="text-right text-sm">
+                      <div className="text-right text-sm ml-4 shrink-0">
                         {reminder.nextRunAt && reminder.status === 'active' && (
                           <div>
                             <div className="text-gray-500">Next run</div>
@@ -243,7 +328,7 @@ export default function RemindersPage() {
                           </div>
                         )}
                         {reminder.lastRunAt && (
-                          <div className="mt-2">
+                          <div className={reminder.nextRunAt && reminder.status === 'active' ? 'mt-2' : ''}>
                             <div className="text-xs text-gray-400">
                               Last: {formatRelativeTime(reminder.lastRunAt)}
                             </div>
