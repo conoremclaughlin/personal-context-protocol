@@ -150,7 +150,16 @@ program
     // Resolve backend from identity.json if not explicitly set
     const resolvedOptions = { ...sbOptions, backend: resolveBackend(sbOptions.backend) };
 
-    if (!prompt && !passthroughArgs.length && !process.stdin.isTTY) {
+    // Backend subcommands that require interactive stdio (e.g. `codex resume <id>`)
+    // must be routed through runClaudeInteractive, not runClaude (which pipes stdout).
+    const INTERACTIVE_SUBCOMMANDS = ['resume'];
+    const isInteractiveSubcommand =
+      promptParts.length > 0 && INTERACTIVE_SUBCOMMANDS.includes(promptParts[0]);
+
+    if (isInteractiveSubcommand) {
+      // Move positional args to passthrough so the backend receives them as subcommand args
+      await runClaudeInteractive(resolvedOptions, [...passthroughArgs, ...promptParts]);
+    } else if (!prompt && !passthroughArgs.length && !process.stdin.isTTY) {
       // Piped stdin — read it as the prompt
       let stdinData = '';
       process.stdin.setEncoding('utf8');
