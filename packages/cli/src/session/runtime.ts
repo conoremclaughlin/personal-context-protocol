@@ -177,6 +177,22 @@ export function listRuntimeSessions(cwd: string, backend?: string): RuntimeSessi
   return [...sessions].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+export function findRuntimeSessionByLinkId(
+  cwd: string,
+  runtimeLinkId: string,
+  options?: { backend?: string; agentId?: string; studioId?: string }
+): RuntimeSessionRecord | undefined {
+  if (!runtimeLinkId.trim()) return undefined;
+
+  const sessions = listRuntimeSessions(cwd, options?.backend);
+  return sessions.find(
+    (session) =>
+      session.runtimeLinkId === runtimeLinkId &&
+      (!options?.agentId || session.agentId === options.agentId) &&
+      (!options?.studioId || session.studioId === options.studioId)
+  );
+}
+
 export function getCurrentRuntimeSession(
   cwd: string,
   backend?: string

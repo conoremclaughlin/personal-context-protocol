@@ -26,6 +26,7 @@ import { randomUUID } from 'crypto';
 import { resolveAgentId, readIdentityJson } from '../backends/identity.js';
 import { getValidAccessToken } from '../auth/tokens.js';
 import {
+  findRuntimeSessionByLinkId,
   getCurrentRuntimeSession,
   setCurrentRuntimeSession,
   upsertRuntimeSession,
@@ -307,9 +308,21 @@ function normalizeSessionBackend(backendName: string): string {
 function resolveActivePcpSessionId(cwd: string): string | undefined {
   const detectedBackend = detectBackend(cwd);
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
+  const { studioId } = getIdentitySessionContext(cwd);
+  const agentId = resolveAgentId() || 'unknown';
 
   const current = getCurrentRuntimeSession(cwd, sessionBackend);
   if (current?.pcpSessionId) return current.pcpSessionId;
+
+  const runtimeLinkId = process.env.PCP_RUNTIME_LINK_ID;
+  if (runtimeLinkId) {
+    const linked = findRuntimeSessionByLinkId(cwd, runtimeLinkId, {
+      backend: sessionBackend,
+      agentId,
+      ...(studioId ? { studioId } : {}),
+    });
+    if (linked?.pcpSessionId) return linked.pcpSessionId;
+  }
 
   const fromLegacyFile = readRuntimeFile(cwd, 'pcp-session-id');
   if (fromLegacyFile) return fromLegacyFile;
@@ -401,10 +414,23 @@ async function reconcileBackendSignal(
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
   const backendSessionId = extractBackendSessionId(stdin);
   const runtimeLinkId = getRuntimeLinkId();
+  writeRuntimeFile(cwd, 'runtime-link-id', runtimeLinkId);
   const { studioId, identityId } = getIdentitySessionContext(cwd);
 
   let pcpSessionId = options?.initialPcpSessionId || resolveActivePcpSessionId(cwd);
   let threadKey = options?.initialThreadKey;
+
+  if (!pcpSessionId) {
+    const linked = findRuntimeSessionByLinkId(cwd, runtimeLinkId, {
+      backend: sessionBackend,
+      agentId,
+      ...(studioId ? { studioId } : {}),
+    });
+    if (linked?.pcpSessionId) {
+      pcpSessionId = linked.pcpSessionId;
+      if (linked.threadKey) threadKey = linked.threadKey;
+    }
+  }
 
   if (backendSessionId) {
     // Reconcile mismatched pcpSessionId/backendSessionId by checking existing server-side links first.

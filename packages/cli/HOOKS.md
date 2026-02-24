@@ -169,6 +169,7 @@ Hooks store ephemeral state in `.pcp/runtime/` (gitignored):
 | `sessions.json`    | Runtime session registry (list of PCP sessions + backend session IDs/history + current pointer + runtimeLinkId correlation token) |
 | `pcp-session-id`   | Current PCP session UUID (legacy convenience file)                                      |
 | `session-id`       | Backend session ID from on-session-start (legacy convenience file)                      |
+| `runtime-link-id`  | Current run correlation token (`PCP_RUNTIME_LINK_ID`) for local reconciliation/debug    |
 | `last-inbox-check` | ISO timestamp of last inbox poll                                                        |
 | `tool-count`       | Cumulative tool call counter for on-stop nudges                                         |
 

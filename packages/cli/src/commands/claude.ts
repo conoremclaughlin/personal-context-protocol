@@ -124,7 +124,7 @@ function hasBackendSessionOverride(backend: string, passthroughArgs: string[]): 
     );
   }
 
-  return has('--resume') || has('-r');
+  return has('--resume') || has('-r') || has('--session-id');
 }
 
 async function callPcpTool<T = Record<string, unknown>>(tool: string, args: object): Promise<T> {

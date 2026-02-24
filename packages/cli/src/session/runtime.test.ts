@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { readRuntimeState, upsertRuntimeSession } from './runtime.js';
+import { findRuntimeSessionByLinkId, readRuntimeState, upsertRuntimeSession } from './runtime.js';
 
 describe('runtime session linkage', () => {
   let cwd: string;
@@ -63,5 +63,34 @@ describe('runtime session linkage', () => {
     expect(state.sessions).toHaveLength(1);
     expect(state.sessions[0].backendSessionIds).toEqual(['sess-1']);
   });
-});
 
+  it('finds sessions by runtimeLinkId with optional filters', () => {
+    upsertRuntimeSession(cwd, {
+      pcpSessionId: 'pcp-1',
+      backend: 'codex',
+      agentId: 'lumen',
+      studioId: 'studio-a',
+      runtimeLinkId: 'link-shared',
+    });
+    upsertRuntimeSession(cwd, {
+      pcpSessionId: 'pcp-2',
+      backend: 'gemini',
+      agentId: 'aster',
+      studioId: 'studio-b',
+      runtimeLinkId: 'link-shared',
+    });
+
+    const codex = findRuntimeSessionByLinkId(cwd, 'link-shared', {
+      backend: 'codex',
+      agentId: 'lumen',
+      studioId: 'studio-a',
+    });
+    expect(codex?.pcpSessionId).toBe('pcp-1');
+
+    const gemini = findRuntimeSessionByLinkId(cwd, 'link-shared', {
+      backend: 'gemini',
+      agentId: 'aster',
+    });
+    expect(gemini?.pcpSessionId).toBe('pcp-2');
+  });
+});
