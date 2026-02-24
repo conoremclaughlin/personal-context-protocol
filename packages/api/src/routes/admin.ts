@@ -1312,7 +1312,7 @@ router.get('/reminders', async (req: Request, res: Response) => {
 
     const { data, error } = await supabase
       .from('scheduled_reminders')
-      .select('*, users(email, first_name)')
+      .select('*, users(email, first_name), agent_identities(agent_id, name)')
       .eq('user_id', authReq.pcpUserId)
       .order('next_run_at', { ascending: true })
       .limit(100);
@@ -1334,6 +1334,10 @@ router.get('/reminders', async (req: Request, res: Response) => {
         deliveryChannel: r.delivery_channel,
         status: r.status,
         runCount: r.run_count,
+        maxRuns: r.max_runs,
+        agentId: r.agent_identities?.agent_id ?? null,
+        agentName: r.agent_identities?.name ?? null,
+        createdAt: r.created_at,
       })),
     });
   } catch (error) {
