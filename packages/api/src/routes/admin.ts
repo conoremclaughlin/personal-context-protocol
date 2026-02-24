@@ -1303,7 +1303,7 @@ router.post('/heartbeat', async (_req: Request, res: Response) => {
 
 /**
  * GET /api/admin/reminders
- * List reminders for the active user + workspace (admin view)
+ * List reminders for the active user (admin view)
  */
 router.get('/reminders', async (req: Request, res: Response) => {
   try {
@@ -1314,7 +1314,6 @@ router.get('/reminders', async (req: Request, res: Response) => {
       .from('scheduled_reminders')
       .select('*, users(email, first_name)')
       .eq('user_id', authReq.pcpUserId)
-      .eq('workspace_id', authReq.pcpWorkspaceId)
       .order('next_run_at', { ascending: true })
       .limit(100);
 
