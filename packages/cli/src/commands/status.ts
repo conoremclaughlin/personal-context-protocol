@@ -59,9 +59,7 @@ function getHooksInstalled(cwd: string, backend: StatusBackend): {
     const content = readFileSync(configPath, 'utf-8');
     return {
       installed:
-        content.includes('pcp-managed') ||
-        content.includes('sb hooks on-session-start') ||
-        content.includes('sb hooks on-stop'),
+        content.includes('sb hooks on-session-start') || content.includes('sb hooks on-stop'),
       configExists: true,
       parseError: false,
     };
@@ -145,4 +143,3 @@ export function registerStatusCommand(program: Command): void {
     .option('-b, --backend <name>', 'Backend to inspect (claude, codex, gemini)')
     .action(statusCommand);
 }
-

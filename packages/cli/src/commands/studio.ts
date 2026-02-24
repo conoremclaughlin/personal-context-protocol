@@ -54,6 +54,14 @@ interface StudioInfo {
   identity?: StudioIdentity;
 }
 
+interface RenameIdentity {
+  studio?: string;
+  workspace?: string;
+  context?: string;
+  description?: string;
+  [key: string]: unknown;
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -334,6 +342,46 @@ function copyBootstrapFiles(sourceRoot: string, wsPath: string): string[] {
   return copied;
 }
 
+function updateIdentityForStudioRename(wsPath: string, from: string, to: string): boolean {
+  const identityPath = join(wsPath, '.pcp', 'identity.json');
+  if (!existsSync(identityPath)) return false;
+
+  try {
+    const identity = JSON.parse(readFileSync(identityPath, 'utf-8')) as RenameIdentity;
+    let changed = false;
+
+    if (identity.studio !== to) {
+      identity.studio = to;
+      changed = true;
+    }
+
+    if (identity.workspace && identity.workspace === from) {
+      identity.workspace = to;
+      changed = true;
+    }
+
+    if (identity.context === `studio-${from}` || identity.context === `workspace-${from}`) {
+      identity.context = `studio-${to}`;
+      changed = true;
+    }
+
+    if (
+      identity.description === `Studio: ${from}` ||
+      identity.description === `Workspace: ${from}`
+    ) {
+      identity.description = `Studio: ${to}`;
+      changed = true;
+    }
+
+    if (changed) {
+      writeFileSync(identityPath, JSON.stringify(identity, null, 2));
+    }
+    return changed;
+  } catch {
+    return false;
+  }
+}
+
 // ============================================================================
 // Commands
 // ============================================================================
@@ -593,6 +641,41 @@ async function createStudio(
     console.log(chalk.dim(`  eval $(sb studio cd ${name})`));
   } catch (error) {
     spinner.fail(`Failed to create studio: ${error}`);
+    process.exit(1);
+  }
+}
+
+async function renameStudio(from: string, to: string): Promise<void> {
+  const spinner = ora(`Renaming studio: ${from} → ${to}`).start();
+
+  try {
+    const gitRoot = findGitRoot();
+    const fromPath = getStudioPath(gitRoot, from);
+    const toPath = getStudioPath(gitRoot, to);
+
+    if (!existsSync(fromPath)) {
+      spinner.fail(`Studio not found: ${from}`);
+      process.exit(1);
+    }
+
+    if (existsSync(toPath)) {
+      spinner.fail(`Target studio already exists: ${to}`);
+      process.exit(1);
+    }
+
+    git(`worktree move "${fromPath}" "${toPath}"`, gitRoot);
+
+    spinner.text = 'Updating studio identity metadata...';
+    const updatedIdentity = updateIdentityForStudioRename(toPath, from, to);
+
+    spinner.succeed(`Studio renamed: ${from} → ${to}`);
+    console.log('');
+    console.log(chalk.dim('  Path:   ') + toPath);
+    if (updatedIdentity) {
+      console.log(chalk.dim('  Identity updated: ') + chalk.green('.pcp/identity.json'));
+    }
+  } catch (error) {
+    spinner.fail(`Failed to rename studio: ${error}`);
     process.exit(1);
   }
 }
@@ -880,6 +963,7 @@ export {
   getStudioPrefix,
   getStudioPath,
   getWorktreePaths,
+  updateIdentityForStudioRename,
   resolveCopySourceRoot,
   planInit,
   git,
@@ -954,6 +1038,11 @@ export function registerStudioCommands(program: Command): void {
     .alias('st')
     .description('Show git status of all studios')
     .action(statusCommand);
+
+  ws.command('rename <from> <to>')
+    .alias('mv')
+    .description('Rename a studio (moves worktree path and updates identity metadata)')
+    .action(renameStudio);
 
   ws.command('path <name>').description('Output studio path').action(pathCommand);
 

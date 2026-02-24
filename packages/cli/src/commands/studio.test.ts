@@ -12,6 +12,7 @@ import {
   getWorktreePaths,
   getStudioPrefix,
   resolveCopySourceRoot,
+  updateIdentityForStudioRename,
   type InitResult,
 } from './studio.js';
 
@@ -412,6 +413,52 @@ describe('resolveCopySourceRoot', () => {
     mkdirSync(customSource, { recursive: true });
 
     expect(resolveCopySourceRoot(mainRepo, customSource)).toBe(customSource);
+  });
+});
+
+describe('updateIdentityForStudioRename', () => {
+  beforeEach(() => {
+    mkdirSync(TEST_REPO, { recursive: true });
+    git('init', TEST_REPO);
+    git('config user.email "test@test.com"', TEST_REPO);
+    git('config user.name "Test User"', TEST_REPO);
+    writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo');
+    git('add .', TEST_REPO);
+    git('commit -m "Initial commit"', TEST_REPO);
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(TEST_DIR, { recursive: true, force: true });
+    } catch {
+      // Ignore cleanup errors
+    }
+  });
+
+  it('updates studio/context/description in identity.json after rename', () => {
+    const wsPath = join(TEST_REPO, '..', 'test-repo--old');
+    mkdirSync(join(wsPath, '.pcp'), { recursive: true });
+    writeFileSync(
+      join(wsPath, '.pcp', 'identity.json'),
+      JSON.stringify(
+        {
+          agentId: 'lumen',
+          studio: 'old',
+          context: 'studio-old',
+          description: 'Studio: old',
+        },
+        null,
+        2
+      )
+    );
+
+    const changed = updateIdentityForStudioRename(wsPath, 'old', 'new');
+    expect(changed).toBe(true);
+
+    const updated = JSON.parse(readFileSync(join(wsPath, '.pcp', 'identity.json'), 'utf-8'));
+    expect(updated.studio).toBe('new');
+    expect(updated.context).toBe('studio-new');
+    expect(updated.description).toBe('Studio: new');
   });
 });
 
