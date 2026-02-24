@@ -5,6 +5,9 @@
  * user settings integration, and status tracking.
  */
 
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { loadAllSkills, loadSkillByName, getSkillPaths, type SkillLoadOptions } from './loader';
 import type {
   LoadedSkill,
@@ -196,11 +199,32 @@ export class SkillsService {
 let serviceInstance: SkillsService | null = null;
 
 /**
- * Get the skills service singleton
+ * Read skills config from ~/.pcp/config.json.
+ * Returns extraDirs if configured under `skills.extraDirs`.
+ */
+function readSkillsConfig(): SkillLoadOptions {
+  const configPath = join(homedir(), '.pcp', 'config.json');
+  if (!existsSync(configPath)) return {};
+
+  try {
+    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+    const extraDirs = config?.skills?.extraDirs as string[] | undefined;
+    return extraDirs?.length ? { extraDirs } : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Get the skills service singleton.
+ * When no options are provided, reads ~/.pcp/config.json for extraDirs.
  */
 export function getSkillsService(options?: SkillLoadOptions): SkillsService {
   if (!serviceInstance) {
-    serviceInstance = new SkillsService(options);
+    // Merge caller options with config-file options (caller wins)
+    const configOptions = readSkillsConfig();
+    const merged: SkillLoadOptions = { ...configOptions, ...options };
+    serviceInstance = new SkillsService(merged);
   }
   return serviceInstance;
 }

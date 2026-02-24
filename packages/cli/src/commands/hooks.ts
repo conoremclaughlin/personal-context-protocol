@@ -434,10 +434,9 @@ function buildSkillsBlock(skills: Array<Record<string, unknown>> | undefined): s
     const type = skill.type as string;
     const desc = skill.description as string;
     const displayName = (skill.displayName as string) || name;
-    const triggers = skill.triggers as { keywords?: string[] } | undefined;
-    const triggerStr = triggers?.keywords?.length
-      ? ` — triggers: ${triggers.keywords.join(', ')}`
-      : '';
+    // triggers comes as a flat keywords array from list_skills summary
+    const triggers = skill.triggers as string[] | undefined;
+    const triggerStr = triggers?.length ? ` — triggers: ${triggers.join(', ')}` : '';
 
     if (type === 'guide' && skill.content) {
       lines.push(`- **${displayName}** (guide): ${desc}${triggerStr} — *active, see below*`);
