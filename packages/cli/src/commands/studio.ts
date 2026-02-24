@@ -214,6 +214,19 @@ interface InteractiveResult {
   configDirs: string[];
 }
 
+function isPromptCancelError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const maybe = err as { name?: string; message?: string };
+  const name = maybe.name || '';
+  const message = maybe.message || '';
+
+  return (
+    name === 'ExitPromptError' ||
+    name === 'AbortPromptError' ||
+    /force closed|ctrl\+c|sigint|cancell?ed|aborted/i.test(message)
+  );
+}
+
 /**
  * Run the full interactive studio creation flow when name is omitted and stdin is a TTY.
  * Returns the resolved name, branch, and config dirs to copy.
@@ -912,8 +925,14 @@ export function registerStudioCommands(program: Command): void {
             branch: result.branch,
             configDirsList: result.configDirs,
           });
-        } catch {
-          // User cancelled or inquirer failed — fall through to default
+        } catch (err) {
+          if (isPromptCancelError(err)) {
+            console.log(chalk.yellow('\nStudio creation canceled.'));
+            process.exit(130);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(chalk.red(`Interactive studio creation failed: ${message}`));
+          process.exit(1);
         }
       }
       const resolvedName = name || 'new';
