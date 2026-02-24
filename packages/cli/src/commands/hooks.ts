@@ -25,7 +25,9 @@ import { homedir } from 'os';
 import { resolveAgentId, readIdentityJson } from '../backends/identity.js';
 import { getValidAccessToken } from '../auth/tokens.js';
 import {
+  findRuntimeSessionByLinkId,
   getCurrentRuntimeSession,
+  listRuntimeSessions,
   setCurrentRuntimeSession,
   upsertRuntimeSession,
 } from '../session/runtime.js';
@@ -306,14 +308,212 @@ function normalizeSessionBackend(backendName: string): string {
 function resolveActivePcpSessionId(cwd: string): string | undefined {
   const detectedBackend = detectBackend(cwd);
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
+  const { studioId } = getIdentitySessionContext(cwd);
+  const agentId = resolveAgentId() || 'unknown';
 
   const current = getCurrentRuntimeSession(cwd, sessionBackend);
   if (current?.pcpSessionId) return current.pcpSessionId;
+
+  const runtimeLinkId = process.env.PCP_RUNTIME_LINK_ID;
+  if (runtimeLinkId) {
+    const linked = findRuntimeSessionByLinkId(cwd, runtimeLinkId, {
+      backend: sessionBackend,
+      agentId,
+      ...(studioId ? { studioId } : {}),
+    });
+    if (linked?.pcpSessionId) return linked.pcpSessionId;
+  }
 
   const fromLegacyFile = readRuntimeFile(cwd, 'pcp-session-id');
   if (fromLegacyFile) return fromLegacyFile;
 
   return undefined;
+}
+
+function getIdentitySessionContext(cwd: string): {
+  studioId?: string;
+  identityId?: string;
+  studioName?: string;
+} {
+  const identityPath = join(cwd, '.pcp', 'identity.json');
+  if (!existsSync(identityPath)) return {};
+
+  try {
+    const identity = JSON.parse(readFileSync(identityPath, 'utf-8')) as {
+      studioId?: string;
+      workspaceId?: string;
+      identityId?: string;
+      studio?: string;
+      workspace?: string;
+    };
+    return {
+      studioId: identity.studioId || identity.workspaceId,
+      identityId: identity.identityId,
+      studioName: identity.studio || identity.workspace,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function getRuntimeLinkId(): string | undefined {
+  const candidate = process.env.PCP_RUNTIME_LINK_ID;
+  if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+  return undefined;
+}
+
+async function findPcpSessionByBackendSessionId(
+  config: PcpConfig | null,
+  agentId: string,
+  sessionBackend: string,
+  backendSessionId: string,
+  studioId?: string
+): Promise<{ pcpSessionId?: string; threadKey?: string }> {
+  try {
+    const listArgs: Record<string, unknown> = {
+      email: config?.email,
+      agentId,
+      limit: 50,
+      ...(studioId ? { studioId } : {}),
+    };
+    const listed = await callPcpTool('list_sessions', listArgs);
+    const sessions = Array.isArray(listed.sessions)
+      ? (listed.sessions as Array<Record<string, unknown>>)
+      : [];
+
+    const matched = sessions.find((session) => {
+      if (session.endedAt) return false;
+      if (typeof session.backend === 'string' && session.backend && session.backend !== sessionBackend) {
+        return false;
+      }
+      const backendCandidate =
+        (typeof session.backendSessionId === 'string' ? session.backendSessionId : undefined) ||
+        (typeof session.claudeSessionId === 'string' ? session.claudeSessionId : undefined);
+      return backendCandidate === backendSessionId;
+    });
+
+    if (!matched || typeof matched.id !== 'string') return {};
+
+    return {
+      pcpSessionId: matched.id,
+      ...(typeof matched.threadKey === 'string' ? { threadKey: matched.threadKey } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+async function reconcileBackendSignal(
+  cwd: string,
+  config: PcpConfig | null,
+  agentId: string,
+  stdin: Record<string, unknown>,
+  options?: { initialPcpSessionId?: string; initialThreadKey?: string; startedAt?: string }
+): Promise<{ pcpSessionId?: string; threadKey?: string; backendSessionId?: string }> {
+  const detectedBackend = detectBackend(cwd);
+  const sessionBackend = normalizeSessionBackend(detectedBackend.name);
+  const backendSessionId = extractBackendSessionId(stdin);
+  const runtimeLinkId = getRuntimeLinkId();
+  if (runtimeLinkId) {
+    writeRuntimeFile(cwd, 'runtime-link-id', runtimeLinkId);
+  }
+  const { studioId, identityId } = getIdentitySessionContext(cwd);
+
+  let pcpSessionId = options?.initialPcpSessionId || resolveActivePcpSessionId(cwd);
+  let threadKey = options?.initialThreadKey;
+
+  if (!pcpSessionId && runtimeLinkId) {
+    const linked = findRuntimeSessionByLinkId(cwd, runtimeLinkId, {
+      backend: sessionBackend,
+      agentId,
+      ...(studioId ? { studioId } : {}),
+    });
+    if (linked?.pcpSessionId) {
+      pcpSessionId = linked.pcpSessionId;
+      if (linked.threadKey) threadKey = linked.threadKey;
+    }
+  }
+
+  if (!pcpSessionId && backendSessionId) {
+    const linkedByBackendSessionId = listRuntimeSessions(cwd, sessionBackend).find(
+      (session) =>
+        session.agentId === agentId &&
+        (!studioId || session.studioId === studioId) &&
+        (session.backendSessionId === backendSessionId ||
+          session.backendSessionIds?.includes(backendSessionId))
+    );
+    if (linkedByBackendSessionId?.pcpSessionId) {
+      pcpSessionId = linkedByBackendSessionId.pcpSessionId;
+      if (linkedByBackendSessionId.threadKey) threadKey = linkedByBackendSessionId.threadKey;
+    }
+  }
+
+  let hasLocalBackendLink = false;
+  if (backendSessionId && pcpSessionId) {
+    const local = listRuntimeSessions(cwd, sessionBackend).find(
+      (session) =>
+        session.pcpSessionId === pcpSessionId &&
+        session.agentId === agentId &&
+        (!studioId || session.studioId === studioId)
+    );
+    hasLocalBackendLink = !!(
+      local &&
+      (local.backendSessionId === backendSessionId ||
+        local.backendSessionIds?.includes(backendSessionId))
+    );
+  }
+
+  if (backendSessionId && !hasLocalBackendLink) {
+    // Reconcile mismatched pcpSessionId/backendSessionId by checking existing server-side links first.
+    const matched = await findPcpSessionByBackendSessionId(
+      config,
+      agentId,
+      sessionBackend,
+      backendSessionId,
+      studioId
+    );
+
+    if (matched.pcpSessionId) {
+      pcpSessionId = matched.pcpSessionId;
+      threadKey = matched.threadKey || threadKey;
+    }
+  }
+
+  if (backendSessionId) {
+    writeRuntimeFile(cwd, 'session-id', backendSessionId);
+  }
+
+  if (!pcpSessionId) {
+    return {
+      ...(backendSessionId ? { backendSessionId } : {}),
+      ...(threadKey ? { threadKey } : {}),
+    };
+  }
+
+  writeRuntimeFile(cwd, 'pcp-session-id', pcpSessionId);
+  upsertRuntimeSession(cwd, {
+    pcpSessionId,
+    backend: sessionBackend,
+    agentId,
+    ...(identityId ? { identityId } : {}),
+    ...(studioId ? { studioId } : {}),
+    ...(threadKey ? { threadKey } : {}),
+    ...(runtimeLinkId ? { runtimeLinkId } : {}),
+    ...(backendSessionId ? { backendSessionId } : {}),
+    ...(options?.startedAt ? { startedAt: options.startedAt } : {}),
+    updatedAt: new Date().toISOString(),
+  });
+  setCurrentRuntimeSession(cwd, pcpSessionId, sessionBackend, {
+    agentId,
+    ...(identityId ? { identityId } : {}),
+    ...(studioId ? { studioId } : {}),
+  });
+
+  return {
+    pcpSessionId,
+    ...(threadKey ? { threadKey } : {}),
+    ...(backendSessionId ? { backendSessionId } : {}),
+  };
 }
 
 async function updateRuntimeGenerationState(
@@ -1064,24 +1264,8 @@ async function onSessionStartHandler(): Promise<void> {
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
 
-  // Read studio/workspace ID from identity.json
-  const identityPath = join(cwd, '.pcp', 'identity.json');
-  let studioId: string | undefined;
-  let identityId: string | undefined;
-  let studioLine = '';
-  if (existsSync(identityPath)) {
-    try {
-      const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
-      studioId = identity.studioId || identity.workspaceId;
-      identityId = identity.identityId;
-      const studioName = identity.studio || identity.workspace;
-      if (studioName) {
-        studioLine = `Studio: ${studioName}`;
-      }
-    } catch {
-      // ignore
-    }
-  }
+  const { studioId, studioName } = getIdentitySessionContext(cwd);
+  const studioLine = studioName ? `Studio: ${studioName}` : '';
 
   let identityBlock = '';
   let memoriesBlock = '';
@@ -1138,8 +1322,6 @@ async function onSessionStartHandler(): Promise<void> {
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
   let pcpSessionId: string | undefined;
   let pcpThreadKey: string | undefined;
-  const backendSessionId = extractBackendSessionId(stdin);
-
   // If provided by sb launcher, prefer that explicit session id.
   if (process.env.PCP_SESSION_ID) {
     pcpSessionId = process.env.PCP_SESSION_ID;
@@ -1168,29 +1350,15 @@ async function onSessionStartHandler(): Promise<void> {
     // message above will already alert about server connectivity.
   }
 
-  // Store session ID if provided in stdin
-  if (backendSessionId) {
-    writeRuntimeFile(cwd, 'session-id', backendSessionId);
-  }
-
-  if (pcpSessionId) {
-    writeRuntimeFile(cwd, 'pcp-session-id', pcpSessionId);
-    upsertRuntimeSession(cwd, {
-      pcpSessionId,
-      backend: sessionBackend,
-      agentId,
-      ...(identityId ? { identityId } : {}),
-      ...(studioId ? { studioId } : {}),
-      ...(pcpThreadKey ? { threadKey: pcpThreadKey } : {}),
-      ...(backendSessionId ? { backendSessionId } : {}),
-      startedAt: new Date().toISOString(),
-    });
-    setCurrentRuntimeSession(cwd, pcpSessionId, sessionBackend, {
-      agentId,
-      ...(identityId ? { identityId } : {}),
-      ...(studioId ? { studioId } : {}),
-    });
-  }
+  const startedAt = new Date().toISOString();
+  const reconciled = await reconcileBackendSignal(cwd, config, agentId, stdin, {
+    initialPcpSessionId: pcpSessionId,
+    initialThreadKey: pcpThreadKey,
+    startedAt,
+  });
+  pcpSessionId = reconciled.pcpSessionId || pcpSessionId;
+  pcpThreadKey = reconciled.threadKey || pcpThreadKey;
+  const backendSessionId = reconciled.backendSessionId;
 
   // Keep an explicit runtime phase for dashboard "generating vs idle" visualization.
   // Startup phase should always settle to idle.
@@ -1225,11 +1393,12 @@ async function onSessionStartHandler(): Promise<void> {
 }
 
 async function onPromptHandler(): Promise<void> {
-  await readStdin();
+  const stdin = await readStdin();
 
   const cwd = process.cwd();
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
+  await reconcileBackendSignal(cwd, config, agentId, stdin);
 
   // Mark session as actively generating at prompt start.
   await updateRuntimeGenerationState(cwd, config, agentId, 'runtime:generating');
@@ -1267,12 +1436,13 @@ async function onPromptHandler(): Promise<void> {
 }
 
 async function onStopHandler(): Promise<void> {
-  await readStdin();
+  const stdin = await readStdin();
 
   const cwd = process.cwd();
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
   const parts: string[] = [];
+  await reconcileBackendSignal(cwd, config, agentId, stdin);
 
   // Mark session as idle after each completed backend turn.
   await updateRuntimeGenerationState(cwd, config, agentId, 'runtime:idle');
