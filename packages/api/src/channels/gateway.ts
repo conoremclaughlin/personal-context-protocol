@@ -29,9 +29,6 @@ import telegramifyMarkdown from 'telegramify-markdown';
 // Supported messaging channels
 export type GatewayChannel = 'telegram' | 'whatsapp' | 'discord' | 'slack';
 
-// Activity stream - conversation to user mapping for outbound message logging
-const conversationUserMap = new Map<string, string>(); // conversationId -> userId
-
 export interface ChannelGatewayConfig {
   /** Whether to enable Telegram listener */
   enableTelegram?: boolean;
@@ -127,6 +124,7 @@ export class ChannelGateway extends EventEmitter {
   private autoVoiceReplyOnAudio = process.env.TELEGRAM_AUTO_VOICE_REPLY === 'true';
   private includeTextAfterVoiceReply = process.env.TELEGRAM_VOICE_INCLUDE_TEXT !== 'false';
   private pendingVoiceReplyConversations: Set<string> = new Set();
+  private conversationUserMap = new Map<string, string>(); // conversationId -> userId
 
   constructor(config: ChannelGatewayConfig = {}) {
     super();
@@ -265,6 +263,9 @@ export class ChannelGateway extends EventEmitter {
       clearTimeout(timeout);
       activeTypingTimeouts.delete(conversationId);
     }
+
+    this.pendingVoiceReplyConversations.clear();
+    this.conversationUserMap.clear();
 
     // Clear all message buffers (flush them first)
     for (const [key, buffer] of this.messageBuffers) {
@@ -509,7 +510,7 @@ export class ChannelGateway extends EventEmitter {
       }
     }
     if (userId) {
-      conversationUserMap.set(conversationId, userId);
+      this.conversationUserMap.set(conversationId, userId);
     }
 
     if (
@@ -631,7 +632,7 @@ export class ChannelGateway extends EventEmitter {
         await this.whatsappListener.sendMessage(conversationId, content);
         // Log outgoing WhatsApp message to activity stream
         {
-          const userId = conversationUserMap.get(conversationId);
+          const userId = this.conversationUserMap.get(conversationId);
           if (this.dataComposer && userId) {
             try {
               await this.dataComposer.repositories.activityStream.logMessage({
@@ -660,7 +661,7 @@ export class ChannelGateway extends EventEmitter {
         await this.discordListener.sendMessage(conversationId, content);
         // Log outgoing Discord message to activity stream
         {
-          const userId = conversationUserMap.get(conversationId);
+          const userId = this.conversationUserMap.get(conversationId);
           if (this.dataComposer && userId) {
             try {
               await this.dataComposer.repositories.activityStream.logMessage({
@@ -689,7 +690,7 @@ export class ChannelGateway extends EventEmitter {
         await this.slackListener.sendMessage(conversationId, content);
         // Log outgoing Slack message to activity stream
         {
-          const userId = conversationUserMap.get(conversationId);
+          const userId = this.conversationUserMap.get(conversationId);
           if (this.dataComposer && userId) {
             try {
               await this.dataComposer.repositories.activityStream.logMessage({
@@ -795,6 +796,7 @@ export class ChannelGateway extends EventEmitter {
     this.stopTypingIndicator(conversationId);
 
     // Process pending messages (which will also release the lock)
+    this.pendingVoiceReplyConversations.delete(key);
     await this.processPendingMessages(channel, conversationId);
   }
 
@@ -836,7 +838,7 @@ export class ChannelGateway extends EventEmitter {
 
   private async logOutgoingTelegram(conversationId: string, content: string): Promise<void> {
     // Log outgoing message to activity stream
-    const userId = conversationUserMap.get(conversationId);
+    const userId = this.conversationUserMap.get(conversationId);
     if (this.dataComposer && userId) {
       try {
         await this.dataComposer.repositories.activityStream.logMessage({

@@ -1,8 +1,18 @@
 import { mkdtemp, rm, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { InboundMessage } from './types';
+
+vi.mock('../utils/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 import { InboundMediaPipeline } from './media-pipeline';
 
 function createMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
@@ -40,6 +50,7 @@ describe('InboundMediaPipeline', () => {
       expect(message.body).toContain('[Audio transcript]');
       expect(message.body).toContain('hey lumen can you help');
       expect(message.body).toContain('[Security]');
+      expect(message.rawBody).toBe('[Audio attached]');
     } finally {
       await rm(tmpDir, { recursive: true, force: true });
     }
@@ -150,5 +161,33 @@ describe('InboundMediaPipeline', () => {
 
     expect(message.body).toContain('[Security signal]');
     expect(message.body).toContain('Ignore previous instructions');
+  });
+
+  it('degrades gracefully when transcription and analysis throw', async () => {
+    const pipeline = new InboundMediaPipeline(
+      {
+        transcribe: async () => {
+          throw new Error('transcriber failure');
+        },
+      },
+      {
+        analyze: async () => {
+          throw new Error('analyzer failure');
+        },
+      }
+    );
+
+    const message = createMessage({
+      body: '[Image attached]',
+      rawBody: '[Image attached]',
+      media: [
+        { type: 'image', path: '/tmp/photo.png', contentType: 'image/png', filename: 'photo.png' },
+      ],
+    });
+
+    await expect(pipeline.preprocess(message)).resolves.toBeUndefined();
+    expect(message.body).toContain('[Media attachments]');
+    expect(message.body).toContain('[Security]');
+    expect(message.body).not.toContain('[Image analysis]');
   });
 });

@@ -2,39 +2,22 @@ import { mkdtemp, rm, stat, writeFile } from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { randomUUID } from 'crypto';
-import { spawn } from 'child_process';
+import { logger } from '../utils/logger';
+import {
+  normalizeBaseUrl,
+  parseIntEnv,
+  parseProviderList,
+  runShellCommand,
+  shellEscape,
+  truncate,
+} from './provider-utils';
 
-const DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_MODEL = 'gpt-4o-mini-tts';
 const DEFAULT_VOICE = 'alloy';
 const DEFAULT_FORMAT = 'opus';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_CHARS = 4_000;
 const DEFAULT_PROVIDER_ORDER = ['openai', 'cli'];
-
-function parseIntEnv(value: string | undefined, fallback: number): number {
-  if (!value) return fallback;
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function normalizeBaseUrl(value: string | undefined): string {
-  const trimmed = value?.trim();
-  if (!trimmed) return DEFAULT_BASE_URL;
-  return trimmed.replace(/\/+$/, '');
-}
-
-function parseProviderList(value: string | undefined): string[] {
-  if (!value?.trim()) return DEFAULT_PROVIDER_ORDER;
-  return value
-    .split(',')
-    .map((provider) => provider.trim().toLowerCase())
-    .filter(Boolean);
-}
-
-function shellEscape(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`;
-}
 
 function normalizeFormat(value: string | undefined): string {
   const format = value?.trim().toLowerCase();
@@ -76,56 +59,9 @@ function contentTypeForFormat(format: string): string {
   }
 }
 
-function truncate(text: string, maxChars: number): string {
-  return text.length > maxChars ? `${text.slice(0, maxChars)}…` : text;
-}
-
 async function createTempAudioPath(extension: string): Promise<string> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'pcp-tts-'));
   return path.join(dir, `${randomUUID()}.${extension}`);
-}
-
-async function runShellCommand(
-  command: string,
-  timeoutMs: number
-): Promise<{ stdout: string; stderr: string; code: number | null; timedOut: boolean }> {
-  return new Promise((resolve) => {
-    const child = spawn(command, {
-      shell: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-
-    child.stdout.on('data', (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on('data', (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill('SIGTERM');
-    }, timeoutMs);
-
-    child.on('close', (code) => {
-      clearTimeout(timeout);
-      resolve({ stdout, stderr, code, timedOut });
-    });
-
-    child.on('error', (error) => {
-      clearTimeout(timeout);
-      resolve({
-        stdout,
-        stderr: `${stderr}\n${error.message}`.trim(),
-        code: null,
-        timedOut,
-      });
-    });
-  });
 }
 
 export interface TextToSpeechInput {
@@ -239,6 +175,11 @@ class CliTextToSpeechProvider implements TextToSpeechProvider {
     const result = await runShellCommand(command, this.timeoutMs);
     if (result.timedOut || result.code !== 0) {
       await rm(path.dirname(filePath), { recursive: true, force: true });
+      logger.warn('TTS CLI provider failed', {
+        code: result.code,
+        timedOut: result.timedOut,
+        stderr: result.stderr.slice(0, 200),
+      });
       return undefined;
     }
 
@@ -276,7 +217,7 @@ export class TextToSpeechService {
     const format = normalizeFormat(process.env.AUDIO_TTS_FORMAT);
     const timeoutMs = parseIntEnv(process.env.AUDIO_TTS_TIMEOUT_MS, DEFAULT_TIMEOUT_MS);
     const maxChars = parseIntEnv(process.env.AUDIO_TTS_MAX_CHARS, DEFAULT_MAX_CHARS);
-    const providers = parseProviderList(process.env.AUDIO_TTS_PROVIDERS);
+    const providers = parseProviderList(process.env.AUDIO_TTS_PROVIDERS, DEFAULT_PROVIDER_ORDER);
     const cliCommand = process.env.AUDIO_TTS_CLI_COMMAND?.trim();
 
     return new TextToSpeechService({
@@ -345,7 +286,10 @@ export class TextToSpeechService {
         const result = await provider.synthesize(input);
         if (result) return result;
       } catch (error) {
-        void error;
+        logger.warn('TTS provider failed', {
+          provider: provider.name,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
 

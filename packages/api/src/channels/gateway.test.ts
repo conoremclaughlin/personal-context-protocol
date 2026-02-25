@@ -441,6 +441,15 @@ describe('ChannelGateway', () => {
       expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(cleanup).toHaveBeenCalledTimes(1);
     });
+
+    it('cleans pending voice reply flag when conversation is released without a response', async () => {
+      const key = (gateway as any).getBufferKey('telegram', 'chat999');
+      (gateway as any).pendingVoiceReplyConversations.add(key);
+
+      await gateway.releaseConversation('telegram', 'chat999');
+
+      expect((gateway as any).pendingVoiceReplyConversations.has(key)).toBe(false);
+    });
   });
 });
 

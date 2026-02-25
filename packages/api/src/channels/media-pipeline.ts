@@ -2,6 +2,7 @@ import { stat } from 'fs/promises';
 import type { InboundMessage } from './types';
 import { AudioTranscriptionService } from './audio-transcription';
 import { MediaUnderstandingService } from './media-understanding';
+import { logger } from '../utils/logger';
 
 const DEFAULT_MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024; // 50MB
 
@@ -47,11 +48,18 @@ export class InboundMediaPipeline {
       summaryLines.push(`- ${typeLabel}: ${fileLabel} (${mimeLabel}${fileInfo.sizeLabel})`);
 
       if (!audioTranscript && attachment.type === 'audio' && attachment.path) {
-        audioTranscript = await this.audioTranscriber.transcribe({
-          filePath: attachment.path,
-          contentType: attachment.contentType,
-          filename: attachment.filename,
-        });
+        try {
+          audioTranscript = await this.audioTranscriber.transcribe({
+            filePath: attachment.path,
+            contentType: attachment.contentType,
+            filename: attachment.filename,
+          });
+        } catch (error) {
+          logger.warn('Inbound media pipeline audio transcription failed', {
+            filePath: attachment.path,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
 
       if (
@@ -60,12 +68,21 @@ export class InboundMediaPipeline {
         ((attachment.type === 'image' && !analyzedImage) ||
           (attachment.type === 'video' && !analyzedVideo))
       ) {
-        const analysis = await this.mediaAnalyzer.analyze({
-          type: attachment.type,
-          filePath: attachment.path,
-          contentType: attachment.contentType,
-          filename: attachment.filename,
-        });
+        let analysis: string | undefined;
+        try {
+          analysis = await this.mediaAnalyzer.analyze({
+            type: attachment.type,
+            filePath: attachment.path,
+            contentType: attachment.contentType,
+            filename: attachment.filename,
+          });
+        } catch (error) {
+          logger.warn('Inbound media pipeline media analysis failed', {
+            mediaType: attachment.type,
+            filePath: attachment.path,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
 
         if (analysis) {
           const blockTitle = attachment.type === 'image' ? '[Image analysis]' : '[Video analysis]';
@@ -109,13 +126,11 @@ export class InboundMediaPipeline {
 
     if (this.isPlaceholderOnly(body)) {
       message.body = `${blocks.join('\n\n')}\n\n${securityNote}`;
-      message.rawBody = message.body;
       return;
     }
 
     // Preserve user-authored text and append structured media context + safety note.
     message.body = `${message.body}\n\n${blocks.join('\n\n')}\n\n${securityNote}`;
-    message.rawBody = message.body;
   }
 
   private async describeAttachment(
