@@ -225,4 +225,84 @@ describe('ToolPolicyState', () => {
     policy.grantTool('a_tool', 1);
     expect(policy.listGrants().map((entry) => entry.tool)).toEqual(['a_tool', 'z_tool']);
   });
+
+  it('applies scoped allowlist narrowing across active scopes', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.allowTool('group:pcp-comms', { scope: 'global' });
+    policy.setContext({ workspaceId: 'ws-1' });
+    policy.allowTool('send_to_inbox', { scope: 'workspace', id: 'ws-1' });
+    expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(true);
+
+    policy.setContext({ workspaceId: 'ws-1', agentId: 'lumen' });
+    policy.allowTool('trigger_agent', { scope: 'agent', id: 'lumen' });
+    expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(false);
+    expect(policy.canCallPcpTool('trigger_agent').allowed).toBe(false);
+  });
+
+  it('applies scoped deny rules only within matching scope', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.allowTool('group:pcp-comms', { scope: 'global' });
+    policy.denyTool('send_response', { scope: 'workspace', id: 'ws-1' });
+
+    policy.setContext({ workspaceId: 'ws-1' });
+    expect(policy.canCallPcpTool('send_response').allowed).toBe(false);
+
+    policy.setContext({ workspaceId: 'ws-2' });
+    expect(policy.canCallPcpTool('send_response').allowed).toBe(true);
+  });
+
+  it('intersects skill and path policies across active scopes', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.setAllowedSkills(['play*'], { scope: 'workspace', id: 'ws-1' });
+    policy.setAllowedSkills(['playwright'], { scope: 'studio', id: 'studio-1' });
+    policy.addReadPathAllow('/Users/**', { scope: 'workspace', id: 'ws-1' });
+    policy.addReadPathAllow('/Users/conor/**', { scope: 'studio', id: 'studio-1' });
+
+    policy.setContext({ workspaceId: 'ws-1', studioId: 'studio-1' });
+    expect(policy.isSkillAllowed('playwright')).toBe(true);
+    expect(policy.isSkillAllowed('screenshot')).toBe(false);
+    expect(policy.isReadPathAllowed('/Users/conor/ws/project/file.ts')).toBe(true);
+    expect(policy.isReadPathAllowed('/Users/alice/ws/project/file.ts')).toBe(false);
+  });
+
+  it('derives backend allowlist from effective policy and surfaces unresolved wildcards', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.allowTool('send_to_inbox', { scope: 'global' });
+    policy.allowTool('send_*', { scope: 'workspace', id: 'ws-1' });
+    policy.setContext({ workspaceId: 'ws-1' });
+
+    const gate = policy.getBackendToolGate();
+    expect(gate.mode).toBe('backend');
+    expect(gate.allowedTools).toContain('send_to_inbox');
+    expect(gate.unresolvedPatterns).toContain('send_*');
+
+    policy.addPromptTool('send_to_inbox', { scope: 'workspace', id: 'ws-1' });
+    const promptedGate = policy.getBackendToolGate();
+    expect(promptedGate.allowedTools).not.toContain('send_to_inbox');
+  });
+
+  it('supports context-based mutation scopes', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.allowTool('group:pcp-comms', { scope: 'global' });
+    policy.setContext({ workspaceId: 'ws-1' });
+    expect(policy.setMutationScope('workspace').success).toBe(true);
+    policy.denyTool('send_to_inbox');
+
+    expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(false);
+
+    policy.setContext({ workspaceId: 'ws-2' });
+    expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(true);
+  });
+
+  it('resolves effective mode using most restrictive active scope', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.setMode('privileged', { scope: 'global' });
+    policy.setMode('off', { scope: 'workspace', id: 'ws-1' });
+
+    policy.setContext({ workspaceId: 'ws-1' });
+    expect(policy.getMode()).toBe('off');
+
+    policy.setContext({ workspaceId: 'ws-2' });
+    expect(policy.getMode()).toBe('privileged');
+  });
 });

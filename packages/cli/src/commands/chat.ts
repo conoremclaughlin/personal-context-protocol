@@ -18,7 +18,7 @@ import { PcpClient } from '../lib/pcp-client.js';
 import { runBackendTurn } from '../repl/backend-runner.js';
 import { ContextLedger, estimateTokens } from '../repl/context-ledger.js';
 import { parseSlashCommand } from '../repl/slash.js';
-import { ToolMode, ToolPolicyState } from '../repl/tool-policy.js';
+import { ToolMode, ToolPolicyScopeKind, ToolPolicyState } from '../repl/tool-policy.js';
 import { formatBackendTokenUsage, type BackendTokenUsage } from '../repl/token-usage.js';
 import { discoverSkills, loadSkillInstruction, type SkillInstruction } from '../repl/skills.js';
 import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-approval.js';
@@ -72,6 +72,7 @@ interface ChatRuntime {
   toolRouting: 'backend' | 'local';
   uiMode: 'scroll' | 'live';
   threadKey?: string;
+  workspaceId?: string;
   studioId?: string;
   userTimezone?: string;
   backendTokenWindow: number;
@@ -88,6 +89,8 @@ interface ChatRuntime {
 interface SessionSummary {
   id: string;
   agentId?: string;
+  workspaceId?: string;
+  studioId?: string;
   status?: string;
   currentPhase?: string;
   threadKey?: string;
@@ -622,6 +625,18 @@ function extractSessionSummaries(result: Record<string, unknown> | null | undefi
       return {
         id,
         agentId: typeof row.agentId === 'string' ? row.agentId : undefined,
+        workspaceId:
+          typeof row.workspaceId === 'string'
+            ? row.workspaceId
+            : typeof row.workspace_id === 'string'
+              ? row.workspace_id
+              : undefined,
+        studioId:
+          typeof row.studioId === 'string'
+            ? row.studioId
+            : typeof row.studio_id === 'string'
+              ? row.studio_id
+              : undefined,
         status: typeof row.status === 'string' ? row.status : undefined,
         currentPhase: typeof row.currentPhase === 'string' ? row.currentPhase : undefined,
         threadKey: typeof row.threadKey === 'string' ? row.threadKey : undefined,
@@ -877,10 +892,35 @@ function printToolPolicySnapshot(
   sessionId: string | undefined,
   activeSkills: SkillInstruction[]
 ): void {
+  const gate = toolPolicy.getBackendToolGate();
   console.log(chalk.bold('\nTool policy'));
   console.log(chalk.dim(`Path: ${toolPolicy.getPolicyPath()}`));
-  console.log(chalk.dim(`Mode: ${toolPolicy.getMode()}`));
+  console.log(chalk.dim(`Effective mode: ${toolPolicy.getMode()}`));
+  console.log(chalk.dim(`Mutation scope: ${toolPolicy.getMutationScopeLabel()}`));
+  console.log(chalk.dim(`Active scopes: ${toolPolicy.listActiveScopeLabels().join(' -> ')}`));
   console.log(chalk.dim(`Skill trust mode: ${toolPolicy.getSkillTrustMode()}`));
+  if (gate.mode === 'backend') {
+    console.log(
+      chalk.dim(
+        `Backend passthrough allowlist (${gate.allowedTools.length}): ${
+          gate.allowedTools.length > 0 ? gate.allowedTools.join(', ') : '(empty; backend tools disabled)'
+        }`
+      )
+    );
+    if (gate.unresolvedPatterns.length > 0) {
+      console.log(
+        chalk.yellow(
+          `Backend wildcard patterns require local/prompt execution: ${gate.unresolvedPatterns.join(', ')}`
+        )
+      );
+    }
+  }
+  if (gate.mode === 'off') {
+    console.log(chalk.dim('Backend passthrough mode is off (no backend tool calls permitted).'));
+  }
+  if (gate.mode === 'privileged') {
+    console.log(chalk.dim('Backend passthrough mode is privileged (backend tool allowlist not clamped).'));
+  }
 
   const grants = toolPolicy.listGrants();
   if (grants.length > 0) {
@@ -905,6 +945,25 @@ function printToolPolicySnapshot(
     console.log(
       chalk.dim(`Session grants: ${sessionGrants.map((entry) => `${entry.tool}(${entry.uses})`).join(', ')}`)
     );
+  }
+  const scoped = toolPolicy.listActiveScopeSnapshots();
+  if (scoped.length > 0) {
+    console.log(chalk.dim('Scope pipeline:'));
+    for (const scope of scoped) {
+      const fragments: string[] = [];
+      if (scope.mode) fragments.push(`mode=${scope.mode}`);
+      if (scope.skillTrustMode) fragments.push(`trust=${scope.skillTrustMode}`);
+      if (scope.allowTools.length > 0) fragments.push(`allow=${scope.allowTools.join('|')}`);
+      if (scope.denyTools.length > 0) fragments.push(`deny=${scope.denyTools.join('|')}`);
+      if (scope.promptTools.length > 0) fragments.push(`prompt=${scope.promptTools.join('|')}`);
+      if (scope.allowedSkills.length > 0) fragments.push(`skills=${scope.allowedSkills.join('|')}`);
+      if (scope.readPathAllow.length > 0) fragments.push(`read=${scope.readPathAllow.join('|')}`);
+      if (scope.writePathAllow.length > 0) fragments.push(`write=${scope.writePathAllow.join('|')}`);
+      if (scope.grants.length > 0) {
+        fragments.push(`grants=${scope.grants.map((entry) => `${entry.tool}(${entry.uses})`).join('|')}`);
+      }
+      console.log(chalk.dim(`  - ${scope.label}${fragments.length > 0 ? ` :: ${fragments.join('  ')}` : ''}`));
+    }
   }
   if (activeSkills.length > 0) {
     console.log(chalk.dim(`Active skills: ${activeSkills.map((skill) => skill.name).join(', ')}`));
@@ -1116,6 +1175,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     toolRouting: options.toolRouting === 'local' ? 'local' : 'backend',
     uiMode: options.ui === 'scroll' ? 'scroll' : 'live',
     threadKey: options.threadKey,
+    workspaceId: identity?.workspaceId,
     studioId: identity?.workspaceId,
     userTimezone: undefined,
     backendTokenWindow: initialBackendTokenWindow,
@@ -1135,6 +1195,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
     runtime.toolMode,
     policyPathFromEnv ? { policyPath: policyPathFromEnv } : undefined
   );
+  toolPolicy.setContext({
+    agentId,
+    workspaceId: runtime.workspaceId,
+    studioId: runtime.studioId,
+  });
+  if (runtime.studioId) {
+    toolPolicy.setMutationScope('studio');
+  } else if (runtime.workspaceId) {
+    toolPolicy.setMutationScope('workspace');
+  } else {
+    toolPolicy.setMutationScope('agent');
+  }
+  runtime.toolMode = toolPolicy.getMode();
   const statusLaneState: StatusLaneState = {
     live: runtime.uiMode === 'live' && Boolean(output.isTTY),
     line: '',
@@ -1207,9 +1280,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
       throw new Error('No matching active session selected for attach.');
     }
     runtime.sessionId = selected.id;
+    if (selected.workspaceId) {
+      runtime.workspaceId = selected.workspaceId;
+    }
+    if (selected.studioId) {
+      runtime.studioId = selected.studioId;
+    }
     if (!runtime.threadKey && selected.threadKey) {
       runtime.threadKey = selected.threadKey;
     }
+    toolPolicy.setContext({
+      agentId,
+      workspaceId: runtime.workspaceId,
+      studioId: runtime.studioId,
+    });
+    const currentScope = toolPolicy.getMutationScope();
+    if (currentScope.scope !== 'global') {
+      toolPolicy.setMutationScope(currentScope.scope);
+    }
+    runtime.toolMode = toolPolicy.getMode();
   }
 
   if (
@@ -1226,10 +1315,26 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const selected = pickLatestSession(sessions);
     if (selected) {
       runtime.sessionId = selected.id;
+      if (selected.workspaceId) {
+        runtime.workspaceId = selected.workspaceId;
+      }
+      if (selected.studioId) {
+        runtime.studioId = selected.studioId;
+      }
       if (!runtime.threadKey && selected.threadKey) {
         runtime.threadKey = selected.threadKey;
       }
       autoAttachedLatest = true;
+      toolPolicy.setContext({
+        agentId,
+        workspaceId: runtime.workspaceId,
+        studioId: runtime.studioId,
+      });
+      const currentScope = toolPolicy.getMutationScope();
+      if (currentScope.scope !== 'global') {
+        toolPolicy.setMutationScope(currentScope.scope);
+      }
+      runtime.toolMode = toolPolicy.getMode();
     }
   }
 
@@ -1493,6 +1598,28 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
     const turnStartedAt = Date.now();
+    const backendGate = toolPolicy.getBackendToolGate();
+    const passthroughArgs =
+      runtime.toolRouting !== 'backend'
+        ? ['--allowedTools', '']
+        : backendGate.mode === 'off'
+          ? ['--allowedTools', '']
+          : backendGate.mode === 'privileged'
+            ? []
+            : ['--allowedTools', backendGate.allowedTools.join(',')];
+
+    if (runtime.toolRouting === 'backend' && backendGate.mode === 'backend' && runtime.verbose) {
+      printLine(
+        chalk.dim(
+          `Backend tool gate: ${backendGate.allowedTools.length} allowed tool(s)${
+            backendGate.unresolvedPatterns.length > 0
+              ? `, unresolved patterns=${backendGate.unresolvedPatterns.join(', ')}`
+              : ''
+          }`
+        )
+      );
+    }
+
     const stopWaiting = startWaitingIndicator(runtime.backend, {
       inline: statusLaneState.live,
       logger: printLine,
@@ -1515,11 +1642,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       model: runtime.model,
       prompt,
       verbose: runtime.verbose,
-      // When tools are off, do not pass through backend tool passthrough flags.
-      passthroughArgs:
-        toolPolicy.canUseBackendTools() && runtime.toolRouting === 'backend'
-          ? []
-          : ['--allowedTools', ''],
+      passthroughArgs,
     }).finally(() => {
       process.off('SIGINT', onSigintDuringTurn);
       stopWaiting(`✓ ${runtime.backend} responded in ${Math.round((Date.now() - turnStartedAt) / 1000)}s`);
@@ -1756,7 +1879,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
         [
           '',
           chalk.bold('Quick commands'),
-          chalk.dim('/help  /mcp  /capabilities  /skills  /policy  /usage  /tool-routing  /ui  /trim  /quit'),
+          chalk.dim(
+            '/help  /mcp  /capabilities  /skills  /policy  /policy-scope  /usage  /tool-routing  /ui  /trim  /quit'
+          ),
           '',
         ].join('\n')
       );
@@ -1785,6 +1910,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/grant-session <tool>      Allow a tool for this PCP session only',
               '/allow <tool>               Persistently allow PCP tool',
               '/deny <tool>                Persistently deny PCP tool',
+              '/policy-scope [global|workspace|agent|studio] [id]  Set rule mutation scope',
               '/policy                     Show tool policy + storage path',
               '/mcp [servers|call ...]     List MCP servers or call PCP tool via /mcp call',
               '/mcp-servers                List configured MCP servers from .mcp.json',
@@ -1838,7 +1964,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         case 'session':
           console.log(
             chalk.dim(
-          `session=${runtime.sessionId || 'none'} backend=${runtime.backend} model=${
+              `session=${runtime.sessionId || 'none'} backend=${runtime.backend} model=${
                 runtime.model || '(default)'
               } routing=${runtime.toolRouting} thread=${runtime.threadKey || '(none)'} events=${
                 runtime.eventPolling ? 'on' : 'off'
@@ -1846,7 +1972,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 runtime.maxContextTokens
               )} window=${formatTokenCount(
                 runtime.backendTokenWindow
-              )} budgetMode=${contextBudgetAuto ? 'auto' : 'manual'}`
+              )} budgetMode=${contextBudgetAuto ? 'auto' : 'manual'} tools=${toolPolicy.getMode()} scope=${toolPolicy.getMutationScopeLabel()}`
             )
           );
           break;
@@ -1955,7 +2081,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
           const next = slash.args[0];
           if (!next) {
             const grants = toolPolicy.listGrants();
-            console.log(chalk.dim(`Tool mode: ${runtime.toolMode}`));
+            console.log(chalk.dim(`Tool mode: ${toolPolicy.getMode()}`));
+            console.log(chalk.dim(`Mutation scope: ${toolPolicy.getMutationScopeLabel()}`));
             if (grants.length > 0) {
               console.log(chalk.dim(`Grants: ${grants.map((g) => `${g.tool}(${g.uses})`).join(', ')}`));
             }
@@ -1973,9 +2100,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
             console.log(chalk.yellow('Usage: /tools <backend|off|privileged>'));
             break;
           }
-          runtime.toolMode = next;
           toolPolicy.setMode(next);
-          console.log(chalk.green(`Tool mode set to ${next}`));
+          runtime.toolMode = toolPolicy.getMode();
+          console.log(chalk.green(`Tool mode set in ${toolPolicy.getMutationScopeLabel()} to ${next}.`));
+          if (runtime.toolMode !== next) {
+            console.log(chalk.yellow(`Effective mode remains ${runtime.toolMode} due stricter active scope.`));
+          }
           break;
         }
         case 'grant': {
@@ -2021,6 +2151,27 @@ export async function runChat(options: ChatOptions): Promise<void> {
           }
           toolPolicy.denyTool(tool);
           console.log(chalk.green(`Persistently denied ${tool}`));
+          break;
+        }
+        case 'policy-scope': {
+          const scopeRaw = (slash.args[0] || '').trim().toLowerCase();
+          if (!scopeRaw) {
+            console.log(chalk.dim(`Mutation scope: ${toolPolicy.getMutationScopeLabel()}`));
+            console.log(chalk.dim(`Active scopes: ${toolPolicy.listActiveScopeLabels().join(' -> ')}`));
+            break;
+          }
+          if (!['global', 'workspace', 'agent', 'studio'].includes(scopeRaw)) {
+            console.log(chalk.yellow('Usage: /policy-scope [global|workspace|agent|studio] [id]'));
+            break;
+          }
+          const id = slash.args.slice(1).join(' ').trim() || undefined;
+          const result = toolPolicy.setMutationScope(scopeRaw as ToolPolicyScopeKind, id);
+          if (!result.success) {
+            console.log(chalk.yellow(result.message));
+          } else {
+            runtime.toolMode = toolPolicy.getMode();
+            console.log(chalk.green(result.message));
+          }
           break;
         }
         case 'policy': {

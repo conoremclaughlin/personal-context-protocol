@@ -65,4 +65,14 @@ describe('skill policy integration', () => {
       reason: 'Skill blocked by trust policy (local); set /skill-trust all to allow.',
     });
   });
+
+  it('applies scoped trust mode from active context', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.setSkillTrustMode('trusted-only', { scope: 'workspace', id: 'ws-1' });
+    policy.setContext({ workspaceId: 'ws-1' });
+    expect(policy.isSkillTrustAllowed('local')).toBe(false);
+
+    policy.setContext({ workspaceId: 'ws-2' });
+    expect(policy.isSkillTrustAllowed('local')).toBe(true);
+  });
 });

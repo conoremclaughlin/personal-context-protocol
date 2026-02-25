@@ -727,6 +727,40 @@ describe('runChat integration', () => {
     expect(logText).toContain('UI mode set to scroll.');
   });
 
+  it('supports scoped policy mutation via /policy-scope', async () => {
+    testState.inputs = ['/policy-scope global', '/allow send_to_inbox', '/policy', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Mutation scope set to global.');
+    expect(logText).toContain('Persistently allowed send_to_inbox');
+    expect(logText).toContain('Mutation scope: global');
+    expect(logText).toContain('Active scopes: global -> workspace:studio-test -> agent:lumen -> studio:studio-test');
+  });
+
+  it('passes effective backend allowlist to backend runner in backend routing mode', async () => {
+    testState.inputs = ['/policy-scope global', '/allow send_to_inbox', 'run backend allowlist', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs[0]).toBe('--allowedTools');
+    expect(backendRequest.passthroughArgs[1]).toContain('get_inbox');
+    expect(backendRequest.passthroughArgs[1]).toContain('send_to_inbox');
+  });
+
   it('executes local pcp-tool blocks when tool routing is local', async () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
