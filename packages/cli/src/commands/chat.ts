@@ -1114,7 +1114,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     toolMode:
       options.tools === 'off' ? 'off' : options.tools === 'privileged' ? 'privileged' : 'backend',
     toolRouting: options.toolRouting === 'local' ? 'local' : 'backend',
-    uiMode: options.ui === 'live' ? 'live' : 'scroll',
+    uiMode: options.ui === 'scroll' ? 'scroll' : 'live',
     threadKey: options.threadKey,
     studioId: identity?.workspaceId,
     userTimezone: undefined,
@@ -2637,7 +2637,7 @@ export function registerChatCommand(program: Command): void {
         'Tool routing mode: backend (native backend tools) or local (pcp-tool blocks handled by sb chat)',
         'backend'
       )
-      .option('--ui <mode>', 'UI mode: scroll (default) or live status lane rendering', 'scroll')
+      .option('--ui <mode>', 'UI mode: live (default) or scroll status rendering', 'live')
       .option('--thread-key <key>', 'Thread key for PCP session routing')
       .option('--new', 'Always start a new session (disable auto-attach to latest)')
       .option('--attach [query]', 'Attach to an active session for this SB (optional query filter)')
