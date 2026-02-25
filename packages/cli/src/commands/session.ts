@@ -33,6 +33,12 @@ export interface Session {
   backendSessionId?: string;
   claudeSessionId?: string;
   studioId?: string;
+  studio?: {
+    id?: string;
+    worktreePath?: string;
+    worktreeFolder?: string;
+    branch?: string;
+  } | null;
   logs?: Array<{ salience: string; content: string }>;
 }
 
@@ -94,7 +100,7 @@ function formatSessionLine(session: Session): string[] {
     `  ${statusIcon} ${chalk.cyan(session.id.substring(0, 8))} ${chalk.dim(`(${phase})`)}`,
     chalk.dim(`      Started: ${formatDate(startedAt)}  Duration: ${duration}`),
     chalk.dim(`      Thread:  ${thread}`),
-    chalk.dim(`      Attach:  sb chat -a ${session.agentId || 'wren'} --session-id ${session.id}`),
+    chalk.dim(`      Attach:  sb chat -a ${session.agentId || 'wren'} --attach ${session.id}`),
   ];
 
   if (session.summary) {
@@ -104,7 +110,16 @@ function formatSessionLine(session: Session): string[] {
   }
 
   if (session.studioId) {
-    lines.push(chalk.dim(`      Studio:  ${session.studioId}`));
+    const studioLabel = session.studio?.worktreeFolder
+      ? `${session.studioId} (${session.studio.worktreeFolder})`
+      : session.studioId;
+    lines.push(chalk.dim(`      Studio:  ${studioLabel}`));
+    if (session.studio?.worktreePath) {
+      lines.push(chalk.dim(`      Path:    ${session.studio.worktreePath}`));
+    }
+    if (session.studio?.branch) {
+      lines.push(chalk.dim(`      Branch:  ${session.studio.branch}`));
+    }
   }
 
   if (session.backendSessionId || session.claudeSessionId) {
@@ -223,6 +238,19 @@ async function showCommand(sessionId: string): Promise<void> {
 
     if (session.claudeSessionId) {
       console.log(chalk.dim('  Claude:   ') + session.claudeSessionId);
+    }
+
+    if (session.studioId) {
+      const studioLabel = session.studio?.worktreeFolder
+        ? `${session.studioId} (${session.studio.worktreeFolder})`
+        : session.studioId;
+      console.log(chalk.dim('  Studio:   ') + studioLabel);
+      if (session.studio?.worktreePath) {
+        console.log(chalk.dim('  Path:     ') + session.studio.worktreePath);
+      }
+      if (session.studio?.branch) {
+        console.log(chalk.dim('  Branch:   ') + session.studio.branch);
+      }
     }
 
     if (session.summary) {
