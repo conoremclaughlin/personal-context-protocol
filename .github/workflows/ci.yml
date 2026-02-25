@@ -23,6 +23,10 @@ jobs:
           node-version: 20
           cache: yarn
 
+      # Rewrite git+ssh:// to git+https:// so transitive deps
+      # (e.g. libsignal via @whiskeysockets/baileys) clone without SSH keys
+      - run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
       - run: yarn install --immutable
 
       - run: yarn build
