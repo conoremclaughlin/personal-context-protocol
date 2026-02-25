@@ -45,6 +45,12 @@ vi.mock('readline/promises', () => ({
       if (next === undefined) {
         throw new Error('No scripted input left for readline question');
       }
+      if (next === '__ABORT__') {
+        const err = new Error('Aborted with Ctrl+C') as Error & { code?: string; name?: string };
+        err.code = 'ABORT_ERR';
+        err.name = 'AbortError';
+        throw err;
+      }
       return next;
     },
     close: () => undefined,
@@ -458,6 +464,48 @@ describe('runChat integration', () => {
     expect(logText).toContain('pcp [http] http://localhost:3001/mcp');
     expect(logText).toContain('github [stdio] github-mcp-server');
     expect(logText).toContain('Tool policy');
+  });
+
+  it('supports /mcp shorthand to list configured servers', async () => {
+    writeFileSync(
+      join(testCwd, '.mcp.json'),
+      JSON.stringify(
+        {
+          mcpServers: {
+            pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          },
+        },
+        null,
+        2
+      )
+    );
+    testState.inputs = ['/mcp', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('MCP servers (1)');
+    expect(logText).toContain('pcp [http] http://localhost:3001/mcp');
+  });
+
+  it('exits gracefully on double ctrl+c', async () => {
+    testState.inputs = ['__ABORT__', '__ABORT__'];
+
+    await expect(
+      runChat({
+        agent: 'lumen',
+        backend: 'claude',
+        pollSeconds: '999',
+      })
+    ).resolves.toBeUndefined();
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Press Ctrl+C again to quit');
+    expect(logText).toContain('Exiting chat (double Ctrl+C).');
   });
 
   it('requires confirmation before large context ejection and allows cancel', async () => {

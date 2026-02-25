@@ -106,11 +106,18 @@ interface McpServerSummary {
 }
 
 const LEDGER_COMPACT_CHARS = 420;
-const AUTO_TRIM_TRIGGER_PCT = 85;
-const AUTO_TRIM_TARGET_PCT = 70;
 const AUTO_TRIM_KEEP_RECENT_ENTRIES = 6;
-const AUTO_TRIM_REMEMBER_MIN_TOKENS = 1200;
-const AUTO_TRIM_REMEMBER_COOLDOWN_MS = 5 * 60 * 1000;
+const DEFAULT_TRIM_TARGET_PCT = 70;
+const CTRL_C_EXIT_WINDOW_MS = 1500;
+const WAITING_VERBS = [
+  'Cooking',
+  'Contextifying',
+  'Baking',
+  'Aligning chakras',
+  'Summoning tokens',
+  'Consulting digital spirits',
+  'Polishing response atoms',
+];
 
 function getDelegationSecret(): string | undefined {
   const fromEnv = process.env.PCP_DELEGATION_SECRET?.trim();
@@ -258,6 +265,18 @@ function compactForLedger(content: string, maxChars = LEDGER_COMPACT_CHARS): str
   const normalized = content.replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxChars) return normalized;
   return `${normalized.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as { code?: string }).code;
+  const name = (error as { name?: string }).name;
+  return code === 'ABORT_ERR' || name === 'AbortError';
+}
+
+function pickWaitingVerb(tick: number): string {
+  if (WAITING_VERBS.length === 0) return 'Working';
+  return WAITING_VERBS[tick % WAITING_VERBS.length]!;
 }
 
 function listConfiguredMcpServers(cwd = process.cwd()): McpServerSummary[] {
@@ -712,7 +731,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let activitySince = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   let lastBackendUsage: BackendTokenUsage | undefined;
   let lastDelegation: DelegationState | undefined;
-  let lastAutoTrimRememberAt = 0;
 
   const bootstrapResult = (await pcp
     .callTool('bootstrap', { agentId })
@@ -825,8 +843,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   const trimContextToPercent = async (
     targetPercent: number,
-    reason: string,
-    options?: { forceRemember?: boolean }
+    reason: string
   ): Promise<{ removed: number; removedTokens: number }> => {
     const targetTokens = Math.max(
       1,
@@ -848,36 +865,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       totalAfter: trim.totalAfter,
     });
 
-    const canRemember =
-      options?.forceRemember ||
-      (trim.removedTokens >= AUTO_TRIM_REMEMBER_MIN_TOKENS &&
-        Date.now() - lastAutoTrimRememberAt > AUTO_TRIM_REMEMBER_COOLDOWN_MS);
-    if (canRemember) {
-      const excerpt = trim.removedEntries
-        .slice(-6)
-        .map((entry) => `${entry.role}: ${compactForLedger(entry.content, 140)}`)
-        .join('\n');
-      if (excerpt) {
-        await pcp
-          .callTool('remember', {
-            agentId,
-            ...(runtime.sessionId ? { sessionId: runtime.sessionId } : {}),
-            content: `Automatic context trim (${reason}) removed ${trim.removedEntries.length} entries (~${trim.removedTokens} tokens).\n${excerpt}`,
-            topics: 'repl,context-trim',
-            salience: 'medium',
-          })
-          .catch(() => undefined);
-        lastAutoTrimRememberAt = Date.now();
-      }
-    }
-
     return { removed: trim.removedEntries.length, removedTokens: trim.removedTokens };
-  };
-
-  const maybeAutoTrimContext = async (reason: string): Promise<void> => {
-    const triggerTokens = Math.floor((runtime.maxContextTokens * AUTO_TRIM_TRIGGER_PCT) / 100);
-    if (ledger.totalTokens() < triggerTokens) return;
-    await trimContextToPercent(AUTO_TRIM_TARGET_PCT, reason);
   };
 
   const pollInbox = async (force = false): Promise<number> => {
@@ -924,9 +912,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     if (force && fresh.length === 0) {
       console.log(chalk.dim('No new inbox messages.'));
-    }
-    if (fresh.length > 0) {
-      await maybeAutoTrimContext('inbox-poll');
     }
     return fresh.length;
   };
@@ -976,10 +961,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (force && activities.length === 0) {
       console.log(chalk.dim('No new activity events.'));
     }
-    if (activities.length > 0) {
-      await maybeAutoTrimContext('activity-poll');
-    }
-
     return activities.length;
   };
 
@@ -998,7 +979,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (!raw.trim()) return;
     ledger.addEntry('user', raw, 'repl');
     appendTranscript(runtime.transcriptPath, { type: 'user', content: raw });
-    await maybeAutoTrimContext('pre-turn');
 
     if (runtime.sessionId) {
       await pcp
@@ -1017,9 +997,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const waitTimer = setInterval(() => {
       waitTicks += 1;
       if (waitTicks === 1) {
-        console.log(chalk.dim(`… waiting for ${runtime.backend} response`));
+        console.log(chalk.dim(`… ${pickWaitingVerb(waitTicks)} — waiting for ${runtime.backend}`));
       } else {
-        console.log(chalk.dim(`… still working (${Math.round((Date.now() - turnStartedAt) / 1000)}s)`));
+        console.log(
+          chalk.dim(
+            `… ${pickWaitingVerb(waitTicks)} (${Math.round((Date.now() - turnStartedAt) / 1000)}s)`
+          )
+        );
       }
     }, 4000);
     const runResult = await runBackendTurn({
@@ -1096,6 +1080,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   const rl = createInterface({ input, output });
   let keepRunning = true;
   let lastUsageTotal: number | undefined;
+  let lastCtrlCAt = 0;
 
   while (keepRunning) {
     if (runtime.showSessionsWatch) {
@@ -1103,8 +1088,36 @@ export async function runChat(options: ChatOptions): Promise<void> {
       printSessionsSnapshot(snapshot);
     }
     lastUsageTotal = printUsage(ledger, runtime.maxContextTokens, lastUsageTotal, lastBackendUsage);
-    const raw = (await rl.question(chalk.green(`${agentId}> `))).trim();
+    let raw = '';
+    try {
+      raw = (await rl.question(chalk.green(`${agentId}> `))).trim();
+      lastCtrlCAt = 0;
+    } catch (error) {
+      if (isAbortError(error)) {
+        const now = Date.now();
+        if (lastCtrlCAt > 0 && now - lastCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
+          console.log(chalk.yellow('\nExiting chat (double Ctrl+C).\n'));
+          keepRunning = false;
+          continue;
+        }
+        lastCtrlCAt = now;
+        console.log(chalk.dim('\nPress Ctrl+C again to quit, or continue typing.\n'));
+        continue;
+      }
+      throw error;
+    }
     if (!raw) continue;
+    if (raw === '/') {
+      console.log(
+        [
+          '',
+          chalk.bold('Quick commands'),
+          chalk.dim('/help  /mcp  /capabilities  /skills  /policy  /usage  /trim  /quit'),
+          '',
+        ].join('\n')
+      );
+      continue;
+    }
 
     const slash = parseSlashCommand(raw);
     if (slash) {
@@ -1126,6 +1139,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/allow <tool>               Persistently allow PCP tool',
               '/deny <tool>                Persistently deny PCP tool',
               '/policy                     Show tool policy + storage path',
+              '/mcp [servers|call ...]     List MCP servers or call PCP tool via /mcp call',
               '/mcp-servers                List configured MCP servers from .mcp.json',
               '/capabilities               Snapshot: MCP servers + skills + policy + grants',
               '/pcp <tool> [jsonArgs]     Call a PCP tool directly',
@@ -1289,6 +1303,59 @@ export async function runChat(options: ChatOptions): Promise<void> {
           printToolPolicySnapshot(toolPolicy, runtime.sessionId, runtime.activeSkills);
           break;
         }
+        case 'mcp': {
+          const sub = (slash.args[0] || 'servers').toLowerCase();
+          if (sub === 'servers' || sub === 'list') {
+            const servers = listConfiguredMcpServers(process.cwd());
+            if (servers.length === 0) {
+              console.log(chalk.dim('No MCP servers configured in .mcp.json'));
+              break;
+            }
+            console.log(chalk.bold(`MCP servers (${servers.length})`));
+            for (const server of servers) {
+              const endpoint = server.url || server.command || '(unknown)';
+              console.log(chalk.dim(`- ${server.name} [${server.transport || 'unknown'}] ${endpoint}`));
+            }
+            console.log('');
+            break;
+          }
+          if (sub === 'call') {
+            const tool = slash.args[1];
+            if (!tool) {
+              console.log(chalk.yellow('Usage: /mcp call <tool> [jsonArgs]'));
+              break;
+            }
+            let pcpArgs: Record<string, unknown> = {};
+            const rawArgs = raw.split(/\s+/).slice(3).join(' ').trim();
+            if (rawArgs) {
+              try {
+                pcpArgs = JSON.parse(rawArgs) as Record<string, unknown>;
+              } catch {
+                console.log(chalk.yellow('Invalid JSON args. Example: /mcp call get_inbox {"agentId":"lumen"}'));
+                break;
+              }
+            }
+            const approved = await ensurePcpToolAllowed({
+              policy: toolPolicy,
+              tool,
+              sessionId: runtime.sessionId,
+              prompt: (reason) =>
+                promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason),
+            });
+            if (!approved) {
+              console.log(chalk.yellow(`Skipped ${tool}`));
+              break;
+            }
+            const result = await pcp.callTool(tool, pcpArgs).catch((error) => ({ error: String(error) }));
+            const rendered = JSON.stringify(result, null, 2);
+            ledger.addEntry('system', compactForLedger(`PCP ${tool} -> ${rendered}`, 500), 'pcp');
+            appendTranscript(runtime.transcriptPath, { type: 'pcp_tool', tool, args: pcpArgs, result });
+            console.log(rendered);
+            break;
+          }
+          console.log(chalk.yellow('Usage: /mcp [servers|list|call <tool> [jsonArgs]]'));
+          break;
+        }
         case 'mcp-servers': {
           const servers = listConfiguredMcpServers(process.cwd());
           if (servers.length === 0) {
@@ -1383,7 +1450,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           }
           const result = await pcp.callTool(tool, pcpArgs).catch((error) => ({ error: String(error) }));
           const rendered = JSON.stringify(result, null, 2);
-          ledger.addEntry('system', `PCP ${tool} -> ${rendered}`, 'pcp');
+          ledger.addEntry('system', compactForLedger(`PCP ${tool} -> ${rendered}`, 500), 'pcp');
           appendTranscript(runtime.transcriptPath, { type: 'pcp_tool', tool, args: pcpArgs, result });
           console.log(rendered);
           break;
@@ -1763,13 +1830,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
           break;
         }
         case 'trim': {
-          const targetPctRaw = slash.args[0] || `${AUTO_TRIM_TARGET_PCT}`;
+          const targetPctRaw = slash.args[0] || `${DEFAULT_TRIM_TARGET_PCT}`;
           const targetPct = Number.parseInt(targetPctRaw, 10);
           if (!Number.isFinite(targetPct) || Number.isNaN(targetPct) || targetPct < 10 || targetPct > 95) {
             console.log(chalk.yellow('Usage: /trim [targetPercent 10-95]'));
             break;
           }
-          const trimResult = await trimContextToPercent(targetPct, 'manual', { forceRemember: true });
+          const trimResult = await trimContextToPercent(targetPct, 'manual');
           if (trimResult.removed === 0) {
             console.log(chalk.dim('No trim needed; context already within target budget.'));
           }
