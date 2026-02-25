@@ -70,6 +70,7 @@ interface ChatRuntime {
   threadKey?: string;
   studioId?: string;
   userTimezone?: string;
+  backendTokenWindow: number;
   sessionId?: string;
   maxContextTokens: number;
   pollSeconds: number;
@@ -113,10 +114,19 @@ interface McpServerSummary {
   command?: string;
 }
 
+interface SessionTranscriptMetadata {
+  messageCount: number;
+  userCount: number;
+  assistantCount: number;
+  inboxCount: number;
+  lastMessageAt?: string;
+}
+
 const LEDGER_COMPACT_CHARS = 420;
 const AUTO_TRIM_KEEP_RECENT_ENTRIES = 6;
 const DEFAULT_TRIM_TARGET_PCT = 70;
 const CTRL_C_EXIT_WINDOW_MS = 1500;
+const DEFAULT_BACKEND_TOKEN_WINDOW = 1_000_000;
 const WAITING_VERB_ROTATE_MS = 30_000;
 const WAITING_FRAME_INTERVAL_MS = 850;
 const WAITING_VERBS = [
@@ -129,6 +139,15 @@ const WAITING_VERBS = [
   'Polishing response atoms',
 ];
 const WAITING_FRAMES = ['✦', '✶', '✷', '✹'];
+
+function resolveBackendTokenWindow(_backend: string, _model?: string): number {
+  // Current policy: claude/codex/gemini all default to 1M effective context window.
+  return DEFAULT_BACKEND_TOKEN_WINDOW;
+}
+
+function formatTokenCount(value: number): string {
+  return value.toLocaleString();
+}
 
 function getDelegationSecret(): string | undefined {
   const fromEnv = process.env.PCP_DELEGATION_SECRET?.trim();
@@ -192,6 +211,105 @@ function resolveTranscriptTarget(target: string): string {
     throw new Error(`No transcript found for session ${trimmed}`);
   }
   return matched;
+}
+
+function readTranscriptEvents(path: string): Array<Record<string, unknown>> {
+  if (!existsSync(path)) return [];
+  try {
+    const lines = readFileSync(path, 'utf-8')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const events: Array<Record<string, unknown>> = [];
+    for (const line of lines) {
+      try {
+        const parsed = JSON.parse(line) as Record<string, unknown>;
+        events.push(parsed);
+      } catch {
+        // ignore malformed lines
+      }
+    }
+    return events;
+  } catch {
+    return [];
+  }
+}
+
+function getSessionTranscriptMetadata(sessionId: string): SessionTranscriptMetadata | null {
+  const path = findLatestTranscriptForSession(sessionId);
+  if (!path) return null;
+  const events = readTranscriptEvents(path);
+  if (events.length === 0) return null;
+
+  let userCount = 0;
+  let assistantCount = 0;
+  let inboxCount = 0;
+  let lastMessageAt: string | undefined;
+
+  for (const event of events) {
+    const type = typeof event.type === 'string' ? event.type : '';
+    if (type === 'user') {
+      userCount += 1;
+      if (typeof event.ts === 'string') lastMessageAt = event.ts;
+      continue;
+    }
+    if (type === 'assistant') {
+      assistantCount += 1;
+      if (typeof event.ts === 'string') lastMessageAt = event.ts;
+      continue;
+    }
+    if (type === 'inbox') {
+      inboxCount += 1;
+      if (typeof event.ts === 'string') lastMessageAt = event.ts;
+    }
+  }
+
+  const messageCount = userCount + assistantCount + inboxCount;
+  return { messageCount, userCount, assistantCount, inboxCount, lastMessageAt };
+}
+
+function hydrateLedgerFromTranscript(
+  ledger: ContextLedger,
+  transcriptPath: string
+): { loaded: number; messageCount: number } {
+  const events = readTranscriptEvents(transcriptPath);
+  let loaded = 0;
+  let messageCount = 0;
+
+  for (const event of events) {
+    const type = typeof event.type === 'string' ? event.type : '';
+    if (type === 'user' && typeof event.content === 'string') {
+      ledger.addEntry('user', event.content, 'repl-history');
+      loaded += 1;
+      messageCount += 1;
+      continue;
+    }
+    if (type === 'assistant' && typeof event.content === 'string') {
+      const source = typeof event.backend === 'string' ? event.backend : 'backend-history';
+      ledger.addEntry('assistant', event.content, source);
+      loaded += 1;
+      messageCount += 1;
+      continue;
+    }
+    if (type === 'inbox' && typeof event.rendered === 'string') {
+      ledger.addEntry('inbox', compactForLedger(event.rendered), 'pcp-inbox-history');
+      loaded += 1;
+      messageCount += 1;
+      continue;
+    }
+    if (type === 'activity' && typeof event.content === 'string') {
+      const actor = typeof event.agentId === 'string' ? event.agentId : 'system';
+      const activityType = typeof event.activityType === 'string' ? event.activityType : 'activity';
+      ledger.addEntry(
+        'system',
+        compactForLedger(`⚡ ${actor} ${activityType} — ${event.content}`, 320),
+        'pcp-activity-history'
+      );
+      loaded += 1;
+    }
+  }
+
+  return { loaded, messageCount };
 }
 
 function printTranscriptLine(rawLine: string): void {
@@ -290,9 +408,12 @@ function pickWaitingVerb(tick: number): string {
   return WAITING_VERBS[tick % WAITING_VERBS.length]!;
 }
 
-function startWaitingIndicator(backend: string): (doneMessage?: string) => void {
+function startWaitingIndicator(
+  backend: string,
+  options?: { inline?: boolean }
+): (doneMessage?: string) => void {
   const startedAt = Date.now();
-  const useAnimatedLine = Boolean(process.stdout.isTTY);
+  const useAnimatedLine = Boolean(options?.inline && process.stdout.isTTY);
   let tick = 0;
   let previousWidth = 0;
 
@@ -301,8 +422,8 @@ function startWaitingIndicator(backend: string): (doneMessage?: string) => void 
     const verbTick = Math.floor((Date.now() - startedAt) / WAITING_VERB_ROTATE_MS);
     const verb = pickWaitingVerb(verbTick);
     const frame = WAITING_FRAMES[tick % WAITING_FRAMES.length] || '✦';
-    const dots = '.'.repeat((tick % 3) + 1);
-    const msg = `${frame} ${verb}${dots} waiting for ${backend} (${seconds}s)`;
+    const dots = '.'.repeat((tick % 3) + 1).padEnd(3, ' ');
+    const msg = `${frame} ${verb}${dots} · waiting for ${backend} (${seconds}s)`;
 
     if (useAnimatedLine) {
       const palette = [chalk.cyan, chalk.magenta, chalk.yellow, chalk.green] as const;
@@ -310,15 +431,15 @@ function startWaitingIndicator(backend: string): (doneMessage?: string) => void 
       const pad = previousWidth > msg.length ? ' '.repeat(previousWidth - msg.length) : '';
       process.stdout.write(`\r${tint(msg)}${pad}`);
       previousWidth = msg.length;
-    } else if (tick === 0 || tick % 6 === 0) {
-      console.log(chalk.dim(`… ${verb} — waiting for ${backend} (${seconds}s)`));
+    } else if (tick === 0 || tick % 2 === 0) {
+      console.log(chalk.dim(`${frame} ${verb} · waiting for ${backend} (${seconds}s)`));
     }
 
     tick += 1;
   };
 
   render();
-  const timer = setInterval(render, useAnimatedLine ? WAITING_FRAME_INTERVAL_MS : 3000);
+  const timer = setInterval(render, useAnimatedLine ? WAITING_FRAME_INTERVAL_MS : 1000);
 
   return (doneMessage?: string) => {
     clearInterval(timer);
@@ -532,7 +653,8 @@ function printUsage(
   ledger: ContextLedger,
   maxContextTokens: number,
   previousTotal?: number,
-  lastBackendUsage?: BackendTokenUsage
+  lastBackendUsage?: BackendTokenUsage,
+  backendTokenWindow?: number
 ): number {
   const entries = ledger.listEntries();
   const total = ledger.totalTokens();
@@ -558,7 +680,13 @@ function printUsage(
   const bar = buildTokenMeter(displayPct);
   const color =
     pct >= 95 ? chalk.red : pct >= 80 ? chalk.yellow : pct >= 60 ? chalk.hex('#f59e0b') : chalk.green;
-  const header = `Context: ~${total.toLocaleString()} / ${maxContextTokens.toLocaleString()} tok (${pct.toFixed(1)}%)${deltaLabel}`;
+  const windowLabel =
+    backendTokenWindow && backendTokenWindow !== maxContextTokens
+      ? `  backend-window:${backendTokenWindow.toLocaleString()}`
+      : '';
+  const header = `Context: ~${total.toLocaleString()} / ${maxContextTokens.toLocaleString()} tok (${pct.toFixed(
+    1
+  )}%)${deltaLabel}${windowLabel}`;
   console.log(color(header));
   console.log(
     color(`[${bar}]`) +
@@ -578,6 +706,24 @@ function formatStartedAt(value?: string): string {
   const ms = Date.parse(value);
   if (Number.isNaN(ms)) return value;
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+}
+
+function formatTimestampForSessionList(value?: string, timezone?: string): string {
+  if (!value) return '-';
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return value;
+  try {
+    return new Date(ms).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZone: timezone,
+    });
+  } catch {
+    return new Date(ms).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+  }
 }
 
 function formatNow(timezone?: string): string {
@@ -601,22 +747,35 @@ function chip(label: string, value: string, color: (text: string) => string): st
   return `${chalk.dim(`${label}:`)} ${color(value)}`;
 }
 
-function printSessionsSnapshot(sessions: SessionSummary[]): void {
+function printSessionsSnapshot(
+  sessions: SessionSummary[],
+  options?: { timezone?: string }
+): void {
   if (sessions.length === 0) {
     console.log(chalk.dim('No active sessions found.'));
     return;
   }
 
   console.log(chalk.bold('\nActive sessions'));
-  console.log(chalk.dim('id       agent   status/phase            thread        started   backend'));
+  console.log(chalk.dim('id       agent   status/phase            thread        started   backend      msgs  last-msg'));
   for (const session of sessions) {
+    const transcriptMeta = getSessionTranscriptMetadata(session.id);
     const id = session.id.slice(0, 7).padEnd(7);
     const agent = (session.agentId || '-').slice(0, 6).padEnd(6);
     const status = (session.currentPhase || session.status || '-').slice(0, 22).padEnd(22);
     const thread = (session.threadKey || '-').slice(0, 12).padEnd(12);
     const started = formatStartedAt(session.startedAt);
     const backend = (session.backendSessionId || session.claudeSessionId || '-').slice(0, 10);
-    console.log(chalk.dim(`${id}  ${agent}  ${status}  ${thread}  ${started.padEnd(7)}  ${backend}`));
+    const messageCount = `${transcriptMeta?.messageCount ?? 0}`.padStart(4, ' ');
+    const lastMessage = formatTimestampForSessionList(transcriptMeta?.lastMessageAt, options?.timezone).padEnd(
+      8,
+      ' '
+    );
+    console.log(
+      chalk.dim(
+        `${id}  ${agent}  ${status}  ${thread}  ${started.padEnd(7)}  ${backend.padEnd(10)}  ${messageCount}  ${lastMessage}`
+      )
+    );
   }
   console.log('');
 }
@@ -706,7 +865,8 @@ function matchesAttachQuery(session: SessionSummary, query?: string): boolean {
 
 async function pickSessionToAttach(
   sessions: SessionSummary[],
-  query?: string
+  query?: string,
+  options?: { timezone?: string }
 ): Promise<SessionSummary | undefined> {
   const candidates = sessions.filter((session) => matchesAttachQuery(session, query));
   if (candidates.length === 0) return undefined;
@@ -716,11 +876,14 @@ async function pickSessionToAttach(
   for (let i = 0; i < candidates.length; i += 1) {
     const session = candidates[i]!;
     const phase = session.currentPhase || session.status || '-';
+    const transcriptMeta = getSessionTranscriptMetadata(session.id);
+    const msgMeta = `${transcriptMeta?.messageCount ?? 0} msgs`;
+    const lastMeta = `last ${formatTimestampForSessionList(transcriptMeta?.lastMessageAt, options?.timezone)}`;
     console.log(
       chalk.dim(
         `  ${String(i + 1).padStart(2, ' ')}. ${session.id.slice(0, 8)}  ${
           session.agentId || '-'
-        }  ${phase}  ${session.threadKey || '-'}  ${session.backendSessionId || session.claudeSessionId || '-'}`
+        }  ${phase}  ${session.threadKey || '-'}  ${session.backendSessionId || session.claudeSessionId || '-'}  ${msgMeta}  ${lastMeta}`
       )
     );
   }
@@ -840,9 +1003,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
   const pcp = new PcpClient();
   const identity = readIdentityJson(process.cwd());
   let autoAttachedLatest = false;
+  let contextBudgetAuto = !options.maxContextTokens;
+  const initialBackend = options.backend || 'claude';
+  const initialBackendTokenWindow = resolveBackendTokenWindow(initialBackend, options.model);
+  const configuredMaxContextTokens = Number.parseInt(
+    options.maxContextTokens || String(initialBackendTokenWindow),
+    10
+  );
 
   const runtime: ChatRuntime = {
-    backend: options.backend || 'claude',
+    backend: initialBackend,
     model: options.model,
     verbose: options.verbose ?? false,
     toolMode:
@@ -850,8 +1020,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
     threadKey: options.threadKey,
     studioId: identity?.workspaceId,
     userTimezone: undefined,
+    backendTokenWindow: initialBackendTokenWindow,
     sessionId: options.sessionId?.trim() || undefined,
-    maxContextTokens: Number.parseInt(options.maxContextTokens || '12000', 10),
+    maxContextTokens: Number.isNaN(configuredMaxContextTokens)
+      ? initialBackendTokenWindow
+      : configuredMaxContextTokens,
     pollSeconds: Number.parseInt(options.pollSeconds || '20', 10),
     showSessionsWatch: false,
     eventPolling: true,
@@ -919,7 +1092,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const sessions = extractSessionSummaries(sessionsResult);
     const selected = options.attachLatest
       ? pickLatestSession(sessions, query)
-      : await pickSessionToAttach(sessions, query);
+      : await pickSessionToAttach(sessions, query, { timezone: runtime.userTimezone });
     if (!selected) {
       throw new Error('No matching active session selected for attach.');
     }
@@ -971,6 +1144,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
       ? findLatestTranscriptForSession(runtime.sessionId)
       : undefined;
   runtime.transcriptPath = existingTranscript || ensureRuntimeTranscriptPath(runtime.sessionId);
+  let historyHydration: { loaded: number; messageCount: number } | null = null;
+  if (attachedToExistingSession && existingTranscript) {
+    historyHydration = hydrateLedgerFromTranscript(ledger, existingTranscript);
+  }
 
   appendTranscript(runtime.transcriptPath, {
     type: attachedToExistingSession ? 'session_attach' : 'session_start',
@@ -1000,6 +1177,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     [
       chip('agent', agentId, chalk.cyan),
       chip('backend', `${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}`, chalk.yellow),
+      chip('window', `${formatTokenCount(runtime.backendTokenWindow)} tok`, chalk.green),
       chip('inbox auto-run', runtime.autoRunInbox ? 'on' : 'off', runtime.autoRunInbox ? chalk.green : chalk.dim),
       chip('local time', formatNow(runtime.userTimezone), chalk.magenta),
     ].join(chalk.dim('  •  '))
@@ -1008,6 +1186,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
   if (attachedToExistingSession) console.log(chalk.dim('Mode: attached to existing session'));
   if (autoAttachedLatest) console.log(chalk.dim('Mode: auto-attached to latest active session'));
   if (runtime.sessionId) console.log(chalk.dim(`Session: ${runtime.sessionId}`));
+  if (historyHydration && historyHydration.messageCount > 0) {
+    console.log(
+      chalk.dim(
+        `History loaded: ${historyHydration.messageCount} prior message(s) (${historyHydration.loaded} ledger entries)`
+      )
+    );
+  }
   console.log(chalk.dim(`Transcript: ${runtime.transcriptPath}`));
   console.log(chalk.dim('Type /help for commands.\n'));
 
@@ -1103,8 +1288,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
         msg.messageType !== 'notification' &&
         msg.content.trim().length > 0;
 
-      if (eligibleForAutoRun) {
-        await enqueueAutoRunFromInbox(msg);
+      const autoRunHandler = enqueueAutoRunFromInbox;
+      if (eligibleForAutoRun && autoRunHandler) {
+        await autoRunHandler(msg);
         autoRuns += 1;
       }
     }
@@ -1189,7 +1375,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
     const turnStartedAt = Date.now();
-    const stopWaiting = startWaitingIndicator(runtime.backend);
+    const stopWaiting = startWaitingIndicator(runtime.backend, { inline: false });
     let turnCtrlCAt = 0;
     const onSigintDuringTurn = () => {
       const now = Date.now();
@@ -1252,12 +1438,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
   };
 
   let turnQueue: Promise<void> = Promise.resolve();
+  let pendingTurns = 0;
   const enqueueTurn = (raw: string, source: 'user' | 'inbox-auto' = 'user'): Promise<void> => {
-    turnQueue = turnQueue
-      .then(() => runUserTurn(raw, source))
-      .catch((error) => {
+    pendingTurns += 1;
+    const run = async () => {
+      try {
+        await runUserTurn(raw, source);
+      } catch (error) {
         console.log(chalk.red(`Turn failed: ${String(error)}`));
-      });
+      } finally {
+        pendingTurns = Math.max(0, pendingTurns - 1);
+      }
+    };
+    turnQueue = turnQueue.then(run, run);
     return turnQueue;
   };
 
@@ -1304,16 +1497,37 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let keepRunning = true;
   let lastUsageTotal: number | undefined;
   let lastCtrlCAt = 0;
+  let exitAfterTurnNoticeShown = false;
 
   while (keepRunning) {
+    if (forceQuitAfterTurn) {
+      if (!exitAfterTurnNoticeShown) {
+        console.log(chalk.dim('Exit requested; waiting for active turn to finish...'));
+        exitAfterTurnNoticeShown = true;
+      }
+      if (pendingTurns === 0) {
+        keepRunning = false;
+        continue;
+      }
+      await turnQueue;
+      keepRunning = false;
+      continue;
+    }
     if (runtime.showSessionsWatch) {
       const snapshot = await refreshSessionsSnapshot(false);
-      printSessionsSnapshot(snapshot);
+      printSessionsSnapshot(snapshot, { timezone: runtime.userTimezone });
     }
-    lastUsageTotal = printUsage(ledger, runtime.maxContextTokens, lastUsageTotal, lastBackendUsage);
+    lastUsageTotal = printUsage(
+      ledger,
+      runtime.maxContextTokens,
+      lastUsageTotal,
+      lastBackendUsage,
+      runtime.backendTokenWindow
+    );
     let raw = '';
     try {
-      raw = (await rl.question(chalk.green(`${agentId}> `))).trim();
+      const promptLabel = pendingTurns > 0 ? `${agentId}+${pendingTurns}> ` : `${agentId}> `;
+      raw = (await rl.question(chalk.green(promptLabel))).trim();
       lastCtrlCAt = 0;
     } catch (error) {
       if (isAbortError(error)) {
@@ -1419,7 +1633,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 runtime.model || '(default)'
               } thread=${runtime.threadKey || '(none)'} events=${runtime.eventPolling ? 'on' : 'off'} autorun=${
                 runtime.autoRunInbox ? 'on' : 'off'
-              }`
+              } budget=${formatTokenCount(runtime.maxContextTokens)} window=${formatTokenCount(
+                runtime.backendTokenWindow
+              )} budgetMode=${contextBudgetAuto ? 'auto' : 'manual'}`
             )
           );
           break;
@@ -1448,7 +1664,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             console.log(chalk.green('Session watch disabled.'));
           } else {
             const snapshot = await refreshSessionsSnapshot(true);
-            printSessionsSnapshot(snapshot);
+            printSessionsSnapshot(snapshot, { timezone: runtime.userTimezone });
           }
           break;
         }
@@ -1459,13 +1675,31 @@ export async function runChat(options: ChatOptions): Promise<void> {
             break;
           }
           runtime.backend = next;
+          runtime.backendTokenWindow = resolveBackendTokenWindow(runtime.backend, runtime.model);
+          if (contextBudgetAuto) {
+            runtime.maxContextTokens = runtime.backendTokenWindow;
+          }
           console.log(chalk.green(`Switched backend to ${next}`));
+          if (contextBudgetAuto) {
+            console.log(
+              chalk.dim(
+                `Context budget auto-updated to backend window (${formatTokenCount(runtime.maxContextTokens)} tok).`
+              )
+            );
+          }
           break;
         }
         case 'model': {
           const next = slash.args[0];
           runtime.model = next || undefined;
+          runtime.backendTokenWindow = resolveBackendTokenWindow(runtime.backend, runtime.model);
+          if (contextBudgetAuto) {
+            runtime.maxContextTokens = runtime.backendTokenWindow;
+          }
           console.log(chalk.green(`Model override: ${runtime.model || '(backend default)'}`));
+          console.log(
+            chalk.dim(`Backend window: ${formatTokenCount(runtime.backendTokenWindow)} tok (policy default).`)
+          );
           break;
         }
         case 'tools': {
@@ -2096,11 +2330,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
           break;
         }
         case 'usage':
+          if (pendingTurns > 0) {
+            await turnQueue;
+          }
           lastUsageTotal = printUsage(
             ledger,
             runtime.maxContextTokens,
             lastUsageTotal,
-            lastBackendUsage
+            lastBackendUsage,
+            runtime.backendTokenWindow
           );
           break;
         default:
@@ -2108,14 +2346,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       continue;
     }
-    await enqueueTurn(raw);
-    if (forceQuitAfterTurn) {
-      keepRunning = false;
-    }
+    void enqueueTurn(raw);
   }
 
   rl.close();
   if (pollTimer) clearInterval(pollTimer);
+
+  if (pendingTurns > 0) {
+    console.log(chalk.dim(`Waiting for ${pendingTurns} pending turn(s) to finish...`));
+    await turnQueue;
+  }
 
   const summary = summarizeForSessionEnd(ledger);
   if (runtime.sessionId && !attachedToExistingSession) {
@@ -2151,7 +2391,10 @@ export function registerChatCommand(program: Command): void {
         'Attach to newest active session for this SB (optional query filter)'
       )
       .option('--session-id <id>', 'Attach chat to an existing PCP session id')
-      .option('--max-context-tokens <n>', 'Approximate context budget for transcript', '12000')
+      .option(
+        '--max-context-tokens <n>',
+        'Approximate context budget for transcript (default: backend window policy, currently 1,000,000)'
+      )
       .option('--poll-seconds <n>', 'Inbox polling interval seconds', '20')
       .option('--tools <mode>', 'Tool mode: backend|off|privileged', 'backend')
       .option('--auto-run', 'Automatically execute backend turns for new inbox task messages')

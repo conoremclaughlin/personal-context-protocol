@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mintDelegationToken, verifyDelegationToken } from '@personal-context/shared';
@@ -194,6 +194,36 @@ describe('runChat integration', () => {
     expect(transcriptFiles.length).toBeGreaterThan(0);
     const transcript = readFileSync(join(transcriptDir, transcriptFiles[0]!), 'utf-8');
     expect(transcript).toContain('"type":"session_attach"');
+  });
+
+  it('hydrates ledger context from existing transcript when attaching', async () => {
+    const sessionId = 'sess-history-1';
+    const replDir = join(testCwd, '.pcp', 'runtime', 'repl');
+    mkdirSync(replDir, { recursive: true });
+    const transcriptPath = join(replDir, `${sessionId}-1700000000000.jsonl`);
+    writeFileSync(
+      transcriptPath,
+      [
+        JSON.stringify({ ts: '2026-02-25T07:00:00.000Z', type: 'user', content: 'old user message' }),
+        JSON.stringify({ ts: '2026-02-25T07:00:01.000Z', type: 'assistant', content: 'old assistant reply' }),
+      ].join('\n') + '\n'
+    );
+
+    testState.inputs = ['new message', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      sessionId,
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as { prompt: string };
+    expect(backendRequest.prompt).toContain('old user message');
+    expect(backendRequest.prompt).toContain('old assistant reply');
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('History loaded: 2 prior message(s)');
   });
 
   it('supports interactive attach picker from active sessions', async () => {
