@@ -24,6 +24,12 @@ export interface LedgerEjectResult {
   removedTokens: number;
 }
 
+export interface LedgerTrimResult {
+  removedEntries: LedgerEntry[];
+  removedTokens: number;
+  totalAfter: number;
+}
+
 export interface PromptBuildOptions {
   maxTokens?: number;
   includeSources?: boolean;
@@ -138,5 +144,40 @@ export class ContextLedger {
         return `${entry.role.toUpperCase()}${source}: ${entry.content}`;
       })
       .join('\n\n');
+  }
+
+  public trimOldestToTokenBudget(maxTokens: number, keepRecentEntries = 0): LedgerTrimResult {
+    if (this.entries.length === 0) {
+      return { removedEntries: [], removedTokens: 0, totalAfter: 0 };
+    }
+
+    const normalizedMax = Math.max(0, Math.floor(maxTokens));
+    let runningTotal = this.totalTokens();
+    if (runningTotal <= normalizedMax) {
+      return { removedEntries: [], removedTokens: 0, totalAfter: runningTotal };
+    }
+
+    const protectedStart = Math.max(0, this.entries.length - Math.max(0, keepRecentEntries));
+    let removeCount = 0;
+    let removedTokens = 0;
+
+    while (removeCount < protectedStart && runningTotal - removedTokens > normalizedMax) {
+      removedTokens += this.entries[removeCount]?.approxTokens || 0;
+      removeCount += 1;
+    }
+
+    if (removeCount === 0) {
+      return { removedEntries: [], removedTokens: 0, totalAfter: runningTotal };
+    }
+
+    const removedEntries = this.entries.slice(0, removeCount);
+    this.entries = this.entries.slice(removeCount);
+
+    this.bookmarks = this.bookmarks
+      .filter((bookmark) => bookmark.entryIndex >= removeCount)
+      .map((bookmark) => ({ ...bookmark, entryIndex: bookmark.entryIndex - removeCount }));
+
+    runningTotal = this.totalTokens();
+    return { removedEntries, removedTokens, totalAfter: runningTotal };
   }
 }

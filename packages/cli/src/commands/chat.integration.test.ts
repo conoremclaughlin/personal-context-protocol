@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { mintDelegationToken, verifyDelegationToken } from '@personal-context/shared';
@@ -420,6 +420,44 @@ describe('runChat integration', () => {
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('claude usage (json): in 1,200 · out 400 · total 1,600');
     expect(logText).toContain('Last backend usage: claude usage (json): in 1,200 · out 400 · total 1,600');
+  });
+
+  it('shows capabilities snapshot including MCP servers and policy', async () => {
+    writeFileSync(
+      join(testCwd, '.mcp.json'),
+      JSON.stringify(
+        {
+          mcpServers: {
+            pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+            github: { command: 'github-mcp-server', args: ['stdio'] },
+          },
+        },
+        null,
+        2
+      )
+    );
+    testState.discoverSkillsImpl.mockReturnValue([
+      {
+        name: 'playwright',
+        source: 'local',
+        path: '/tmp/playwright',
+        trustLevel: 'trusted',
+      },
+    ]);
+    testState.inputs = ['/capabilities', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Capabilities snapshot');
+    expect(logText).toContain('MCP servers (2)');
+    expect(logText).toContain('pcp [http] http://localhost:3001/mcp');
+    expect(logText).toContain('github [stdio] github-mcp-server');
+    expect(logText).toContain('Tool policy');
   });
 
   it('requires confirmation before large context ejection and allows cancel', async () => {

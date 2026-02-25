@@ -98,6 +98,20 @@ interface DelegationState {
   payload: DelegationTokenPayload;
 }
 
+interface McpServerSummary {
+  name: string;
+  transport?: string;
+  url?: string;
+  command?: string;
+}
+
+const LEDGER_COMPACT_CHARS = 420;
+const AUTO_TRIM_TRIGGER_PCT = 85;
+const AUTO_TRIM_TARGET_PCT = 70;
+const AUTO_TRIM_KEEP_RECENT_ENTRIES = 6;
+const AUTO_TRIM_REMEMBER_MIN_TOKENS = 1200;
+const AUTO_TRIM_REMEMBER_COOLDOWN_MS = 5 * 60 * 1000;
+
 function getDelegationSecret(): string | undefined {
   const fromEnv = process.env.PCP_DELEGATION_SECRET?.trim();
   if (fromEnv) return fromEnv;
@@ -238,6 +252,39 @@ async function tailTranscript(target: string): Promise<void> {
 
 function appendTranscript(path: string, event: Record<string, unknown>): void {
   appendFileSync(path, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+}
+
+function compactForLedger(content: string, maxChars = LEDGER_COMPACT_CHARS): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxChars - 1))}…`;
+}
+
+function listConfiguredMcpServers(cwd = process.cwd()): McpServerSummary[] {
+  const configPath = join(cwd, '.mcp.json');
+  if (!existsSync(configPath)) return [];
+
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as {
+      mcpServers?: Record<string, Record<string, unknown>>;
+    };
+    const servers = parsed.mcpServers || {};
+    return Object.entries(servers).map(([name, config]) => ({
+      name,
+      transport:
+        typeof config.type === 'string'
+          ? config.type
+          : typeof config.url === 'string'
+            ? 'http'
+            : typeof config.command === 'string'
+              ? 'stdio'
+              : undefined,
+      url: typeof config.url === 'string' ? config.url : undefined,
+      command: typeof config.command === 'string' ? config.command : undefined,
+    }));
+  } catch {
+    return [];
+  }
 }
 
 function extractSessionId(result: Record<string, unknown> | null | undefined): string | undefined {
@@ -451,6 +498,46 @@ function printSessionsSnapshot(sessions: SessionSummary[]): void {
   console.log('');
 }
 
+function printToolPolicySnapshot(
+  toolPolicy: ToolPolicyState,
+  sessionId: string | undefined,
+  activeSkills: SkillInstruction[]
+): void {
+  console.log(chalk.bold('\nTool policy'));
+  console.log(chalk.dim(`Path: ${toolPolicy.getPolicyPath()}`));
+  console.log(chalk.dim(`Mode: ${toolPolicy.getMode()}`));
+  console.log(chalk.dim(`Skill trust mode: ${toolPolicy.getSkillTrustMode()}`));
+
+  const grants = toolPolicy.listGrants();
+  if (grants.length > 0) {
+    console.log(chalk.dim(`Grants: ${grants.map((entry) => `${entry.tool}(${entry.uses})`).join(', ')}`));
+  }
+  const allow = toolPolicy.listAllowTools();
+  if (allow.length > 0) console.log(chalk.dim(`Allow: ${allow.join(', ')}`));
+  const deny = toolPolicy.listDenyTools();
+  if (deny.length > 0) console.log(chalk.dim(`Deny: ${deny.join(', ')}`));
+  const prompt = toolPolicy.listPromptTools();
+  if (prompt.length > 0) console.log(chalk.dim(`Prompt: ${prompt.join(', ')}`));
+
+  const readAllow = toolPolicy.listReadPathAllow();
+  const writeAllow = toolPolicy.listWritePathAllow();
+  if (readAllow.length > 0) console.log(chalk.dim(`Read path allow: ${readAllow.join(', ')}`));
+  if (writeAllow.length > 0) console.log(chalk.dim(`Write path allow: ${writeAllow.join(', ')}`));
+
+  const skills = toolPolicy.listAllowedSkills();
+  if (skills.length > 0) console.log(chalk.dim(`Allowed skills: ${skills.join(', ')}`));
+  const sessionGrants = toolPolicy.listSessionGrants(sessionId);
+  if (sessionGrants.length > 0) {
+    console.log(
+      chalk.dim(`Session grants: ${sessionGrants.map((entry) => `${entry.tool}(${entry.uses})`).join(', ')}`)
+    );
+  }
+  if (activeSkills.length > 0) {
+    console.log(chalk.dim(`Active skills: ${activeSkills.map((skill) => skill.name).join(', ')}`));
+  }
+  console.log('');
+}
+
 function matchesAttachQuery(session: SessionSummary, query?: string): boolean {
   if (!query) return true;
   const haystack = `${session.id} ${session.agentId || ''} ${session.threadKey || ''} ${
@@ -625,6 +712,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let activitySince = new Date(Date.now() - 5 * 60 * 1000).toISOString();
   let lastBackendUsage: BackendTokenUsage | undefined;
   let lastDelegation: DelegationState | undefined;
+  let lastAutoTrimRememberAt = 0;
 
   const bootstrapResult = (await pcp
     .callTool('bootstrap', { agentId })
@@ -735,6 +823,63 @@ export async function runChat(options: ChatOptions): Promise<void> {
     return sessionsCache;
   };
 
+  const trimContextToPercent = async (
+    targetPercent: number,
+    reason: string,
+    options?: { forceRemember?: boolean }
+  ): Promise<{ removed: number; removedTokens: number }> => {
+    const targetTokens = Math.max(
+      1,
+      Math.floor((runtime.maxContextTokens * Math.max(1, Math.min(99, targetPercent))) / 100)
+    );
+    const trim = ledger.trimOldestToTokenBudget(targetTokens, AUTO_TRIM_KEEP_RECENT_ENTRIES);
+    if (trim.removedEntries.length === 0) {
+      return { removed: 0, removedTokens: 0 };
+    }
+
+    const note = `Trimmed ${trim.removedEntries.length} entries (~${trim.removedTokens} tok) to ${targetPercent}% budget (${reason}).`;
+    console.log(chalk.yellow(note));
+    appendTranscript(runtime.transcriptPath, {
+      type: 'context_auto_trim',
+      reason,
+      targetPercent,
+      removedCount: trim.removedEntries.length,
+      removedTokens: trim.removedTokens,
+      totalAfter: trim.totalAfter,
+    });
+
+    const canRemember =
+      options?.forceRemember ||
+      (trim.removedTokens >= AUTO_TRIM_REMEMBER_MIN_TOKENS &&
+        Date.now() - lastAutoTrimRememberAt > AUTO_TRIM_REMEMBER_COOLDOWN_MS);
+    if (canRemember) {
+      const excerpt = trim.removedEntries
+        .slice(-6)
+        .map((entry) => `${entry.role}: ${compactForLedger(entry.content, 140)}`)
+        .join('\n');
+      if (excerpt) {
+        await pcp
+          .callTool('remember', {
+            agentId,
+            ...(runtime.sessionId ? { sessionId: runtime.sessionId } : {}),
+            content: `Automatic context trim (${reason}) removed ${trim.removedEntries.length} entries (~${trim.removedTokens} tokens).\n${excerpt}`,
+            topics: 'repl,context-trim',
+            salience: 'medium',
+          })
+          .catch(() => undefined);
+        lastAutoTrimRememberAt = Date.now();
+      }
+    }
+
+    return { removed: trim.removedEntries.length, removedTokens: trim.removedTokens };
+  };
+
+  const maybeAutoTrimContext = async (reason: string): Promise<void> => {
+    const triggerTokens = Math.floor((runtime.maxContextTokens * AUTO_TRIM_TRIGGER_PCT) / 100);
+    if (ledger.totalTokens() < triggerTokens) return;
+    await trimContextToPercent(AUTO_TRIM_TARGET_PCT, reason);
+  };
+
   const pollInbox = async (force = false): Promise<number> => {
     const inboxResult = (await pcp
       .callTool('get_inbox', { agentId, status: 'unread', limit: 10 })
@@ -767,7 +912,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         }
       }
       const rendered = `📥 ${heading}${delegationLabel}: ${msg.content}`.trim();
-      ledger.addEntry('inbox', rendered, 'pcp-inbox');
+      ledger.addEntry('inbox', compactForLedger(rendered), 'pcp-inbox');
       appendTranscript(runtime.transcriptPath, {
         type: 'inbox',
         messageId: msg.id,
@@ -779,6 +924,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     if (force && fresh.length === 0) {
       console.log(chalk.dim('No new inbox messages.'));
+    }
+    if (fresh.length > 0) {
+      await maybeAutoTrimContext('inbox-poll');
     }
     return fresh.length;
   };
@@ -812,7 +960,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         .slice(0, 200);
       const rendered = `⚡ ${actor} ${type}${preview ? ` — ${preview}` : ''}`;
 
-      ledger.addEntry('system', rendered, 'pcp-activity');
+      ledger.addEntry('system', compactForLedger(rendered, 320), 'pcp-activity');
       appendTranscript(runtime.transcriptPath, {
         type: 'activity',
         activityId: activity.id,
@@ -827,6 +975,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     if (force && activities.length === 0) {
       console.log(chalk.dim('No new activity events.'));
+    }
+    if (activities.length > 0) {
+      await maybeAutoTrimContext('activity-poll');
     }
 
     return activities.length;
@@ -847,6 +998,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (!raw.trim()) return;
     ledger.addEntry('user', raw, 'repl');
     appendTranscript(runtime.transcriptPath, { type: 'user', content: raw });
+    await maybeAutoTrimContext('pre-turn');
 
     if (runtime.sessionId) {
       await pcp
@@ -860,6 +1012,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
 
     const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
+    const turnStartedAt = Date.now();
+    let waitTicks = 0;
+    const waitTimer = setInterval(() => {
+      waitTicks += 1;
+      if (waitTicks === 1) {
+        console.log(chalk.dim(`… waiting for ${runtime.backend} response`));
+      } else {
+        console.log(chalk.dim(`… still working (${Math.round((Date.now() - turnStartedAt) / 1000)}s)`));
+      }
+    }, 4000);
     const runResult = await runBackendTurn({
       backend: runtime.backend,
       agentId,
@@ -868,7 +1030,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
       verbose: runtime.verbose,
       // When tools are off, do not pass through backend tool passthrough flags.
       passthroughArgs: toolPolicy.canUseBackendTools() ? [] : ['--allowedTools', ''],
-    });
+    }).finally(() => clearInterval(waitTimer));
+    if (waitTicks > 0) {
+      console.log(chalk.dim(`✓ ${runtime.backend} responded in ${Math.round((Date.now() - turnStartedAt) / 1000)}s`));
+    }
 
     let responseText = runResult.stdout.trim();
     if (!responseText && runResult.stderr.trim()) {
@@ -961,6 +1126,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/allow <tool>               Persistently allow PCP tool',
               '/deny <tool>                Persistently deny PCP tool',
               '/policy                     Show tool policy + storage path',
+              '/mcp-servers                List configured MCP servers from .mcp.json',
+              '/capabilities               Snapshot: MCP servers + skills + policy + grants',
               '/pcp <tool> [jsonArgs]     Call a PCP tool directly',
               '/thread [key]              Show/set active thread key',
               '/sessions [watch|off]      Show active sessions (or stream each turn)',
@@ -979,6 +1146,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/bookmarks                 List bookmarks',
               '/eject <bookmark|last>     Eject context up to bookmark',
               '/eject <bookmark|last> --force  Eject without confirmation',
+              '/trim [targetPct]          Trim oldest context entries (default 70)',
               '/context                   Show recent context entries',
               '/usage                     Show context token estimate',
               '',
@@ -1118,36 +1286,72 @@ export async function runChat(options: ChatOptions): Promise<void> {
           break;
         }
         case 'policy': {
-          console.log(chalk.bold('\nTool policy'));
-          console.log(chalk.dim(`Path: ${toolPolicy.getPolicyPath()}`));
-          console.log(chalk.dim(`Mode: ${toolPolicy.getMode()}`));
-          console.log(chalk.dim(`Skill trust mode: ${toolPolicy.getSkillTrustMode()}`));
-          const grants = toolPolicy.listGrants();
-          if (grants.length > 0) {
-            console.log(chalk.dim(`Grants: ${grants.map((entry) => `${entry.tool}(${entry.uses})`).join(', ')}`));
+          printToolPolicySnapshot(toolPolicy, runtime.sessionId, runtime.activeSkills);
+          break;
+        }
+        case 'mcp-servers': {
+          const servers = listConfiguredMcpServers(process.cwd());
+          if (servers.length === 0) {
+            console.log(chalk.dim('No MCP servers configured in .mcp.json'));
+            break;
           }
-          const allow = toolPolicy.listAllowTools();
-          if (allow.length > 0) console.log(chalk.dim(`Allow: ${allow.join(', ')}`));
-          const deny = toolPolicy.listDenyTools();
-          if (deny.length > 0) console.log(chalk.dim(`Deny: ${deny.join(', ')}`));
-          const prompt = toolPolicy.listPromptTools();
-          if (prompt.length > 0) console.log(chalk.dim(`Prompt: ${prompt.join(', ')}`));
-          const skills = toolPolicy.listAllowedSkills();
-          if (skills.length > 0) console.log(chalk.dim(`Allowed skills: ${skills.join(', ')}`));
-          const sessionGrants = toolPolicy.listSessionGrants(runtime.sessionId);
-          if (sessionGrants.length > 0) {
-            console.log(
-              chalk.dim(
-                `Session grants: ${sessionGrants.map((entry) => `${entry.tool}(${entry.uses})`).join(', ')}`
-              )
-            );
-          }
-          if (runtime.activeSkills.length > 0) {
-            console.log(
-              chalk.dim(`Active skills: ${runtime.activeSkills.map((skill) => skill.name).join(', ')}`)
-            );
+          console.log(chalk.bold(`MCP servers (${servers.length})`));
+          for (const server of servers) {
+            const endpoint = server.url || server.command || '(unknown)';
+            console.log(chalk.dim(`- ${server.name} [${server.transport || 'unknown'}] ${endpoint}`));
           }
           console.log('');
+          break;
+        }
+        case 'capabilities': {
+          const servers = listConfiguredMcpServers(process.cwd());
+          const skills = discoverSkills(process.cwd());
+          const filtered = filterSkillsByPolicy(skills, toolPolicy);
+
+          console.log(chalk.bold('\nCapabilities snapshot'));
+          console.log(
+            chalk.dim(
+              `Backend=${runtime.backend}${runtime.model ? `(${runtime.model})` : ''} thread=${
+                runtime.threadKey || '(none)'
+              } session=${runtime.sessionId || '(none)'}`
+            )
+          );
+
+          if (servers.length === 0) {
+            console.log(chalk.dim('MCP servers: none configured in .mcp.json'));
+          } else {
+            console.log(chalk.bold(`MCP servers (${servers.length})`));
+            for (const server of servers) {
+              const endpoint = server.url || server.command || '(unknown)';
+              console.log(chalk.dim(`- ${server.name} [${server.transport || 'unknown'}] ${endpoint}`));
+            }
+          }
+
+          console.log(chalk.bold(`Skills (${skills.length} discovered)`));
+          if (filtered.visible.length === 0) {
+            console.log(chalk.dim('- none visible under current policy'));
+          } else {
+            for (const skill of filtered.visible.slice(0, 20)) {
+              const active = runtime.activeSkills.some((entry) => entry.path === skill.path) ? ' *active*' : '';
+              console.log(
+                chalk.dim(`- ${skill.name} [${skill.source}] trust=${skill.trustLevel}${active}`)
+              );
+            }
+            if (filtered.visible.length > 20) {
+              console.log(chalk.dim(`... and ${filtered.visible.length - 20} more visible skills`));
+            }
+          }
+          if (filtered.blockedBySkill.length > 0) {
+            console.log(chalk.yellow(`Blocked by skill allowlist: ${filtered.blockedBySkill.length}`));
+          }
+          if (filtered.blockedByPath.length > 0) {
+            console.log(chalk.yellow(`Blocked by path policy: ${filtered.blockedByPath.length}`));
+          }
+          if (filtered.blockedByTrust.length > 0) {
+            console.log(chalk.yellow(`Blocked by trust mode: ${filtered.blockedByTrust.length}`));
+          }
+
+          printToolPolicySnapshot(toolPolicy, runtime.sessionId, runtime.activeSkills);
           break;
         }
         case 'pcp': {
@@ -1556,6 +1760,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
             removedCount,
             removedTokens: result.removedTokens,
           });
+          break;
+        }
+        case 'trim': {
+          const targetPctRaw = slash.args[0] || `${AUTO_TRIM_TARGET_PCT}`;
+          const targetPct = Number.parseInt(targetPctRaw, 10);
+          if (!Number.isFinite(targetPct) || Number.isNaN(targetPct) || targetPct < 10 || targetPct > 95) {
+            console.log(chalk.yellow('Usage: /trim [targetPercent 10-95]'));
+            break;
+          }
+          const trimResult = await trimContextToPercent(targetPct, 'manual', { forceRemember: true });
+          if (trimResult.removed === 0) {
+            console.log(chalk.dim('No trim needed; context already within target budget.'));
+          }
           break;
         }
         case 'context': {
