@@ -118,6 +118,7 @@ const WAITING_VERBS = [
   'Consulting digital spirits',
   'Polishing response atoms',
 ];
+const WAITING_FRAMES = ['✦', '✶', '✷', '✹'];
 
 function getDelegationSecret(): string | undefined {
   const fromEnv = process.env.PCP_DELEGATION_SECRET?.trim();
@@ -277,6 +278,44 @@ function isAbortError(error: unknown): boolean {
 function pickWaitingVerb(tick: number): string {
   if (WAITING_VERBS.length === 0) return 'Working';
   return WAITING_VERBS[tick % WAITING_VERBS.length]!;
+}
+
+function startWaitingIndicator(backend: string): (doneMessage?: string) => void {
+  const startedAt = Date.now();
+  const useAnimatedLine = Boolean(process.stdout.isTTY);
+  let tick = 0;
+
+  const render = () => {
+    const seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+    const verb = pickWaitingVerb(tick);
+    const frame = WAITING_FRAMES[tick % WAITING_FRAMES.length] || '✦';
+    const msg = `${frame} ${verb} — waiting for ${backend} (${seconds}s)`;
+
+    if (useAnimatedLine) {
+      const palette = [chalk.cyan, chalk.magenta, chalk.yellow, chalk.green] as const;
+      const tint = palette[tick % palette.length] || chalk.cyan;
+      process.stdout.write(`\r${tint(msg)}`);
+    } else if (tick === 0 || tick % 4 === 0) {
+      console.log(chalk.dim(`… ${verb} — waiting for ${backend} (${seconds}s)`));
+    }
+
+    tick += 1;
+  };
+
+  render();
+  const timer = setInterval(render, useAnimatedLine ? 220 : 1000);
+
+  return (doneMessage?: string) => {
+    clearInterval(timer);
+    if (useAnimatedLine) {
+      process.stdout.write('\r');
+      if (typeof process.stdout.clearLine === 'function') process.stdout.clearLine(0);
+      if (typeof process.stdout.cursorTo === 'function') process.stdout.cursorTo(0);
+    }
+    if (doneMessage) {
+      console.log(chalk.dim(doneMessage));
+    }
+  };
 }
 
 function listConfiguredMcpServers(cwd = process.cwd()): McpServerSummary[] {
@@ -993,19 +1032,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
     const turnStartedAt = Date.now();
-    let waitTicks = 0;
-    const waitTimer = setInterval(() => {
-      waitTicks += 1;
-      if (waitTicks === 1) {
-        console.log(chalk.dim(`… ${pickWaitingVerb(waitTicks)} — waiting for ${runtime.backend}`));
-      } else {
-        console.log(
-          chalk.dim(
-            `… ${pickWaitingVerb(waitTicks)} (${Math.round((Date.now() - turnStartedAt) / 1000)}s)`
-          )
-        );
-      }
-    }, 4000);
+    const stopWaiting = startWaitingIndicator(runtime.backend);
     const runResult = await runBackendTurn({
       backend: runtime.backend,
       agentId,
@@ -1014,10 +1041,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
       verbose: runtime.verbose,
       // When tools are off, do not pass through backend tool passthrough flags.
       passthroughArgs: toolPolicy.canUseBackendTools() ? [] : ['--allowedTools', ''],
-    }).finally(() => clearInterval(waitTimer));
-    if (waitTicks > 0) {
-      console.log(chalk.dim(`✓ ${runtime.backend} responded in ${Math.round((Date.now() - turnStartedAt) / 1000)}s`));
-    }
+    }).finally(() =>
+      stopWaiting(`✓ ${runtime.backend} responded in ${Math.round((Date.now() - turnStartedAt) / 1000)}s`)
+    );
 
     let responseText = runResult.stdout.trim();
     if (!responseText && runResult.stderr.trim()) {
