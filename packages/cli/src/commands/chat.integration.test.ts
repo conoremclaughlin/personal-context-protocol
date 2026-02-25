@@ -417,6 +417,96 @@ describe('runChat integration', () => {
     expect(sessionStatusLine).not.toContain('Session: sess-wren-latest');
   });
 
+  it('applies session-visibility matrix to auto-attach behavior', async () => {
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'list_sessions':
+          return {
+            sessions: [
+              {
+                id: 'sess-wren-new',
+                agentId: 'wren',
+                workspaceId: 'studio-test',
+                studioId: 'studio-test',
+                status: 'active',
+                threadKey: 'pr:900',
+                startedAt: '2026-02-18T20:00:00.000Z',
+              },
+              {
+                id: 'sess-lumen-mid',
+                agentId: 'lumen',
+                workspaceId: 'studio-test',
+                studioId: 'studio-2',
+                status: 'active',
+                threadKey: 'pr:901',
+                startedAt: '2026-02-18T19:00:00.000Z',
+              },
+              {
+                id: 'sess-lumen-old',
+                agentId: 'lumen',
+                workspaceId: 'workspace-other',
+                studioId: 'studio-3',
+                status: 'active',
+                threadKey: 'pr:902',
+                startedAt: '2026-02-18T18:00:00.000Z',
+              },
+            ],
+          };
+        case 'start_session':
+          return { session: { id: 'sess-1' } };
+        case 'get_inbox':
+          return { messages: [] };
+        default:
+          return { success: true };
+      }
+    });
+
+    const policyPath = process.env.PCP_TOOL_POLICY_PATH!;
+    mkdirSync(join(testCwd, '.pcp', 'security'), { recursive: true });
+    const matrix = [
+      { visibility: 'agent', expectedSession: 'sess-lumen-mid', expectsAutoAttach: true },
+      { visibility: 'all', expectedSession: 'sess-wren-new', expectsAutoAttach: true },
+      { visibility: 'workspace', expectedSession: 'sess-wren-new', expectsAutoAttach: true },
+      { visibility: 'studio', expectedSession: 'sess-wren-new', expectsAutoAttach: true },
+      { visibility: 'self', expectedSession: 'sess-1', expectsAutoAttach: false },
+    ] as const;
+
+    for (const row of matrix) {
+      writeFileSync(
+        policyPath,
+        JSON.stringify(
+          {
+            version: 2,
+            scopes: {
+              global: { sessionVisibility: row.visibility },
+            },
+          },
+          null,
+          2
+        )
+      );
+
+      testState.inputs = ['/quit'];
+      const before = logSpy.mock.calls.length;
+      await runChat({
+        agent: 'lumen',
+        backend: 'claude',
+        pollSeconds: '999',
+      });
+      const logText = stripAnsi(logSpy.mock.calls.slice(before).flat().join('\n'));
+      expect(logText, `visibility=${row.visibility}`).toContain(`Session: ${row.expectedSession}`);
+      if (row.expectsAutoAttach) {
+        expect(logText, `visibility=${row.visibility}`).toContain('Mode: auto-attached to latest active session');
+      } else {
+        expect(logText, `visibility=${row.visibility}`).not.toContain(
+          'Mode: auto-attached to latest active session'
+        );
+      }
+    }
+  });
+
   it('supports gated /pcp tool execution with inline approval', async () => {
     testState.inputs = ['/pcp send_to_inbox {"recipientAgentId":"wren"}', 'y', '/quit'];
 

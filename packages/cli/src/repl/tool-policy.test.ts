@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ToolPolicyState } from './tool-policy.js';
+import { type SessionVisibility, ToolPolicyState } from './tool-policy.js';
 import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -366,5 +366,197 @@ describe('ToolPolicyState', () => {
     const reset = policy.clearScopeRules();
     expect(reset.success).toBe(true);
     expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(true);
+  });
+
+  it('runs visibility matrix across all visibility modes and actions', () => {
+    const requester = {
+      agentId: 'lumen',
+      workspaceId: 'ws-1',
+      studioId: 'studio-1',
+      sessionId: 'sess-1',
+      threadKey: 'pr:1',
+    };
+    const targets = {
+      self: {
+        agentId: 'lumen',
+        workspaceId: 'ws-1',
+        studioId: 'studio-1',
+        sessionId: 'sess-1',
+        threadKey: 'pr:1',
+      },
+      sameThread: {
+        agentId: 'wren',
+        workspaceId: 'ws-9',
+        studioId: 'studio-9',
+        sessionId: 'sess-2',
+        threadKey: 'pr:1',
+      },
+      sameStudio: {
+        agentId: 'wren',
+        workspaceId: 'ws-1',
+        studioId: 'studio-1',
+        sessionId: 'sess-3',
+        threadKey: 'pr:3',
+      },
+      sameWorkspace: {
+        agentId: 'wren',
+        workspaceId: 'ws-1',
+        studioId: 'studio-8',
+        sessionId: 'sess-4',
+        threadKey: 'pr:4',
+      },
+      sameAgent: {
+        agentId: 'lumen',
+        workspaceId: 'ws-8',
+        studioId: 'studio-8',
+        sessionId: 'sess-5',
+        threadKey: 'pr:5',
+      },
+      crossAll: {
+        agentId: 'wren',
+        workspaceId: 'ws-9',
+        studioId: 'studio-9',
+        sessionId: 'sess-6',
+        threadKey: 'pr:6',
+      },
+    } as const;
+
+    const expectations: Record<
+      SessionVisibility,
+      Record<keyof typeof targets, boolean>
+    > = {
+      self: {
+        self: true,
+        sameThread: false,
+        sameStudio: false,
+        sameWorkspace: false,
+        sameAgent: false,
+        crossAll: false,
+      },
+      thread: {
+        self: true,
+        sameThread: true,
+        sameStudio: false,
+        sameWorkspace: false,
+        sameAgent: false,
+        crossAll: false,
+      },
+      studio: {
+        self: true,
+        sameThread: false,
+        sameStudio: true,
+        sameWorkspace: false,
+        sameAgent: false,
+        crossAll: false,
+      },
+      workspace: {
+        self: true,
+        sameThread: false,
+        sameStudio: true,
+        sameWorkspace: true,
+        sameAgent: false,
+        crossAll: false,
+      },
+      agent: {
+        self: true,
+        sameThread: false,
+        sameStudio: false,
+        sameWorkspace: false,
+        sameAgent: true,
+        crossAll: false,
+      },
+      all: {
+        self: true,
+        sameThread: true,
+        sameStudio: true,
+        sameWorkspace: true,
+        sameAgent: true,
+        crossAll: true,
+      },
+    };
+
+    const actions = ['list', 'attach', 'events', 'inbox'] as const;
+    const modes: SessionVisibility[] = ['self', 'thread', 'studio', 'workspace', 'agent', 'all'];
+
+    for (const mode of modes) {
+      const policy = new ToolPolicyState('backend', { persist: false });
+      policy.setSessionVisibility(mode, { scope: 'global' });
+
+      for (const action of actions) {
+        for (const [name, target] of Object.entries(targets) as Array<
+          [keyof typeof targets, (typeof targets)[keyof typeof targets]]
+        >) {
+          const result = policy.canAccessSession({ action, requester, target });
+          expect(result.allowed, `mode=${mode} action=${action} target=${String(name)}`).toBe(
+            expectations[mode][name]
+          );
+        }
+      }
+    }
+  });
+
+  it('runs PCP tool decision matrix for safe/allow/prompt/deny/scoped cases', () => {
+    type Case = {
+      name: string;
+      setup?: (policy: ToolPolicyState) => void;
+      tool: string;
+      expected: { allowed: boolean; promptable?: boolean };
+    };
+
+    const cases: Case[] = [
+      {
+        name: 'safe tool allowed by default',
+        tool: 'get_inbox',
+        expected: { allowed: true },
+      },
+      {
+        name: 'denied tool is hard-blocked',
+        setup: (policy) => policy.denyTool('send_to_inbox'),
+        tool: 'send_to_inbox',
+        expected: { allowed: false, promptable: false },
+      },
+      {
+        name: 'prompt tool is blocked with promptable true',
+        setup: (policy) => policy.addPromptTool('send_to_inbox'),
+        tool: 'send_to_inbox',
+        expected: { allowed: false, promptable: true },
+      },
+      {
+        name: 'explicit allow grants access',
+        setup: (policy) => policy.allowTool('send_to_inbox'),
+        tool: 'send_to_inbox',
+        expected: { allowed: true },
+      },
+      {
+        name: 'scoped allowlist narrowing blocks tools outside scope allow',
+        setup: (policy) => {
+          policy.allowTool('group:pcp-comms', { scope: 'global' });
+          policy.allowTool('trigger_agent', { scope: 'workspace', id: 'ws-1' });
+          policy.setContext({ workspaceId: 'ws-1' });
+        },
+        tool: 'send_to_inbox',
+        expected: { allowed: false, promptable: true },
+      },
+      {
+        name: 'scoped allowlist narrowing still permits allowed member',
+        setup: (policy) => {
+          policy.allowTool('group:pcp-comms', { scope: 'global' });
+          policy.allowTool('trigger_agent', { scope: 'workspace', id: 'ws-1' });
+          policy.setContext({ workspaceId: 'ws-1' });
+        },
+        tool: 'trigger_agent',
+        expected: { allowed: true },
+      },
+    ];
+
+    for (const testCase of cases) {
+      const policy = new ToolPolicyState('backend', { persist: false });
+      testCase.setup?.(policy);
+      const decision = policy.canCallPcpTool(testCase.tool);
+      expect(decision.allowed, testCase.name).toBe(testCase.expected.allowed);
+      if (typeof testCase.expected.promptable !== 'undefined') {
+        expect(decision.promptable, testCase.name).toBe(testCase.expected.promptable);
+      }
+    }
   });
 });
