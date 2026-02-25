@@ -197,6 +197,62 @@ export class PcpClient {
     return (toolResult as PcpToolCallResult) || {};
   }
 
+  private parseSseJsonRpcResponse(raw: string): JsonRpcResponse {
+    const lines = raw.split(/\r?\n/);
+    const events: string[] = [];
+    let currentData: string[] = [];
+
+    const flush = () => {
+      if (currentData.length > 0) {
+        events.push(currentData.join('\n'));
+        currentData = [];
+      }
+    };
+
+    for (const line of lines) {
+      if (line.trim() === '') {
+        flush();
+        continue;
+      }
+      if (line.startsWith('data:')) {
+        currentData.push(line.slice(5).trimStart());
+      }
+    }
+    flush();
+
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const chunk = events[i]?.trim();
+      if (!chunk || chunk === '[DONE]') continue;
+      try {
+        return JSON.parse(chunk) as JsonRpcResponse;
+      } catch {
+        // Keep scanning previous events.
+      }
+    }
+
+    const preview = raw.replace(/\s+/g, ' ').slice(0, 240);
+    throw new Error(`Unable to parse JSON-RPC response from SSE payload: ${preview}`);
+  }
+
+  private parseJsonRpcResponse(raw: string): JsonRpcResponse {
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      throw new Error('Empty JSON-RPC response body');
+    }
+
+    // Some streamable HTTP servers return SSE framing for POST responses.
+    if (
+      trimmed.startsWith('event:') ||
+      trimmed.startsWith('data:') ||
+      /\n\s*event:/.test(trimmed) ||
+      /\n\s*data:/.test(trimmed)
+    ) {
+      return this.parseSseJsonRpcResponse(trimmed);
+    }
+
+    return JSON.parse(trimmed) as JsonRpcResponse;
+  }
+
   private async callToolJsonRpc(
     tool: string,
     args: Record<string, unknown>
@@ -256,7 +312,8 @@ export class PcpClient {
       );
     }
 
-    const payload = (await response.json()) as JsonRpcResponse;
+    const rawBody = await response.text();
+    const payload = this.parseJsonRpcResponse(rawBody);
     return this.parseJsonRpcToolPayload(payload);
   }
 
