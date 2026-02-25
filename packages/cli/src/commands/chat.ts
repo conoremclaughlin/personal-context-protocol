@@ -690,6 +690,30 @@ function buildTokenMeter(pct: number, width = 24): string {
   return `${'█'.repeat(filled)}${'░'.repeat(empty)}`;
 }
 
+function buildContextStatusSummary(params: {
+  ledger: ContextLedger;
+  maxContextTokens: number;
+  backendTokenWindow: number;
+  pendingTurns: number;
+  backend: string;
+}): string {
+  const total = params.ledger.totalTokens();
+  const pct = params.maxContextTokens > 0 ? (total / params.maxContextTokens) * 100 : 0;
+  const queue =
+    params.pendingTurns > 0 ? `queue:${params.pendingTurns}` : 'queue:idle';
+  const window =
+    params.backendTokenWindow !== params.maxContextTokens
+      ? ` window:${params.backendTokenWindow.toLocaleString()}`
+      : '';
+  return `context:${total.toLocaleString()}/${params.maxContextTokens.toLocaleString()} (${pct.toFixed(
+    1
+  )}%) ${queue} backend:${params.backend}${window}`;
+}
+
+function printStatusLane(summary: string, timezone?: string): void {
+  console.log(chalk.dim(`status> ${summary} • ${formatNow(timezone)}`));
+}
+
 function printUsage(
   ledger: ContextLedger,
   maxContextTokens: number,
@@ -1537,8 +1561,23 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   let turnQueue: Promise<void> = Promise.resolve();
   let pendingTurns = 0;
+  let lastStatusSummary = '';
+  const emitStatusLaneIfChanged = () => {
+    const summary = buildContextStatusSummary({
+      ledger,
+      maxContextTokens: runtime.maxContextTokens,
+      backendTokenWindow: runtime.backendTokenWindow,
+      pendingTurns,
+      backend: runtime.backend,
+    });
+    if (summary !== lastStatusSummary) {
+      printStatusLane(summary, runtime.userTimezone);
+      lastStatusSummary = summary;
+    }
+  };
   const enqueueTurn = (raw: string, source: 'user' | 'inbox-auto' = 'user'): Promise<void> => {
     pendingTurns += 1;
+    emitStatusLaneIfChanged();
     const run = async () => {
       try {
         await runUserTurn(raw, source);
@@ -1546,6 +1585,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         console.log(chalk.red(`Turn failed: ${String(error)}`));
       } finally {
         pendingTurns = Math.max(0, pendingTurns - 1);
+        emitStatusLaneIfChanged();
       }
     };
     turnQueue = turnQueue.then(run, run);
@@ -1568,6 +1608,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       void pollActivity(false);
     }
   }, Math.max(runtime.pollSeconds, 5) * 1000);
+  emitStatusLaneIfChanged();
 
   if (options.nonInteractive || options.message) {
     const message = options.message?.trim();
@@ -1623,13 +1664,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       const snapshot = await refreshSessionsSnapshot(false);
       printSessionsSnapshot(snapshot, { timezone: runtime.userTimezone });
     }
-    lastUsageTotal = printUsage(
-      ledger,
-      runtime.maxContextTokens,
-      lastUsageTotal,
-      lastBackendUsage,
-      runtime.backendTokenWindow
-    );
+    emitStatusLaneIfChanged();
     let raw = '';
     try {
       const promptLabel = pendingTurns > 0 ? `${agentId}+${pendingTurns}> ` : `${agentId}> `;
