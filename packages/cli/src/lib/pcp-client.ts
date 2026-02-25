@@ -211,7 +211,9 @@ export class PcpClient {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Accept: 'application/json',
+          // Streamable HTTP MCP servers may require clients to accept both
+          // JSON responses and SSE frames.
+          Accept: 'application/json, text/event-stream',
           Authorization: `Bearer ${accessToken}`,
         },
         body: JSON.stringify({
