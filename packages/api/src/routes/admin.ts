@@ -1651,6 +1651,15 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
       toRoutingRoute(route, reminderCountByIdentity, nextReminderByIdentity)
     );
 
+    // Fetch studios owned by this agent
+    const { data: studiosData } = await supabase
+      .from('studios')
+      .select('id, name, branch, status')
+      .eq('user_id', authReq.pcpUserId)
+      .eq('agent_id', identity.agent_id)
+      .in('status', ['active', 'idle'])
+      .order('name', { ascending: true });
+
     const heartbeatProcessingEnabled =
       process.env.ENABLE_HEARTBEAT_SERVICE !== 'false' &&
       process.env.ENABLE_HEARTBEATS !== 'false' &&
@@ -1667,6 +1676,12 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         backend: identity.backend,
         updatedAt: identity.updated_at,
       },
+      studios: (studiosData || []).map((s) => ({
+        id: s.id,
+        name: s.name,
+        branch: s.branch,
+        status: s.status,
+      })),
       routes,
       reminders: (remindersData || []).map((reminder) => ({
         id: reminder.id,

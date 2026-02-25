@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { useMutation } from '@tanstack/react-query';
 import { ArrowLeft, Bell, Save, Trash2, Plus, GitBranch } from 'lucide-react';
@@ -45,6 +45,13 @@ interface AgentReminder {
   identityId: string | null;
 }
 
+interface AgentStudio {
+  id: string;
+  name: string;
+  branch: string | null;
+  status: string;
+}
+
 interface AgentRoutingResponse {
   heartbeatProcessingEnabled: boolean;
   agent: {
@@ -56,6 +63,7 @@ interface AgentRoutingResponse {
     backend: string | null;
     updatedAt: string;
   };
+  studios: AgentStudio[];
   routes: AgentRoute[];
   reminders: AgentReminder[];
 }
@@ -70,11 +78,6 @@ interface RouteFormState {
 
 const PLATFORM_OPTIONS = ['telegram', 'whatsapp', 'discord', 'slack', 'email'];
 
-const STUDIO_HINT_OPTIONS: { value: string; label: string }[] = [
-  { value: '', label: 'Auto (nearest session)' },
-  { value: 'main', label: 'Main' },
-];
-
 function formatPlatform(value: string): string {
   if (!value) return 'Unknown';
   return value.charAt(0).toUpperCase() + value.slice(1);
@@ -85,9 +88,23 @@ function formatTime(value: string | null): string {
   return new Date(value).toLocaleString();
 }
 
-function studioHintLabel(hint: string | null): string {
-  if (!hint) return 'Auto (nearest session)';
+function buildStudioOptions(studios: AgentStudio[]): { value: string; label: string }[] {
+  const options: { value: string; label: string }[] = [
+    { value: 'main', label: 'Main' },
+  ];
+  for (const s of studios) {
+    // Skip if this IS the main branch studio (already covered by "Main" option)
+    if (s.branch === 'main') continue;
+    options.push({ value: s.name, label: s.name });
+  }
+  return options;
+}
+
+function studioHintLabel(hint: string | null, studios: AgentStudio[]): string {
+  if (!hint) return 'Not set';
   if (hint === 'main') return 'Main';
+  const match = studios.find((s) => s.name === hint);
+  if (match) return match.name;
   return hint;
 }
 
@@ -113,6 +130,9 @@ export default function AgentRoutingPage() {
       enabled: !!agentId,
     }
   );
+
+  const studios = data?.studios ?? [];
+  const studioOptions = useMemo(() => buildStudioOptions(studios), [studios]);
 
   const [newRoute, setNewRoute] = useState<RouteFormState>({
     platform: 'telegram',
@@ -272,7 +292,7 @@ export default function AgentRoutingPage() {
                     }))
                   }
                 >
-                  {STUDIO_HINT_OPTIONS.map((opt) => (
+                  {studioOptions.map((opt) => (
                     <option key={opt.value} value={opt.value}>
                       {opt.label}
                     </option>
@@ -379,7 +399,7 @@ export default function AgentRoutingPage() {
                         <div className="text-gray-500">Studio</div>
                         <div className="flex items-center gap-1 text-xs">
                           <GitBranch className="h-3 w-3 text-gray-400" />
-                          {studioHintLabel(route.studioHint)}
+                          {studioHintLabel(route.studioHint, studios)}
                         </div>
                       </div>
                     </div>
@@ -429,7 +449,7 @@ export default function AgentRoutingPage() {
                               }))
                             }
                           >
-                            {STUDIO_HINT_OPTIONS.map((opt) => (
+                            {studioOptions.map((opt) => (
                               <option key={opt.value} value={opt.value}>
                                 {opt.label}
                               </option>
