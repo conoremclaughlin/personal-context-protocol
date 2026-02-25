@@ -10,6 +10,7 @@ import {
 
 export type ToolMode = 'backend' | 'off' | 'privileged';
 export type SkillTrustMode = 'all' | 'trusted-only';
+export type SessionVisibility = 'self' | 'thread' | 'studio' | 'workspace' | 'agent' | 'all';
 export type ToolPolicyScopeKind = 'global' | 'workspace' | 'agent' | 'studio';
 
 export interface ToolPolicyScopeRef {
@@ -29,11 +30,30 @@ export interface ToolPolicyDecision {
   promptable?: boolean;
 }
 
+export interface SessionAccessQuery {
+  requester: {
+    sessionId?: string;
+    threadKey?: string;
+    studioId?: string;
+    workspaceId?: string;
+    agentId?: string;
+  };
+  target: {
+    sessionId?: string;
+    threadKey?: string;
+    studioId?: string;
+    workspaceId?: string;
+    agentId?: string;
+  };
+  action?: 'list' | 'attach' | 'events' | 'inbox';
+}
+
 export interface ToolPolicyScopeSnapshot {
   scope: ToolPolicyScopeRef;
   label: string;
   mode?: ToolMode;
   skillTrustMode?: SkillTrustMode;
+  sessionVisibility?: SessionVisibility;
   safeTools: string[];
   allowTools: string[];
   denyTools: string[];
@@ -66,6 +86,7 @@ export interface ToolPolicyOptions {
 interface PersistedToolPolicyRules {
   mode?: ToolMode;
   skillTrustMode?: SkillTrustMode;
+  sessionVisibility?: SessionVisibility;
   safeTools?: string[];
   allowTools?: string[];
   denyTools?: string[];
@@ -93,6 +114,7 @@ interface PersistedToolPolicyV2 {
 interface ToolPolicyRulesState {
   mode?: ToolMode;
   skillTrustMode?: SkillTrustMode;
+  sessionVisibility?: SessionVisibility;
   safeTools: Set<string>;
   allowTools: Set<string>;
   denyTools: Set<string>;
@@ -141,6 +163,8 @@ const MODE_RANK: Record<ToolMode, number> = {
   privileged: 2,
 };
 
+const DEFAULT_SESSION_VISIBILITY: SessionVisibility = 'agent';
+
 function normalizeToolName(name: string): string {
   return normalizePolicyToken(name);
 }
@@ -161,6 +185,7 @@ function normalizePathPattern(pattern: string): string {
 function createRules(options?: {
   mode?: ToolMode;
   skillTrustMode?: SkillTrustMode;
+  sessionVisibility?: SessionVisibility;
   includeDefaultSafeTools?: boolean;
 }): ToolPolicyRulesState {
   const safeTools = new Set<string>();
@@ -171,6 +196,7 @@ function createRules(options?: {
   return {
     mode: options?.mode,
     skillTrustMode: options?.skillTrustMode,
+    sessionVisibility: options?.sessionVisibility,
     safeTools,
     allowTools: new Set<string>(),
     denyTools: new Set<string>(),
@@ -215,6 +241,13 @@ function modeFromRank(rank: number): ToolMode {
   return 'backend';
 }
 
+function isValidSessionVisibility(value: string | undefined): value is SessionVisibility {
+  return Boolean(
+    value &&
+      ['self', 'thread', 'studio', 'workspace', 'agent', 'all'].includes(value)
+  );
+}
+
 function expandToolSpec(spec: string): string[] {
   return expandPolicySpecs([spec], TOOL_GROUPS);
 }
@@ -242,6 +275,7 @@ function hasAnyRules(rule: ToolPolicyRulesState): boolean {
   return Boolean(
     rule.mode ||
       rule.skillTrustMode ||
+      rule.sessionVisibility ||
       rule.allowTools.size ||
       rule.denyTools.size ||
       rule.promptTools.size ||
@@ -282,6 +316,7 @@ export class ToolPolicyState {
     this.globalRules = createRules({
       mode: initialMode,
       skillTrustMode: 'all',
+      sessionVisibility: DEFAULT_SESSION_VISIBILITY,
       includeDefaultSafeTools: true,
     });
 
@@ -373,6 +408,9 @@ export class ToolPolicyState {
     if (data.skillTrustMode === 'all' || data.skillTrustMode === 'trusted-only') {
       target.skillTrustMode = data.skillTrustMode;
     }
+    if (isValidSessionVisibility(data.sessionVisibility)) {
+      target.sessionVisibility = data.sessionVisibility;
+    }
 
     for (const tool of data.safeTools || []) addToolSpec(target.safeTools, tool);
     for (const tool of data.allowTools || []) addToolSpec(target.allowTools, tool);
@@ -390,6 +428,7 @@ export class ToolPolicyState {
     return {
       mode: rules.mode,
       skillTrustMode: rules.skillTrustMode,
+      sessionVisibility: rules.sessionVisibility,
       safeTools: Array.from(rules.safeTools).sort(),
       allowTools: Array.from(rules.allowTools).sort(),
       denyTools: Array.from(rules.denyTools).sort(),
@@ -594,6 +633,48 @@ export class ToolPolicyState {
     return 'all';
   }
 
+  private resolveEffectiveSessionVisibilityRules(): Array<{
+    ref: ToolPolicyScopeRef;
+    visibility: SessionVisibility;
+  }> {
+    return this.getActiveScopeRules()
+      .map(({ ref, rules }) => {
+        if (!rules.sessionVisibility) return undefined;
+        return { ref, visibility: rules.sessionVisibility };
+      })
+      .filter((entry): entry is { ref: ToolPolicyScopeRef; visibility: SessionVisibility } =>
+        Boolean(entry)
+      );
+  }
+
+  private visibilityAllows(visibility: SessionVisibility, query: SessionAccessQuery): boolean {
+    const requester = query.requester;
+    const target = query.target;
+    if (visibility === 'all') return true;
+    if (visibility === 'agent') {
+      return Boolean(requester.agentId && target.agentId && requester.agentId === target.agentId);
+    }
+    if (visibility === 'workspace') {
+      return Boolean(
+        requester.workspaceId && target.workspaceId && requester.workspaceId === target.workspaceId
+      );
+    }
+    if (visibility === 'studio') {
+      return Boolean(requester.studioId && target.studioId && requester.studioId === target.studioId);
+    }
+    if (visibility === 'thread') {
+      if (requester.threadKey && target.threadKey) {
+        return requester.threadKey === target.threadKey;
+      }
+      if (requester.sessionId && target.sessionId) {
+        return requester.sessionId === target.sessionId;
+      }
+      return false;
+    }
+    // self
+    return Boolean(requester.sessionId && target.sessionId && requester.sessionId === target.sessionId);
+  }
+
   public setContext(context: ToolPolicyContext): void {
     this.context = {
       agentId: context.agentId ? normalizeScopeId(context.agentId) : undefined,
@@ -651,6 +732,7 @@ export class ToolPolicyState {
           label: normalizeScopeLabel(ref),
           mode: rules.mode,
           skillTrustMode: rules.skillTrustMode,
+          sessionVisibility: rules.sessionVisibility,
           safeTools: Array.from(rules.safeTools).sort(),
           allowTools: Array.from(rules.allowTools).sort(),
           denyTools: Array.from(rules.denyTools).sort(),
@@ -688,6 +770,55 @@ export class ToolPolicyState {
     const rules = this.resolveRulesForMutation(scope);
     rules.skillTrustMode = mode;
     this.saveToDisk();
+  }
+
+  public getSessionVisibility(): SessionVisibility {
+    const active = this.resolveEffectiveSessionVisibilityRules();
+    if (active.length === 0) return DEFAULT_SESSION_VISIBILITY;
+    return active[active.length - 1]!.visibility;
+  }
+
+  public setSessionVisibility(visibility: SessionVisibility, scope?: ToolPolicyScopeRef): void {
+    const rules = this.resolveRulesForMutation(scope);
+    rules.sessionVisibility = visibility;
+    this.saveToDisk();
+  }
+
+  public canAccessSession(query: SessionAccessQuery): ToolPolicyDecision {
+    const rules = this.resolveEffectiveSessionVisibilityRules();
+    for (const rule of rules) {
+      if (!this.visibilityAllows(rule.visibility, query)) {
+        return {
+          allowed: false,
+          reason: `Session access blocked by ${normalizeScopeLabel(rule.ref)} visibility=${rule.visibility}.`,
+          promptable: false,
+        };
+      }
+    }
+    return { allowed: true, reason: 'Session access allowed by visibility policy.' };
+  }
+
+  public clearScopeRules(scope?: ToolPolicyScopeRef): SetMutationScopeResult {
+    const target = this.resolveMutationScope(scope);
+    if (target.scope === 'global') {
+      this.globalRules = createRules({
+        mode: 'backend',
+        skillTrustMode: 'all',
+        sessionVisibility: DEFAULT_SESSION_VISIBILITY,
+        includeDefaultSafeTools: true,
+      });
+      this.saveToDisk();
+      return { success: true, message: 'Reset global policy scope to defaults.', scope: { ...target } };
+    }
+
+    if (!target.id) {
+      return { success: false, message: `No ${target.scope} scope id available to reset.` };
+    }
+
+    const map = this.getScopeMap(target.scope);
+    map.delete(target.id);
+    this.saveToDisk();
+    return { success: true, message: `Reset ${normalizeScopeLabel(target)} policy scope.`, scope: { ...target } };
   }
 
   public isSkillTrustAllowed(level: 'trusted' | 'local' | 'untrusted'): boolean {

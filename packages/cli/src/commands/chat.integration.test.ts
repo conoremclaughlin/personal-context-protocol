@@ -374,6 +374,49 @@ describe('runChat integration', () => {
     expect(sessionStatusLine).toContain('Thread: pr:10');
   });
 
+  it('filters cross-agent sessions during auto-attach by default visibility policy', async () => {
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'list_sessions':
+          return {
+            sessions: [
+              {
+                id: 'sess-wren-latest',
+                agentId: 'wren',
+                status: 'active',
+                threadKey: 'pr:99',
+                startedAt: '2026-02-18T20:00:00.000Z',
+              },
+              {
+                id: 'sess-lumen-older',
+                agentId: 'lumen',
+                status: 'active',
+                threadKey: 'pr:12',
+                startedAt: '2026-02-18T18:00:00.000Z',
+              },
+            ],
+          };
+        case 'get_inbox':
+          return { messages: [] };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(sessionStatusLine).toContain('Session: sess-lumen-older');
+    expect(sessionStatusLine).not.toContain('Session: sess-wren-latest');
+  });
+
   it('supports gated /pcp tool execution with inline approval', async () => {
     testState.inputs = ['/pcp send_to_inbox {"recipientAgentId":"wren"}', 'y', '/quit'];
 
@@ -743,6 +786,28 @@ describe('runChat integration', () => {
     expect(logText).toContain('Active scopes: global -> workspace:studio-test -> agent:lumen -> studio:studio-test');
   });
 
+  it('supports /session-visibility and /policy-reset controls', async () => {
+    testState.inputs = [
+      '/session-visibility workspace',
+      '/policy',
+      '/policy-reset studio',
+      '/policy',
+      '/quit',
+    ];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Session visibility set in studio:studio-test to workspace.');
+    expect(logText).toContain('Session visibility: workspace');
+    expect(logText).toContain('Reset studio:studio-test policy scope.');
+    expect(logText).toContain('Session visibility: agent');
+  });
+
   it('passes effective backend allowlist to backend runner in backend routing mode', async () => {
     testState.inputs = ['/policy-scope global', '/allow send_to_inbox', 'run backend allowlist', '/quit'];
 
@@ -759,6 +824,21 @@ describe('runChat integration', () => {
     expect(backendRequest.passthroughArgs[0]).toBe('--allowedTools');
     expect(backendRequest.passthroughArgs[1]).toContain('get_inbox');
     expect(backendRequest.passthroughArgs[1]).toContain('send_to_inbox');
+  });
+
+  it('applies policy gate to /mcp call with inline approval', async () => {
+    testState.inputs = ['/mcp call send_to_inbox {"recipientAgentId":"wren"}', 'y', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const sendCall = testState.pcpCalls.find((call) => call.tool === 'send_to_inbox');
+    expect(sendCall?.args).toEqual({ recipientAgentId: 'wren' });
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Granted once.');
   });
 
   it('executes local pcp-tool blocks when tool routing is local', async () => {

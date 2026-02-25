@@ -899,6 +899,7 @@ function printToolPolicySnapshot(
   console.log(chalk.dim(`Mutation scope: ${toolPolicy.getMutationScopeLabel()}`));
   console.log(chalk.dim(`Active scopes: ${toolPolicy.listActiveScopeLabels().join(' -> ')}`));
   console.log(chalk.dim(`Skill trust mode: ${toolPolicy.getSkillTrustMode()}`));
+  console.log(chalk.dim(`Session visibility: ${toolPolicy.getSessionVisibility()}`));
   if (gate.mode === 'backend') {
     console.log(
       chalk.dim(
@@ -953,6 +954,7 @@ function printToolPolicySnapshot(
       const fragments: string[] = [];
       if (scope.mode) fragments.push(`mode=${scope.mode}`);
       if (scope.skillTrustMode) fragments.push(`trust=${scope.skillTrustMode}`);
+      if (scope.sessionVisibility) fragments.push(`visibility=${scope.sessionVisibility}`);
       if (scope.allowTools.length > 0) fragments.push(`allow=${scope.allowTools.join('|')}`);
       if (scope.denyTools.length > 0) fragments.push(`deny=${scope.denyTools.join('|')}`);
       if (scope.promptTools.length > 0) fragments.push(`prompt=${scope.promptTools.join('|')}`);
@@ -989,6 +991,34 @@ function inboxMessageMatchesSessionScope(runtime: ChatRuntime, message: InboxMes
     return false;
   }
   return true;
+}
+
+function filterSessionsByPolicy(
+  sessions: SessionSummary[],
+  runtime: ChatRuntime,
+  agentId: string,
+  toolPolicy: ToolPolicyState,
+  action: 'list' | 'attach'
+): SessionSummary[] {
+  return sessions.filter((session) =>
+    toolPolicy.canAccessSession({
+      action,
+      requester: {
+        sessionId: runtime.sessionId,
+        threadKey: runtime.threadKey,
+        studioId: runtime.studioId,
+        workspaceId: runtime.workspaceId,
+        agentId,
+      },
+      target: {
+        sessionId: session.id,
+        threadKey: session.threadKey,
+        studioId: session.studioId,
+        workspaceId: session.workspaceId,
+        agentId: session.agentId,
+      },
+    }).allowed
+  );
 }
 
 function buildAutoRunPromptFromInbox(runtime: ChatRuntime, message: InboxMessage): string {
@@ -1272,7 +1302,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
       throw new Error(`Failed to list sessions for attach: ${String((sessionsResult as { error?: string }).error)}`);
     }
 
-    const sessions = extractSessionSummaries(sessionsResult);
+    const sessions = filterSessionsByPolicy(
+      extractSessionSummaries(sessionsResult),
+      runtime,
+      agentId,
+      toolPolicy,
+      'attach'
+    );
     const selected = options.attachLatest
       ? pickLatestSession(sessions, query)
       : await pickSessionToAttach(sessions, query, { timezone: runtime.userTimezone });
@@ -1311,7 +1347,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const sessionsResult = (await pcp
       .callTool('list_sessions', { agentId, status: 'active', limit: 30 })
       .catch(() => null)) as Record<string, unknown> | null;
-    const sessions = extractSessionSummaries(sessionsResult);
+    const sessions = filterSessionsByPolicy(
+      extractSessionSummaries(sessionsResult),
+      runtime,
+      agentId,
+      toolPolicy,
+      'attach'
+    );
     const selected = pickLatestSession(sessions);
     if (selected) {
       runtime.sessionId = selected.id;
@@ -1419,7 +1461,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const result = (await pcp
       .callTool('list_sessions', { limit: 20, status: 'active' })
       .catch(() => null)) as Record<string, unknown> | null;
-    sessionsCache = extractSessionSummaries(result);
+    sessionsCache = filterSessionsByPolicy(
+      extractSessionSummaries(result),
+      runtime,
+      agentId,
+      toolPolicy,
+      'list'
+    );
     sessionsCacheAt = Date.now();
     return sessionsCache;
   };
@@ -1458,7 +1506,26 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const messages = extractInboxMessages(inboxResult);
     const fresh = messages
       .filter((msg) => !seenInboxIds.has(msg.id))
-      .filter((msg) => inboxMessageMatchesSessionScope(runtime, msg));
+      .filter((msg) => inboxMessageMatchesSessionScope(runtime, msg))
+      .filter((msg) =>
+        toolPolicy.canAccessSession({
+          action: 'inbox',
+          requester: {
+            sessionId: runtime.sessionId,
+            threadKey: runtime.threadKey,
+            studioId: runtime.studioId,
+            workspaceId: runtime.workspaceId,
+            agentId,
+          },
+          target: {
+            sessionId: msg.relatedSessionId,
+            threadKey: msg.threadKey,
+            studioId: msg.recipientStudioId,
+            workspaceId: runtime.workspaceId,
+            agentId,
+          },
+        }).allowed
+      );
     let autoRuns = 0;
     for (const msg of fresh) {
       seenInboxIds.add(msg.id);
@@ -1537,6 +1604,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
       .filter((activity) => !seenActivityIds.has(activity.id))
       // Ignore raw local transcript echoes for this same session; inbox handles human-facing notices.
       .filter((activity) => !(activity.sessionId && runtime.sessionId && activity.sessionId === runtime.sessionId))
+      .filter((activity) =>
+        toolPolicy.canAccessSession({
+          action: 'events',
+          requester: {
+            sessionId: runtime.sessionId,
+            threadKey: runtime.threadKey,
+            studioId: runtime.studioId,
+            workspaceId: runtime.workspaceId,
+            agentId,
+          },
+          target: {
+            sessionId: activity.sessionId,
+            threadKey: runtime.threadKey,
+            studioId: runtime.studioId,
+            workspaceId: runtime.workspaceId,
+            agentId: activity.agentId,
+          },
+        }).allowed
+      )
       .sort((a, b) => Date.parse(a.createdAt || '') - Date.parse(b.createdAt || ''));
 
     for (const activity of activities) {
@@ -1920,9 +2006,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/sessions [watch|off]      Show active sessions (or stream each turn)',
               '/skills                    List discovered local skills',
               '/skill-trust <all|trusted-only>  Set skill trust policy mode',
+              '/session-visibility <self|thread|studio|workspace|agent|all>  Set session visibility policy',
               '/skill-allow <pattern>      Persistently allow skill(s) via pattern',
               '/path-allow-read <glob>      Persistently allow local reads for matching paths',
               '/path-allow-write <glob>     Persistently allow local writes for matching paths',
+              '/policy-reset [global|workspace|agent|studio] [id]  Reset policy scope to defaults',
               '/delegate-create <to> <scopes> [ttlMin]  Mint delegation token',
               '/delegate-show               Show last minted delegation token payload',
               '/delegate-verify <token|last> Verify delegation token with local secret',
@@ -1972,7 +2060,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 runtime.maxContextTokens
               )} window=${formatTokenCount(
                 runtime.backendTokenWindow
-              )} budgetMode=${contextBudgetAuto ? 'auto' : 'manual'} tools=${toolPolicy.getMode()} scope=${toolPolicy.getMutationScopeLabel()}`
+              )} budgetMode=${contextBudgetAuto ? 'auto' : 'manual'} tools=${toolPolicy.getMode()} scope=${toolPolicy.getMutationScopeLabel()} visibility=${toolPolicy.getSessionVisibility()}`
             )
           );
           break;
@@ -2083,6 +2171,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             const grants = toolPolicy.listGrants();
             console.log(chalk.dim(`Tool mode: ${toolPolicy.getMode()}`));
             console.log(chalk.dim(`Mutation scope: ${toolPolicy.getMutationScopeLabel()}`));
+            console.log(chalk.dim(`Session visibility: ${toolPolicy.getSessionVisibility()}`));
             if (grants.length > 0) {
               console.log(chalk.dim(`Grants: ${grants.map((g) => `${g.tool}(${g.uses})`).join(', ')}`));
             }
@@ -2172,6 +2261,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
             runtime.toolMode = toolPolicy.getMode();
             console.log(chalk.green(result.message));
           }
+          break;
+        }
+        case 'policy-reset': {
+          const scopeRaw = (slash.args[0] || '').trim().toLowerCase();
+          const explicitScope =
+            scopeRaw && ['global', 'workspace', 'agent', 'studio'].includes(scopeRaw)
+              ? ({ scope: scopeRaw as ToolPolicyScopeKind, id: slash.args.slice(1).join(' ').trim() || undefined } as const)
+              : undefined;
+          if (scopeRaw && !explicitScope) {
+            console.log(chalk.yellow('Usage: /policy-reset [global|workspace|agent|studio] [id]'));
+            break;
+          }
+          const result = toolPolicy.clearScopeRules(explicitScope);
+          if (!result.success) {
+            console.log(chalk.yellow(result.message));
+            break;
+          }
+          runtime.toolMode = toolPolicy.getMode();
+          console.log(chalk.green(result.message));
           break;
         }
         case 'policy': {
@@ -2370,6 +2478,28 @@ export async function runChat(options: ChatOptions): Promise<void> {
           }
           toolPolicy.setSkillTrustMode(mode as 'all' | 'trusted-only');
           console.log(chalk.green(`Skill trust mode set to ${mode}`));
+          break;
+        }
+        case 'session-visibility': {
+          const value = (slash.args[0] || '').trim().toLowerCase();
+          if (!value) {
+            console.log(chalk.dim(`Session visibility is ${toolPolicy.getSessionVisibility()}.`));
+            break;
+          }
+          if (!['self', 'thread', 'studio', 'workspace', 'agent', 'all'].includes(value)) {
+            console.log(
+              chalk.yellow('Usage: /session-visibility <self|thread|studio|workspace|agent|all>')
+            );
+            break;
+          }
+          toolPolicy.setSessionVisibility(
+            value as 'self' | 'thread' | 'studio' | 'workspace' | 'agent' | 'all'
+          );
+          console.log(
+            chalk.green(
+              `Session visibility set in ${toolPolicy.getMutationScopeLabel()} to ${value}.`
+            )
+          );
           break;
         }
         case 'skill-allow': {

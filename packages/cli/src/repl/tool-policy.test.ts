@@ -305,4 +305,66 @@ describe('ToolPolicyState', () => {
     policy.setContext({ workspaceId: 'ws-2' });
     expect(policy.getMode()).toBe('privileged');
   });
+
+  it('enforces session visibility guardrails across scopes', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.setContext({ agentId: 'lumen', workspaceId: 'ws-1', studioId: 'studio-1' });
+
+    expect(policy.getSessionVisibility()).toBe('agent');
+
+    policy.setSessionVisibility('studio', { scope: 'workspace', id: 'ws-1' });
+    expect(policy.getSessionVisibility()).toBe('studio');
+    expect(
+      policy.canAccessSession({
+        action: 'list',
+        requester: {
+          agentId: 'lumen',
+          workspaceId: 'ws-1',
+          studioId: 'studio-1',
+          sessionId: 'sess-1',
+          threadKey: 'pr:1',
+        },
+        target: {
+          agentId: 'lumen',
+          workspaceId: 'ws-1',
+          studioId: 'studio-1',
+          sessionId: 'sess-2',
+          threadKey: 'pr:2',
+        },
+      }).allowed
+    ).toBe(true);
+
+    expect(
+      policy.canAccessSession({
+        action: 'list',
+        requester: {
+          agentId: 'lumen',
+          workspaceId: 'ws-1',
+          studioId: 'studio-1',
+          sessionId: 'sess-1',
+          threadKey: 'pr:1',
+        },
+        target: {
+          agentId: 'lumen',
+          workspaceId: 'ws-1',
+          studioId: 'studio-2',
+          sessionId: 'sess-3',
+          threadKey: 'pr:3',
+        },
+      }).allowed
+    ).toBe(false);
+  });
+
+  it('resets scoped policies with clearScopeRules', () => {
+    const policy = new ToolPolicyState('backend', { persist: false });
+    policy.allowTool('group:pcp-comms', { scope: 'global' });
+    policy.setContext({ workspaceId: 'ws-1' });
+    policy.setMutationScope('workspace');
+    policy.denyTool('send_to_inbox');
+    expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(false);
+
+    const reset = policy.clearScopeRules();
+    expect(reset.success).toBe(true);
+    expect(policy.canCallPcpTool('send_to_inbox').allowed).toBe(true);
+  });
 });
