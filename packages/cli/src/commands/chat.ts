@@ -36,6 +36,7 @@ type ChatOptions = {
   backend?: string;
   model?: string;
   threadKey?: string;
+  autoRun?: boolean;
   new?: boolean;
   attach?: string | boolean;
   attachLatest?: string | boolean;
@@ -55,6 +56,9 @@ interface InboxMessage {
   from?: string;
   subject?: string;
   threadKey?: string;
+  messageType?: string;
+  relatedSessionId?: string;
+  recipientStudioId?: string;
   delegationToken?: string;
 }
 
@@ -64,11 +68,13 @@ interface ChatRuntime {
   verbose: boolean;
   toolMode: ToolMode;
   threadKey?: string;
+  studioId?: string;
   sessionId?: string;
   maxContextTokens: number;
   pollSeconds: number;
   showSessionsWatch: boolean;
   eventPolling: boolean;
+  autoRunInbox: boolean;
   transcriptPath: string;
   activeSkills: SkillInstruction[];
 }
@@ -392,6 +398,36 @@ function extractInboxMessages(result: Record<string, unknown> | null | undefined
         from: msg.senderAgentId ? String(msg.senderAgentId) : msg.from ? String(msg.from) : undefined,
         subject: msg.subject ? String(msg.subject) : undefined,
         threadKey: msg.threadKey ? String(msg.threadKey) : undefined,
+        messageType:
+          typeof msg.messageType === 'string'
+            ? msg.messageType
+            : typeof msg.message_type === 'string'
+              ? msg.message_type
+              : typeof metadata?.messageType === 'string'
+                ? metadata.messageType
+                : undefined,
+        relatedSessionId:
+          typeof msg.relatedSessionId === 'string'
+            ? msg.relatedSessionId
+            : typeof msg.related_session_id === 'string'
+              ? msg.related_session_id
+              : typeof msg.recipientSessionId === 'string'
+                ? msg.recipientSessionId
+                : typeof msg.recipient_session_id === 'string'
+                  ? msg.recipient_session_id
+                  : typeof metadata?.relatedSessionId === 'string'
+                    ? metadata.relatedSessionId
+                    : typeof metadata?.recipientSessionId === 'string'
+                      ? metadata.recipientSessionId
+                      : undefined,
+        recipientStudioId:
+          typeof msg.recipientStudioId === 'string'
+            ? msg.recipientStudioId
+            : typeof msg.recipient_studio_id === 'string'
+              ? msg.recipient_studio_id
+              : typeof metadata?.recipientStudioId === 'string'
+                ? metadata.recipientStudioId
+                : undefined,
         delegationToken,
       } satisfies InboxMessage;
     })
@@ -603,6 +639,41 @@ function printToolPolicySnapshot(
   console.log('');
 }
 
+function inboxMessageMatchesSessionScope(runtime: ChatRuntime, message: InboxMessage): boolean {
+  if (runtime.sessionId && message.relatedSessionId && message.relatedSessionId !== runtime.sessionId) {
+    return false;
+  }
+  if (runtime.threadKey && message.threadKey && message.threadKey !== runtime.threadKey) {
+    return false;
+  }
+  if (runtime.studioId && message.recipientStudioId && message.recipientStudioId !== runtime.studioId) {
+    return false;
+  }
+  if (runtime.threadKey) {
+    if (message.threadKey) return message.threadKey === runtime.threadKey;
+    if (runtime.sessionId && message.relatedSessionId) {
+      return message.relatedSessionId === runtime.sessionId;
+    }
+    return false;
+  }
+  return true;
+}
+
+function buildAutoRunPromptFromInbox(runtime: ChatRuntime, message: InboxMessage): string {
+  const from = message.from || 'unknown';
+  const parts = [
+    `Inbox task from ${from}${message.subject ? ` (${message.subject})` : ''}.`,
+    message.threadKey ? `Thread: ${message.threadKey}.` : '',
+    message.messageType ? `Message type: ${message.messageType}.` : '',
+    '',
+    message.content.trim(),
+    '',
+    'Handle this request now. If follow-up to sender is needed, send it before finishing.',
+  ].filter(Boolean);
+
+  return parts.join('\n');
+}
+
 function matchesAttachQuery(session: SessionSummary, query?: string): boolean {
   if (!query) return true;
   const haystack = `${session.id} ${session.agentId || ''} ${session.threadKey || ''} ${
@@ -755,11 +826,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
     toolMode:
       options.tools === 'off' ? 'off' : options.tools === 'privileged' ? 'privileged' : 'backend',
     threadKey: options.threadKey,
+    studioId: identity?.workspaceId,
     sessionId: options.sessionId?.trim() || undefined,
     maxContextTokens: Number.parseInt(options.maxContextTokens || '12000', 10),
     pollSeconds: Number.parseInt(options.pollSeconds || '20', 10),
     showSessionsWatch: false,
     eventPolling: true,
+    autoRunInbox: options.autoRun ?? false,
     transcriptPath: ensureRuntimeTranscriptPath(),
     activeSkills: [],
   };
@@ -779,6 +852,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let lastBackendUsage: BackendTokenUsage | undefined;
   let lastDelegation: DelegationState | undefined;
   let forceQuitAfterTurn = false;
+  let readyForAutoRun = false;
+  let enqueueAutoRunFromInbox:
+    | ((message: InboxMessage) => Promise<void>)
+    | null = null;
 
   const bootstrapResult = (await pcp
     .callTool('bootstrap', { agentId })
@@ -894,6 +971,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   console.log(chalk.dim(`Agent: ${agentId}`));
   console.log(chalk.dim(`Backend: ${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}`));
   if (runtime.threadKey) console.log(chalk.dim(`Thread: ${runtime.threadKey}`));
+  console.log(chalk.dim(`Auto-run inbox: ${runtime.autoRunInbox ? 'on' : 'off'}`));
   if (attachedToExistingSession) console.log(chalk.dim('Mode: attached to existing session'));
   if (autoAttachedLatest) console.log(chalk.dim('Mode: auto-attached to latest active session'));
   if (runtime.sessionId) console.log(chalk.dim(`Session: ${runtime.sessionId}`));
@@ -943,7 +1021,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
       .callTool('get_inbox', { agentId, status: 'unread', limit: 10 })
       .catch(() => null)) as Record<string, unknown> | null;
     const messages = extractInboxMessages(inboxResult);
-    const fresh = messages.filter((msg) => !seenInboxIds.has(msg.id));
+    const fresh = messages
+      .filter((msg) => !seenInboxIds.has(msg.id))
+      .filter((msg) => inboxMessageMatchesSessionScope(runtime, msg));
+    let autoRuns = 0;
     for (const msg of fresh) {
       seenInboxIds.add(msg.id);
       if (!runtime.threadKey && msg.threadKey) {
@@ -976,12 +1057,30 @@ export async function runChat(options: ChatOptions): Promise<void> {
         messageId: msg.id,
         rendered,
         delegationToken: msg.delegationToken || null,
+        messageType: msg.messageType || null,
+        relatedSessionId: msg.relatedSessionId || null,
       });
       console.log(`\n${chalk.cyan(rendered)}\n`);
+
+      const eligibleForAutoRun =
+        runtime.autoRunInbox &&
+        readyForAutoRun &&
+        enqueueAutoRunFromInbox &&
+        (msg.from || '').toLowerCase() !== agentId.toLowerCase() &&
+        msg.messageType !== 'notification' &&
+        msg.content.trim().length > 0;
+
+      if (eligibleForAutoRun) {
+        await enqueueAutoRunFromInbox(msg);
+        autoRuns += 1;
+      }
     }
 
     if (force && fresh.length === 0) {
       console.log(chalk.dim('No new inbox messages.'));
+    }
+    if (autoRuns > 0) {
+      console.log(chalk.green(`Auto-run processed ${autoRuns} inbox message${autoRuns === 1 ? '' : 's'}.`));
     }
     return fresh.length;
   };
@@ -1034,21 +1133,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
     return activities.length;
   };
 
-  // Prime with current unread queue (without force banner).
-  await pollInbox(false);
-  await pollActivity(false);
-
-  pollTimer = setInterval(() => {
-    void pollInbox(false);
-    if (runtime.eventPolling) {
-      void pollActivity(false);
-    }
-  }, Math.max(runtime.pollSeconds, 5) * 1000);
-
-  const runUserTurn = async (raw: string) => {
+  const runUserTurn = async (raw: string, source: 'user' | 'inbox-auto' = 'user') => {
     if (!raw.trim()) return;
-    ledger.addEntry('user', raw, 'repl');
-    appendTranscript(runtime.transcriptPath, { type: 'user', content: raw });
+    if (source === 'user') {
+      ledger.addEntry('user', raw, 'repl');
+      appendTranscript(runtime.transcriptPath, { type: 'user', content: raw });
+    } else {
+      ledger.addEntry('system', compactForLedger(`[auto-run inbox] ${raw}`, 500), 'auto-run');
+      appendTranscript(runtime.transcriptPath, { type: 'auto_turn', content: raw });
+    }
 
     if (runtime.sessionId) {
       await pcp
@@ -1125,12 +1218,39 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
   };
 
+  let turnQueue: Promise<void> = Promise.resolve();
+  const enqueueTurn = (raw: string, source: 'user' | 'inbox-auto' = 'user'): Promise<void> => {
+    turnQueue = turnQueue
+      .then(() => runUserTurn(raw, source))
+      .catch((error) => {
+        console.log(chalk.red(`Turn failed: ${String(error)}`));
+      });
+    return turnQueue;
+  };
+
+  enqueueAutoRunFromInbox = async (message: InboxMessage) => {
+    const prompt = buildAutoRunPromptFromInbox(runtime, message);
+    await enqueueTurn(prompt, 'inbox-auto');
+  };
+  readyForAutoRun = true;
+
+  // Prime with current unread queue only after auto-run pipeline is ready.
+  await pollInbox(false);
+  await pollActivity(false);
+
+  pollTimer = setInterval(() => {
+    void pollInbox(false);
+    if (runtime.eventPolling) {
+      void pollActivity(false);
+    }
+  }, Math.max(runtime.pollSeconds, 5) * 1000);
+
   if (options.nonInteractive || options.message) {
     const message = options.message?.trim();
     if (!message) {
       throw new Error('--non-interactive requires --message "<text>"');
     }
-    await runUserTurn(message);
+    await enqueueTurn(message);
     if (pollTimer) clearInterval(pollTimer);
     const summary = summarizeForSessionEnd(ledger);
     if (runtime.sessionId && !attachedToExistingSession) {
@@ -1201,6 +1321,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/inbox                     Poll inbox now',
               '/events [now|on|off]       Poll/toggle merged activity stream',
               '/session                   Show active session info',
+              '/autorun [on|off]          Toggle inbox auto-run execution',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
               '/tools <backend|off|privileged>  Toggle backend-native tools/policy',
@@ -1263,10 +1384,27 @@ export async function runChat(options: ChatOptions): Promise<void> {
             chalk.dim(
               `session=${runtime.sessionId || 'none'} backend=${runtime.backend} model=${
                 runtime.model || '(default)'
-              } thread=${runtime.threadKey || '(none)'} events=${runtime.eventPolling ? 'on' : 'off'}`
+              } thread=${runtime.threadKey || '(none)'} events=${runtime.eventPolling ? 'on' : 'off'} autorun=${
+                runtime.autoRunInbox ? 'on' : 'off'
+              }`
             )
           );
           break;
+        case 'autorun':
+        case 'auto-run': {
+          const mode = (slash.args[0] || '').toLowerCase();
+          if (!mode) {
+            console.log(chalk.dim(`Inbox auto-run is ${runtime.autoRunInbox ? 'on' : 'off'}.`));
+            break;
+          }
+          if (!['on', 'off'].includes(mode)) {
+            console.log(chalk.yellow('Usage: /autorun [on|off]'));
+            break;
+          }
+          runtime.autoRunInbox = mode === 'on';
+          console.log(chalk.green(`Inbox auto-run ${runtime.autoRunInbox ? 'enabled' : 'disabled'}.`));
+          break;
+        }
         case 'sessions': {
           const mode = slash.args[0];
           if (mode === 'watch') {
@@ -1937,7 +2075,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       continue;
     }
-    await runUserTurn(raw);
+    await enqueueTurn(raw);
     if (forceQuitAfterTurn) {
       keepRunning = false;
     }
@@ -1983,6 +2121,7 @@ export function registerChatCommand(program: Command): void {
       .option('--max-context-tokens <n>', 'Approximate context budget for transcript', '12000')
       .option('--poll-seconds <n>', 'Inbox polling interval seconds', '20')
       .option('--tools <mode>', 'Tool mode: backend|off|privileged', 'backend')
+      .option('--auto-run', 'Automatically execute backend turns for new inbox task messages')
       .option('--message <text>', 'Single-turn message for non-interactive mode')
       .option('--non-interactive', 'Run one turn and exit (requires --message)')
       .option('--tail-transcript <pathOrSession>', 'Tail transcript output by file path or session id')

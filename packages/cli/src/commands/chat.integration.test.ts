@@ -400,6 +400,115 @@ describe('runChat integration', () => {
     expect(logText).toContain('thread=pr:50');
   });
 
+  it('auto-runs eligible inbox task messages when enabled', async () => {
+    let inboxPolls = 0;
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'start_session':
+          return { session: { id: 'sess-1' } };
+        case 'get_inbox':
+          inboxPolls += 1;
+          if (inboxPolls === 1) {
+            return {
+              messages: [
+                {
+                  id: 'm-auto-1',
+                  content: 'Please handle PR 77 now.',
+                  senderAgentId: 'wren',
+                  subject: 'Task request',
+                  messageType: 'task_request',
+                  threadKey: 'pr:77',
+                },
+              ],
+            };
+          }
+          return { messages: [] };
+        case 'update_session_phase':
+        case 'end_session':
+          return { success: true };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      autoRun: true,
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as { prompt: string };
+    expect(backendRequest.prompt).toContain('Inbox task from wren (Task request).');
+    expect(backendRequest.prompt).toContain('Please handle PR 77 now.');
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Auto-run processed 1 inbox message.');
+  });
+
+  it('filters auto-run inbox messages to active thread/session scope', async () => {
+    let inboxPolls = 0;
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'start_session':
+          return { session: { id: 'sess-1' } };
+        case 'get_inbox':
+          inboxPolls += 1;
+          if (inboxPolls === 1) {
+            return {
+              messages: [
+                {
+                  id: 'm-skip-thread',
+                  content: 'Wrong thread',
+                  senderAgentId: 'wren',
+                  threadKey: 'pr:999',
+                  messageType: 'task_request',
+                },
+                {
+                  id: 'm-skip-unscoped',
+                  content: 'Missing thread/session metadata',
+                  senderAgentId: 'wren',
+                  messageType: 'task_request',
+                },
+                {
+                  id: 'm-run',
+                  content: 'Right thread',
+                  senderAgentId: 'wren',
+                  threadKey: 'pr:123',
+                  messageType: 'task_request',
+                },
+              ],
+            };
+          }
+          return { messages: [] };
+        case 'update_session_phase':
+        case 'end_session':
+          return { success: true };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      autoRun: true,
+      threadKey: 'pr:123',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as { prompt: string };
+    expect(backendRequest.prompt).toContain('Right thread');
+    expect(backendRequest.prompt).not.toContain('Wrong thread');
+  });
+
   it('applies read-path policy to skill listing and activation', async () => {
     testState.discoverSkillsImpl.mockReturnValue([
       { name: 'allowed-skill', path: '/allowed/skills/a', source: 'test', trustLevel: 'trusted' },
@@ -535,6 +644,21 @@ describe('runChat integration', () => {
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('MCP servers (1)');
     expect(logText).toContain('pcp [http] http://localhost:3001/mcp');
+  });
+
+  it('toggles inbox auto-run via slash command', async () => {
+    testState.inputs = ['/autorun on', '/session', '/autorun off', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Inbox auto-run enabled.');
+    expect(logText).toContain('autorun=on');
+    expect(logText).toContain('Inbox auto-run disabled.');
   });
 
   it('exits gracefully on double ctrl+c', async () => {
