@@ -36,7 +36,7 @@ describe('Studio Commands', () => {
   beforeEach(() => {
     // Create test directory and git repo
     mkdirSync(TEST_REPO, { recursive: true });
-    git('init', TEST_REPO);
+    git('init -b main', TEST_REPO);
     git('config user.email "test@test.com"', TEST_REPO);
     git('config user.name "Test User"', TEST_REPO);
 
@@ -239,7 +239,7 @@ describe('Studio init', () => {
 
   beforeEach(() => {
     mkdirSync(TEST_REPO, { recursive: true });
-    git('init', TEST_REPO);
+    git('init -b main', TEST_REPO);
     git('config user.email "test@test.com"', TEST_REPO);
     git('config user.name "Test User"', TEST_REPO);
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo');
@@ -412,7 +412,7 @@ describe('Studio init', () => {
 describe('resolveCopySourceRoot', () => {
   beforeEach(() => {
     mkdirSync(TEST_REPO, { recursive: true });
-    git('init', TEST_REPO);
+    git('init -b main', TEST_REPO);
     git('config user.email "test@test.com"', TEST_REPO);
     git('config user.name "Test User"', TEST_REPO);
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo');
@@ -456,7 +456,7 @@ describe('resolveCopySourceRoot', () => {
 describe('updateIdentityForStudioRename', () => {
   beforeEach(() => {
     mkdirSync(TEST_REPO, { recursive: true });
-    git('init', TEST_REPO);
+    git('init -b main', TEST_REPO);
     git('config user.email "test@test.com"', TEST_REPO);
     git('config user.name "Test User"', TEST_REPO);
     writeFileSync(join(TEST_REPO, 'README.md'), '# Test Repo');
