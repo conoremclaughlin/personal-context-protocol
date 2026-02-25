@@ -80,7 +80,10 @@ export default function RoutingPage() {
     isActive: true,
   });
 
-  const { data, isLoading, error } = useApiQuery<RoutingResponse>(['routing'], '/api/admin/routing');
+  const { data, isLoading, error } = useApiQuery<RoutingResponse>(
+    ['routing'],
+    '/api/admin/routing'
+  );
 
   const createRouteMutation = useApiPost<{ route: RoutingRoute }, CreateRouteInput>(
     '/api/admin/routing/routes',
@@ -139,8 +142,7 @@ export default function RoutingPage() {
           <CardContent className="flex items-start gap-3 p-4">
             <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5" />
             <div className="text-sm text-amber-900">
-              Heartbeat/reminder processing is disabled on this server instance
-              ({' '}
+              Heartbeat/reminder processing is disabled on this server instance ({' '}
               <code className="bg-amber-100 px-1 py-0.5 rounded text-xs">
                 ENABLE_HEARTBEAT_SERVICE=false
               </code>{' '}
@@ -360,14 +362,18 @@ export default function RoutingPage() {
                           >
                             {route.agentName || route.agentId || 'Unknown agent'}
                           </Link>
-                          {route.agentRole && <span className="text-xs text-gray-500">{route.agentRole}</span>}
+                          {route.agentRole && (
+                            <span className="text-xs text-gray-500">{route.agentRole}</span>
+                          )}
                         </div>
                       </td>
                       <td className="py-3">
                         <Badge variant="outline">{formatPlatform(route.platform)}</Badge>
                       </td>
                       <td className="py-3 font-mono text-xs text-gray-700">
-                        {route.platformAccountId || <span className="text-gray-400">Any account</span>}
+                        {route.platformAccountId || (
+                          <span className="text-gray-400">Any account</span>
+                        )}
                       </td>
                       <td className="py-3 font-mono text-xs text-gray-700">
                         {route.chatId || <span className="text-gray-400">Any chat</span>}
@@ -385,7 +391,9 @@ export default function RoutingPage() {
                           </span>
                         </div>
                       </td>
-                      <td className="py-3 text-xs text-gray-500">{formatTimestamp(route.updatedAt)}</td>
+                      <td className="py-3 text-xs text-gray-500">
+                        {formatTimestamp(route.updatedAt)}
+                      </td>
                       <td className="py-3">
                         <div className="flex flex-wrap items-center gap-2">
                           <Badge

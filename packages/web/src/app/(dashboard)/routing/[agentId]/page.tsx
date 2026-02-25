@@ -327,7 +327,9 @@ export default function AgentRoutingPage() {
                     <div className="mt-3 grid gap-3 md:grid-cols-2 text-sm">
                       <div>
                         <div className="text-gray-500">Account</div>
-                        <div className="font-mono text-xs">{route.platformAccountId || 'Any account'}</div>
+                        <div className="font-mono text-xs">
+                          {route.platformAccountId || 'Any account'}
+                        </div>
                       </div>
                       <div>
                         <div className="text-gray-500">Chat</div>
@@ -413,7 +415,11 @@ export default function AgentRoutingPage() {
                             >
                               Cancel
                             </Button>
-                            <Button type="submit" size="sm" disabled={updateRouteMutation.isPending}>
+                            <Button
+                              type="submit"
+                              size="sm"
+                              disabled={updateRouteMutation.isPending}
+                            >
                               <Save className="mr-2 h-4 w-4" />
                               Save
                             </Button>
