@@ -72,12 +72,24 @@ export class KindleService {
       .eq('agent_id', agentId)
       .single();
 
-    // Get shared values from user identity
+    // Get shared values from workspace-level shared docs (preferred)
+    const { data: workspaceShared } = await this.supabase
+      .from('workspaces')
+      .select('shared_values')
+      .eq('user_id', userId)
+      .is('archived_at', null)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Legacy fallback: user_identity table
     const { data: userIdentity } = await this.supabase
       .from('user_identity')
       .select('shared_values_md')
       .eq('user_id', userId)
-      .single();
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
 
     // Extract philosophical orientation from soul (first ~500 chars, skip personal details)
     let philosophicalOrientation = '';
@@ -98,7 +110,10 @@ export class KindleService {
       parentName: identity?.name || agentId,
       coreValues: (identity?.values as string[]) || [],
       philosophicalOrientation,
-      sharedValues: (userIdentity?.shared_values_md as string) || '',
+      sharedValues:
+        (workspaceShared?.shared_values as string | null) ||
+        (userIdentity?.shared_values_md as string | null) ||
+        '',
     };
   }
 

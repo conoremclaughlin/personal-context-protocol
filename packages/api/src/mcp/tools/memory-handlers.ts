@@ -1560,6 +1560,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     activeSessions,
     knowledgeMemories,
     dbIdentity,
+    dbWorkspaceSharedDocs,
     dbUserIdentity,
     userTimezone,
     userSkills,
@@ -1587,14 +1588,25 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
           .single()
           .then(({ data }) => data)
       : Promise.resolve(null),
+    // Workspace-level shared docs (preferred)
+    dataComposer
+      .getClient()
+      .from('workspaces')
+      .select('process')
+      .eq('user_id', user.id)
+      .is('archived_at', null)
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => data?.[0] || null),
     // Shared user identity (PROCESS.md from DB for cloud sync)
     dataComposer
       .getClient()
       .from('user_identity')
       .select('process_md')
       .eq('user_id', user.id)
-      .single()
-      .then(({ data }) => data || null),
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .then(({ data }) => data?.[0] || null),
     // User timezone for timestamp conversion
     dataComposer
       .getClient()
@@ -1652,13 +1664,17 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
 
   // Merge identity: prioritize Supabase over local files
   // dbIdentity has: name, role, description, heartbeat, soul (per-agent)
-  // dbUserIdentity has: process_md (shared across all SBs)
+  // dbWorkspaceSharedDocs has: process (workspace-level shared doc)
+  // dbUserIdentity has: process_md (legacy fallback)
   // identityFiles has: values, user, process, self, heartbeat, soul (from filesystem)
   const mergedIdentity = identityFiles
     ? {
         ...identityFiles,
         // Override local files with Supabase content if available
-        process: (dbUserIdentity?.process_md as string | null) || identityFiles.process,
+        process:
+          (dbWorkspaceSharedDocs?.process as string | null) ||
+          (dbUserIdentity?.process_md as string | null) ||
+          identityFiles.process,
         self: (dbIdentity?.description as string | null) || identityFiles.self,
         heartbeat: (dbIdentity?.heartbeat as string | null) || identityFiles.heartbeat,
         soul: (dbIdentity?.soul as string | null) || identityFiles.soul,
