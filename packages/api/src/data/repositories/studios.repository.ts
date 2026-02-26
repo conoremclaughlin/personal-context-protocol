@@ -27,6 +27,7 @@ export interface Studio {
   baseBranch: string;
   purpose: string | null;
   workType: string | null;
+  slug: string | null;
   roleTemplate: string | null;
   status: StudioStatus;
   metadata: Json;
@@ -57,9 +58,23 @@ export interface UpdateStudioInput {
   purpose?: string;
   workType?: WorkType;
   roleTemplate?: string | null;
+  worktreePath?: string;
+  slug?: string | null;
   metadata?: Json;
   archivedAt?: string;
   cleanedAt?: string;
+}
+
+/**
+ * Derive a studio slug from the worktree folder path.
+ * Convention: folders are named <repo>--<slug>, e.g.
+ *   /path/to/personal-context-protocol--wren → "wren"
+ */
+export function deriveStudioSlug(worktreePath: string): string | null {
+  const folder = worktreePath.split('/').pop() || '';
+  const idx = folder.indexOf('--');
+  if (idx === -1) return null;
+  return folder.slice(idx + 2) || null;
 }
 
 export class StudiosRepository {
@@ -77,6 +92,7 @@ export class StudiosRepository {
       baseBranch: row.base_branch as string,
       purpose: (row.purpose as string) || null,
       workType: (row.work_type as string) || null,
+      slug: (row.slug as string) || null,
       roleTemplate: (row.role_template as string) || null,
       status: row.status as StudioStatus,
       metadata: (row.metadata as Json) || {},
@@ -104,6 +120,7 @@ export class StudiosRepository {
       purpose: input.purpose,
       work_type: input.workType,
       role_template: input.roleTemplate,
+      slug: deriveStudioSlug(input.worktreePath),
       status: 'active',
       metadata: input.metadata || {},
     };
@@ -227,6 +244,8 @@ export class StudiosRepository {
     if (input.purpose !== undefined) updateData.purpose = input.purpose;
     if (input.workType !== undefined) updateData.work_type = input.workType;
     if (input.roleTemplate !== undefined) updateData.role_template = input.roleTemplate;
+    if (input.worktreePath !== undefined) updateData.worktree_path = input.worktreePath;
+    if (input.slug !== undefined) updateData.slug = input.slug;
     if (input.metadata !== undefined) updateData.metadata = input.metadata;
     if (input.archivedAt !== undefined) updateData.archived_at = input.archivedAt;
     if (input.cleanedAt !== undefined) updateData.cleaned_at = input.cleanedAt;

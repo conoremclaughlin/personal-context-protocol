@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { installHooks, callPcpTool } from './hooks.js';
+import { installHooks, callPcpTool, buildIdentityBlock } from './hooks.js';
 
 const TEST_DIR = join(tmpdir(), 'pcp-hooks-test-' + Date.now());
 
@@ -590,5 +590,117 @@ describe('callPcpTool: Streamable HTTP response formats', () => {
 
     const result = await callPcpTool('bootstrap', { agentId: 'wren' });
     expect(result).toEqual({ text: 'plain text result' });
+  });
+});
+
+// ============================================================================
+// buildIdentityBlock: identity file rendering (regression)
+// ============================================================================
+
+describe('buildIdentityBlock', () => {
+  it('should render identity files from bootstrap response', () => {
+    const bootstrap = {
+      identityFiles: {
+        self: '# IDENTITY.md - Wren\n\nI am Wren.',
+        soul: '# SOUL.md\n\nI exist.',
+        values: '# VALUES.md\n\nBe helpful.',
+        process: '# PROCESS.md\n\nHow we work.',
+        user: '# USER.md\n\nAbout the human.',
+        heartbeat: '# HEARTBEAT.md\n\nSession management.',
+      },
+    };
+
+    const result = buildIdentityBlock(bootstrap);
+
+    // All identity files should be present
+    expect(result).toContain('# IDENTITY.md - Wren');
+    expect(result).toContain('# SOUL.md');
+    expect(result).toContain('# VALUES.md');
+    expect(result).toContain('# PROCESS.md');
+    expect(result).toContain('# USER.md');
+    expect(result).toContain('# HEARTBEAT.md');
+  });
+
+  it('should render files in correct order: self, soul, values, process, user, heartbeat', () => {
+    const bootstrap = {
+      identityFiles: {
+        heartbeat: 'HEARTBEAT',
+        user: 'USER',
+        self: 'SELF',
+        values: 'VALUES',
+        soul: 'SOUL',
+        process: 'PROCESS',
+      },
+    };
+
+    const result = buildIdentityBlock(bootstrap);
+    const selfIdx = result.indexOf('SELF');
+    const soulIdx = result.indexOf('SOUL');
+    const valuesIdx = result.indexOf('VALUES');
+    const processIdx = result.indexOf('PROCESS');
+    const userIdx = result.indexOf('USER');
+    const heartbeatIdx = result.indexOf('HEARTBEAT');
+
+    expect(selfIdx).toBeLessThan(soulIdx);
+    expect(soulIdx).toBeLessThan(valuesIdx);
+    expect(valuesIdx).toBeLessThan(processIdx);
+    expect(processIdx).toBeLessThan(userIdx);
+    expect(userIdx).toBeLessThan(heartbeatIdx);
+  });
+
+  it('should return empty string when identityFiles is missing', () => {
+    expect(buildIdentityBlock({})).toBe('');
+    expect(buildIdentityBlock({ someOtherField: 'data' })).toBe('');
+  });
+
+  it('should return empty string for null/undefined input', () => {
+    expect(buildIdentityBlock(null as unknown as Record<string, unknown>)).toBe('');
+    expect(buildIdentityBlock(undefined as unknown as Record<string, unknown>)).toBe('');
+  });
+
+  it('should handle partial identity files (some missing)', () => {
+    const bootstrap = {
+      identityFiles: {
+        self: '# IDENTITY.md\n\nI am here.',
+        soul: '# SOUL.md\n\nI exist.',
+        // values, process, user, heartbeat missing
+      },
+    };
+
+    const result = buildIdentityBlock(bootstrap);
+    expect(result).toContain('# IDENTITY.md');
+    expect(result).toContain('# SOUL.md');
+    expect(result).not.toContain('VALUES');
+  });
+
+  it('should NOT render when passed bootstrap.identity (old broken field path)', () => {
+    // Regression: the old code used bootstrap.identity which doesn't exist
+    // on the bootstrap response. This ensures we catch if someone reverts
+    // to the broken field path.
+    const bootstrap = {
+      identity: { name: 'Wren', role: 'dev' },
+      identityFiles: {
+        self: '# IDENTITY.md\n\nReal content',
+      },
+    };
+
+    // buildIdentityBlock receives the full bootstrap object,
+    // and should read identityFiles, not identity
+    const result = buildIdentityBlock(bootstrap);
+    expect(result).toContain('# IDENTITY.md');
+    expect(result).not.toContain('"name"');
+    expect(result).not.toContain('JSON');
+  });
+
+  it('should separate files with horizontal rules', () => {
+    const bootstrap = {
+      identityFiles: {
+        self: 'SELF',
+        soul: 'SOUL',
+      },
+    };
+
+    const result = buildIdentityBlock(bootstrap);
+    expect(result).toContain('---');
   });
 });
