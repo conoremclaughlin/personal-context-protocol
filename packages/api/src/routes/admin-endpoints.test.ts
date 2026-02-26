@@ -434,6 +434,71 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       // Should return 200 even when identity doesn't exist (PGRST116)
       expect(res._status).toBe(200);
     });
+
+    it('should include processMd when identity exists', async () => {
+      const handler = findRouteHandler('get', '/user-identity');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'user_identity') {
+          return createQueryChain([
+            {
+              id: 'identity-1',
+              user_id: TEST_USER_ID,
+              user_profile_md: '# USER',
+              shared_values_md: '# VALUES',
+              process_md: '# PROCESS',
+              version: 4,
+              created_at: '2026-02-01T00:00:00.000Z',
+              updated_at: '2026-02-25T00:00:00.000Z',
+            },
+          ]);
+        }
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq();
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).userIdentity.processMd).toBe('# PROCESS');
+    });
+  });
+
+  describe('GET /user-identity/history', () => {
+    it('should include processMd in history entries', async () => {
+      const handler = findRouteHandler('get', '/user-identity/history');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'user_identity') {
+          return createQueryChain([{ id: 'identity-1' }]);
+        }
+        if (table === 'user_identity_history') {
+          return createQueryChain([
+            {
+              id: 'hist-1',
+              version: 3,
+              user_profile_md: '# USER',
+              shared_values_md: '# VALUES',
+              process_md: '# PROCESS',
+              change_type: 'update',
+              created_at: '2026-02-20T00:00:00.000Z',
+              archived_at: '2026-02-25T00:00:00.000Z',
+            },
+          ]);
+        }
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq();
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).history[0].processMd).toBe('# PROCESS');
+    });
   });
 
   // =========================================================================

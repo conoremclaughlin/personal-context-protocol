@@ -460,7 +460,7 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
     );
   } else {
     logger.warn(
-      'Heartbeat service disabled via env (ENABLE_HEARTBEAT_SERVICE/ENABLE_HEARTBEATS/ENABLE_REMINDERS=false). Scheduled reminders will not be processed on this server.'
+      'Heartbeat service disabled via env (ENABLE_HEARTBEATS or ENABLE_REMINDERS set to a false-like value). Scheduled reminders will not be processed on this server.'
     );
   }
 
