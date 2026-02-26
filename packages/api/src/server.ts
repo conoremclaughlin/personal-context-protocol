@@ -374,6 +374,20 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       }
     }
 
+    // Resolve studioHint from channel_routes for the delivery channel
+    let reminderStudioHint: string | null = null;
+    if (dataComposer && reminder.delivery_channel) {
+      const route = await resolveRouteAgentId(
+        dataComposer.getClient(),
+        userId,
+        reminder.delivery_channel
+      );
+      if (route?.studioHint) {
+        reminderStudioHint = route.studioHint;
+        logger.debug(`[Heartbeat] Resolved studioHint from channel_route: ${reminderStudioHint}`);
+      }
+    }
+
     const reminderContent = `[HEARTBEAT REMINDER]
 Title: ${reminder.title}
 Description: ${reminder.description || 'No description'}
@@ -398,6 +412,7 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
       metadata: {
         triggerType: 'heartbeat',
         chatType: 'direct',
+        ...(reminderStudioHint ? { studioHint: reminderStudioHint } : {}),
       },
     };
 
