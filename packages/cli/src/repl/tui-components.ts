@@ -57,6 +57,7 @@ function pickWaitingVerb(tick: number): string {
 
 export class LiveStatusLane {
   private promptActive = false;
+  private dockVisible = false;
   private dirtyWhilePrompt = false;
   private timezone?: string;
   private statusLine = 'status> waiting for input';
@@ -107,7 +108,7 @@ export class LiveStatusLane {
   }
 
   public clearPromptDock(): void {
-    if (!this.live || !this.promptActive) return;
+    if (!this.live || !this.dockVisible) return;
     // Prompt line
     output.write('\r\x1b[2K');
     // Hint line
@@ -115,6 +116,7 @@ export class LiveStatusLane {
     // Status line
     output.write('\x1b[1A\r\x1b[2K');
     output.write('\r');
+    this.dockVisible = false;
   }
 
   public printLine(line = ''): void {
@@ -161,6 +163,7 @@ export class LiveStatusLane {
 
   public buildPromptLabel(promptLabel: string): string {
     if (!this.live) return promptLabel;
+    this.dockVisible = true;
     return `\n${chalk.dim(this.statusLine)}\n${chalk.dim(this.hintLine)}\n${promptLabel}`;
   }
 }

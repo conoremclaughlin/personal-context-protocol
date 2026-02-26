@@ -1494,7 +1494,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
       const modeLabel = options.attachLatest ? '--attach-latest' : '--attach';
       console.log(
         chalk.yellow(
-          `Warning: ${modeLabel} unavailable (${String((sessionsResult as { error?: string }).error)}). Continuing without attach.`
+          `Warning: ${modeLabel} unavailable (${String(
+            (sessionsResult as { error?: string }).error
+          )}). Unable to fetch active sessions; starting a new session instead.`
         )
       );
     } else {
