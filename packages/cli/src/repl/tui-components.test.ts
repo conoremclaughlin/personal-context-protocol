@@ -33,14 +33,13 @@ describe('tui-components', () => {
     expect(lane.shouldRefreshAfterPrompt()).toBe(false);
   });
 
-  it('builds a three-line prompt label with status and hint lanes', () => {
+  it('builds a prompt label with hint lane and prompt input', () => {
     const lane = new LiveStatusLane(true, 'America/Los_Angeles');
     lane.setPromptActive(true);
     lane.renderSummary('context:99/100 queue:idle');
     lane.setHint('Press Ctrl+C again to quit');
 
     const prompt = stripAnsi(lane.buildPromptLabel('wren> '));
-    expect(prompt).toContain('status> context:99/100 queue:idle');
     expect(prompt).toContain('hint> Press Ctrl+C again to quit');
     expect(prompt).toContain('wren> ');
   });
@@ -51,5 +50,13 @@ describe('tui-components', () => {
     );
     expect(rendered).toContain('hello');
     expect(rendered).toContain('8:09:14');
+  });
+
+  it('appends trailing metadata after timestamp when provided', () => {
+    const rendered = stripAnsi(
+      renderTimedBlock('hello', 'America/Los_Angeles', '2026-02-26T04:09:14.000Z', '5s')
+    );
+    expect(rendered).toContain('8:09:14');
+    expect(rendered).toContain('• 5s');
   });
 });

@@ -657,6 +657,57 @@ describe('runChat integration', () => {
     expect(logText).toContain('thread=pr:50');
   });
 
+  it('sorts fresh inbox messages by createdAt ascending', async () => {
+    let inboxPolls = 0;
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'start_session':
+          return { session: { id: 'sess-1' } };
+        case 'get_inbox':
+          inboxPolls += 1;
+          if (inboxPolls === 1) {
+            return {
+              messages: [
+                {
+                  id: 'm-2',
+                  content: 'second',
+                  senderAgentId: 'wren',
+                  createdAt: '2026-02-26T04:10:05.000Z',
+                },
+                {
+                  id: 'm-1',
+                  content: 'first',
+                  senderAgentId: 'wren',
+                  createdAt: '2026-02-26T04:10:01.000Z',
+                },
+              ],
+            };
+          }
+          return { messages: [] };
+        case 'update_session_phase':
+        case 'end_session':
+          return { success: true };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    const firstIndex = logText.indexOf('📥 wren: first');
+    const secondIndex = logText.indexOf('📥 wren: second');
+    expect(firstIndex).toBeGreaterThanOrEqual(0);
+    expect(secondIndex).toBeGreaterThan(firstIndex);
+  });
+
   it('auto-runs eligible inbox task messages when enabled', async () => {
     let inboxPolls = 0;
     testState.callToolImpl.mockImplementation(async (tool: string) => {
@@ -704,6 +755,73 @@ describe('runChat integration', () => {
     expect(backendRequest.prompt).toContain('Please handle PR 77 now.');
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('Auto-run processed 1 inbox message.');
+  });
+
+  it('does not re-render inbox messages already present in attached transcript history', async () => {
+    mkdirSync(join(testCwd, '.pcp', 'runtime', 'repl'), { recursive: true });
+    writeFileSync(
+      join(testCwd, '.pcp', 'runtime', 'repl', 'sess-existing-1700000000000.jsonl'),
+      [
+        JSON.stringify({
+          ts: '2026-02-26T04:15:00.000Z',
+          type: 'inbox',
+          messageId: 'm-hydrated-1',
+          rendered: '📥 wren — PR #77: already hydrated',
+        }),
+      ].join('\n')
+    );
+
+    let inboxPolls = 0;
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'list_sessions':
+          return {
+            sessions: [
+              {
+                id: 'sess-existing',
+                agentId: 'lumen',
+                status: 'active',
+                startedAt: '2026-02-26T04:16:00.000Z',
+              },
+            ],
+          };
+        case 'get_inbox':
+          inboxPolls += 1;
+          if (inboxPolls === 1) {
+            return {
+              messages: [
+                {
+                  id: 'm-hydrated-1',
+                  content: 'already hydrated',
+                  senderAgentId: 'wren',
+                  subject: 'PR #77',
+                  createdAt: '2026-02-26T04:15:00.000Z',
+                },
+              ],
+            };
+          }
+          return { messages: [] };
+        case 'update_session_phase':
+        case 'end_session':
+          return { success: true };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      attachLatest: true,
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    const matchCount = (logText.match(/already hydrated/g) || []).length;
+    expect(matchCount).toBe(1);
   });
 
   it('filters auto-run inbox messages to active thread/session scope', async () => {

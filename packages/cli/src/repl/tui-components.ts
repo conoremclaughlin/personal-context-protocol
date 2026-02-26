@@ -148,13 +148,19 @@ export class LiveStatusLane {
 
   public buildPromptLabel(promptLabel: string): string {
     if (!this.live) return promptLabel;
-    return `\n${chalk.dim(this.statusLine)}\n${chalk.dim(this.hintLine)}\n${promptLabel}`;
+    return `\n${chalk.dim(this.hintLine)}\n${promptLabel}`;
   }
 }
 
-export function renderTimedBlock(content: string, timezone?: string, ts?: string): string {
+export function renderTimedBlock(
+  content: string,
+  timezone?: string,
+  ts?: string,
+  trailingMeta?: string
+): string {
   const clock = ts ? formatClock(ts, timezone) : formatNow(timezone);
-  return `${content} ${chalk.dim(`• ${clock}`)}`;
+  const meta = trailingMeta ? ` • ${trailingMeta}` : '';
+  return `${content} ${chalk.dim(`• ${clock}${meta}`)}`;
 }
 
 function formatClockTime(value: string, timezone?: string): string {

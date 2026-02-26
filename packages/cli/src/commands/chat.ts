@@ -154,6 +154,8 @@ interface HistoryHydrationResult {
   source: 'repl-transcript' | 'pcp-session-context' | 'none';
   transcriptPath?: string;
   tailPreview: Array<{ role: 'user' | 'assistant' | 'inbox'; content: string; ts?: string }>;
+  seenInboxIds?: string[];
+  seenActivityIds?: string[];
 }
 
 interface SessionContextMessage {
@@ -168,6 +170,7 @@ const AUTO_TRIM_KEEP_RECENT_ENTRIES = 6;
 const DEFAULT_TRIM_TARGET_PCT = 70;
 const CTRL_C_EXIT_WINDOW_MS = 3000;
 const DEFAULT_BACKEND_TOKEN_WINDOW = 1_000_000;
+const HISTORY_PREVIEW_MAX = 36;
 function resolveBackendTokenWindow(_backend: string, _model?: string): number {
   // Current policy: claude/codex/gemini all default to 1M effective context window.
   return DEFAULT_BACKEND_TOKEN_WINDOW;
@@ -299,15 +302,23 @@ function getSessionTranscriptMetadata(sessionId: string): SessionTranscriptMetad
 function hydrateLedgerFromTranscript(
   ledger: ContextLedger,
   transcriptPath: string
-): { loaded: number; messageCount: number; tailPreview: HistoryHydrationResult['tailPreview'] } {
+): {
+  loaded: number;
+  messageCount: number;
+  tailPreview: HistoryHydrationResult['tailPreview'];
+  seenInboxIds: string[];
+  seenActivityIds: string[];
+} {
   const events = readTranscriptEvents(transcriptPath);
   let loaded = 0;
   let messageCount = 0;
   const preview: HistoryHydrationResult['tailPreview'] = [];
+  const seenInboxIds = new Set<string>();
+  const seenActivityIds = new Set<string>();
 
   const pushPreview = (role: 'user' | 'assistant' | 'inbox', content: string, ts?: string) => {
     preview.push({ role, content: compactForHistoryPreview(role, content), ts });
-    if (preview.length > 12) {
+    if (preview.length > HISTORY_PREVIEW_MAX) {
       preview.shift();
     }
   };
@@ -334,6 +345,9 @@ function hydrateLedgerFromTranscript(
       loaded += 1;
       messageCount += 1;
       pushPreview('inbox', event.rendered, typeof event.ts === 'string' ? event.ts : undefined);
+      if (typeof event.messageId === 'string') {
+        seenInboxIds.add(event.messageId);
+      }
       continue;
     }
     if (type === 'activity' && typeof event.content === 'string') {
@@ -345,10 +359,19 @@ function hydrateLedgerFromTranscript(
         'pcp-activity-history'
       );
       loaded += 1;
+      if (typeof event.activityId === 'string') {
+        seenActivityIds.add(event.activityId);
+      }
     }
   }
 
-  return { loaded, messageCount, tailPreview: preview };
+  return {
+    loaded,
+    messageCount,
+    tailPreview: preview,
+    seenInboxIds: Array.from(seenInboxIds),
+    seenActivityIds: Array.from(seenActivityIds),
+  };
 }
 
 function printTranscriptLine(rawLine: string): void {
@@ -788,7 +811,7 @@ function hydrateLedgerFromSessionContext(
   const preview: HistoryHydrationResult['tailPreview'] = [];
   const pushPreview = (role: 'user' | 'assistant' | 'inbox', content: string, ts?: string) => {
     preview.push({ role, content: compactForHistoryPreview(role, content), ts });
-    if (preview.length > 12) preview.shift();
+    if (preview.length > HISTORY_PREVIEW_MAX) preview.shift();
   };
 
   for (const message of messages) {
@@ -938,6 +961,12 @@ function formatTimestampForSessionList(value?: string, timezone?: string): strin
       minute: '2-digit',
     });
   }
+}
+
+function safeDateMs(value?: string): number {
+  if (!value) return 0;
+  const ms = Date.parse(value);
+  return Number.isNaN(ms) ? 0 : ms;
 }
 
 function formatStudioForDisplay(studioId?: string, mode: 'short' | 'full' = 'short'): string {
@@ -1603,7 +1632,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
       source: 'repl-transcript',
       transcriptPath: existingTranscript,
       tailPreview: hydrated.tailPreview,
+      seenInboxIds: hydrated.seenInboxIds,
+      seenActivityIds: hydrated.seenActivityIds,
     };
+    for (const inboxId of hydrated.seenInboxIds) {
+      seenInboxIds.add(inboxId);
+    }
+    for (const activityId of hydrated.seenActivityIds) {
+      seenActivityIds.add(activityId);
+    }
   } else if (attachedToExistingSession && runtime.sessionId) {
     const sessionContextResult = (await pcp
       .callTool('get_session_context', { sessionId: runtime.sessionId, limit: 120 })
@@ -1773,7 +1810,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
             agentId,
           },
         }).allowed
-      );
+      )
+      .sort((a, b) => safeDateMs(a.createdAt) - safeDateMs(b.createdAt));
     let autoRuns = 0;
     for (const msg of fresh) {
       seenInboxIds.add(msg.id);
@@ -1872,7 +1910,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           },
         }).allowed
       )
-      .sort((a, b) => Date.parse(a.createdAt || '') - Date.parse(b.createdAt || ''));
+      .sort((a, b) => safeDateMs(a.createdAt) - safeDateMs(b.createdAt));
 
     for (const activity of activities) {
       seenActivityIds.add(activity.id);
@@ -1961,6 +1999,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       logger: printLine,
       renderAbovePrompt: true,
     });
+    let turnDurationSeconds = 0;
     let turnCtrlCAt = 0;
     const onSigintDuringTurn = () => {
       const now = Date.now();
@@ -1982,7 +2021,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
       passthroughArgs,
     }).finally(() => {
       process.off('SIGINT', onSigintDuringTurn);
-      stopWaiting(`✓ ${runtime.backend} responded in ${Math.round((Date.now() - turnStartedAt) / 1000)}s`);
+      turnDurationSeconds = Math.max(0, Math.round((Date.now() - turnStartedAt) / 1000));
+      stopWaiting();
     });
 
     let responseText = runResult.stdout.trim();
@@ -2063,7 +2103,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
     }
 
-    printLine(`\n${renderTimedBlock(chalk.white(assistantDisplayText), runtime.userTimezone)}\n`);
+    printLine(
+      `\n${renderTimedBlock(chalk.white(assistantDisplayText), runtime.userTimezone, undefined, `${turnDurationSeconds}s`)}\n`
+    );
     if (runResult.usage) {
       printLine(chalk.dim(`↳ ${formatBackendTokenUsage(runResult.usage)}\n`));
     }
