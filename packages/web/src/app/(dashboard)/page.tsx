@@ -21,7 +21,6 @@ import { getAgentGradient } from '@/lib/utils';
 
 interface StudioInfo {
   id: string;
-  name: string | null;
   branch: string;
   baseBranch: string | null;
   purpose: string | null;
@@ -248,12 +247,9 @@ export default function DashboardPage() {
                                 className={clsx('h-4 w-4', getStudioStatusColor(studio.status))}
                               />
                               <span className="text-sm font-medium text-gray-700">
-                                {studio.name || studio.branch}
+                                {studio.branch}
                               </span>
                             </div>
-                            {studio.name && studio.branch !== studio.name && (
-                              <span className="text-xs text-gray-400">{studio.branch}</span>
-                            )}
                             {studio.purpose && (
                               <span className="text-xs text-gray-400 truncate">
                                 {studio.purpose}
