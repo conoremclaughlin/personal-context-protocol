@@ -3744,13 +3744,13 @@ router.get('/studios', async (req: Request, res: Response) => {
     const agentIds = (identities || []).map((i) => i.agent_id).filter(Boolean);
     const latestSessionByAgent = new Map<
       string,
-      { currentPhase: string | null; updatedAt: string }
+      { currentPhase: string | null; status: string | null; updatedAt: string }
     >();
 
     if (agentIds.length > 0) {
       const { data: sessions } = await supabase
         .from('sessions')
-        .select('agent_id, current_phase, updated_at')
+        .select('agent_id, current_phase, status, updated_at')
         .eq('user_id', authReq.pcpUserId)
         .in('agent_id', agentIds)
         .is('ended_at', null)
@@ -3760,6 +3760,7 @@ router.get('/studios', async (req: Request, res: Response) => {
         if (!latestSessionByAgent.has(session.agent_id)) {
           latestSessionByAgent.set(session.agent_id, {
             currentPhase: session.current_phase,
+            status: session.status,
             updatedAt: session.updated_at,
           });
         }
@@ -3786,7 +3787,11 @@ router.get('/studios', async (req: Request, res: Response) => {
         backend: identity.backend,
         identityId: identity.id,
         latestSession: latestSession
-          ? { currentPhase: latestSession.currentPhase, updatedAt: latestSession.updatedAt }
+          ? {
+              currentPhase: latestSession.currentPhase,
+              status: latestSession.status,
+              updatedAt: latestSession.updatedAt,
+            }
           : null,
         studios: agentStudios.map((s) => ({
           id: s.id,
