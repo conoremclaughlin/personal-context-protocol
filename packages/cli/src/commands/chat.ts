@@ -25,6 +25,13 @@ import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-ap
 import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
 import { canActivateSkill, filterSkillsByPolicy } from '../repl/skill-policy.js';
 import {
+  formatNow,
+  LiveStatusLane,
+  renderResumeHistoryLines,
+  renderTimedBlock,
+  startWaitingIndicator,
+} from '../repl/tui-components.js';
+import {
   decodeDelegationToken,
   mintDelegationToken,
   verifyDelegationToken,
@@ -143,16 +150,16 @@ interface SessionTranscriptMetadata {
 interface HistoryHydrationResult {
   loaded: number;
   messageCount: number;
-  source: 'repl-transcript' | 'none';
+  source: 'repl-transcript' | 'pcp-session-context' | 'none';
   transcriptPath?: string;
   tailPreview: Array<{ role: 'user' | 'assistant' | 'inbox'; content: string; ts?: string }>;
 }
 
-interface StatusLaneState {
-  live: boolean;
-  line: string;
-  promptActive: boolean;
-  dirtyWhilePrompt: boolean;
+interface SessionContextMessage {
+  role: 'user' | 'assistant' | 'inbox' | 'system';
+  content: string;
+  ts?: string;
+  source: string;
 }
 
 const LEDGER_COMPACT_CHARS = 420;
@@ -160,19 +167,6 @@ const AUTO_TRIM_KEEP_RECENT_ENTRIES = 6;
 const DEFAULT_TRIM_TARGET_PCT = 70;
 const CTRL_C_EXIT_WINDOW_MS = 1500;
 const DEFAULT_BACKEND_TOKEN_WINDOW = 1_000_000;
-const WAITING_VERB_ROTATE_MS = 30_000;
-const WAITING_FRAME_INTERVAL_MS = 850;
-const WAITING_VERBS = [
-  'Cooking',
-  'Contextifying',
-  'Baking',
-  'Aligning chakras',
-  'Summoning tokens',
-  'Consulting digital spirits',
-  'Polishing response atoms',
-];
-const WAITING_FRAMES = ['✦', '✶', '✷', '✹'];
-
 function resolveBackendTokenWindow(_backend: string, _model?: string): number {
   // Current policy: claude/codex/gemini all default to 1M effective context window.
   return DEFAULT_BACKEND_TOKEN_WINDOW;
@@ -312,7 +306,7 @@ function hydrateLedgerFromTranscript(
 
   const pushPreview = (role: 'user' | 'assistant' | 'inbox', content: string, ts?: string) => {
     preview.push({ role, content: compactForLedger(content, 180), ts });
-    if (preview.length > 6) {
+    if (preview.length > 12) {
       preview.shift();
     }
   };
@@ -480,78 +474,6 @@ function isReadlineClosedError(error: unknown): boolean {
   return code === 'ERR_USE_AFTER_CLOSE' || Boolean(message?.toLowerCase().includes('readline was closed'));
 }
 
-function pickWaitingVerb(tick: number): string {
-  if (WAITING_VERBS.length === 0) return 'Working';
-  return WAITING_VERBS[tick % WAITING_VERBS.length]!;
-}
-
-function startWaitingIndicator(
-  backend: string,
-  options?: {
-    inline?: boolean;
-    logger?: (line: string) => void;
-    promptActive?: () => boolean;
-    renderAbovePrompt?: boolean;
-  }
-): (doneMessage?: string) => void {
-  const startedAt = Date.now();
-  const useAnimatedLine = Boolean(options?.inline && process.stdout.isTTY);
-  const logger = options?.logger || ((line: string) => console.log(line));
-  const isPromptActive = options?.promptActive || (() => false);
-  const renderAbovePrompt = Boolean(options?.renderAbovePrompt);
-  let tick = 0;
-  let previousWidth = 0;
-
-  const render = () => {
-    const seconds = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
-    const verbTick = Math.floor((Date.now() - startedAt) / WAITING_VERB_ROTATE_MS);
-    const verb = pickWaitingVerb(verbTick);
-    const frame = WAITING_FRAMES[tick % WAITING_FRAMES.length] || '✦';
-    const dots = '.'.repeat((tick % 3) + 1).padEnd(3, ' ');
-    const msg = `${frame} ${verb}${dots} · waiting for ${backend} (${seconds}s)`;
-
-    if (useAnimatedLine) {
-      const palette = [chalk.cyan, chalk.magenta, chalk.yellow, chalk.green] as const;
-      const tint = palette[tick % palette.length] || chalk.cyan;
-      const pad = previousWidth > msg.length ? ' '.repeat(previousWidth - msg.length) : '';
-      if (renderAbovePrompt && isPromptActive()) {
-        process.stdout.write('\x1b7');
-        process.stdout.write('\x1b[1A');
-        process.stdout.write(`\r\x1b[2K${tint(msg)}${pad}`);
-        process.stdout.write('\x1b8');
-      } else {
-        process.stdout.write(`\r\x1b[2K${tint(msg)}${pad}`);
-      }
-      previousWidth = msg.length;
-    } else if (tick === 0 || tick % 2 === 0) {
-      logger(chalk.dim(`status> ${frame} ${verb} · waiting for ${backend} (${seconds}s)`));
-    }
-
-    tick += 1;
-  };
-
-  render();
-  const timer = setInterval(render, useAnimatedLine ? WAITING_FRAME_INTERVAL_MS : 1000);
-
-  return (doneMessage?: string) => {
-    clearInterval(timer);
-    if (useAnimatedLine) {
-      const clear = previousWidth > 0 ? ' '.repeat(previousWidth) : '';
-      if (renderAbovePrompt && isPromptActive()) {
-        process.stdout.write('\x1b7');
-        process.stdout.write('\x1b[1A');
-        process.stdout.write(`\r\x1b[2K${clear}\r`);
-        process.stdout.write('\x1b8');
-      } else {
-        process.stdout.write(`\r\x1b[2K${clear}\r`);
-      }
-    }
-    if (doneMessage) {
-      logger(chalk.dim(doneMessage));
-    }
-  };
-}
-
 function listConfiguredMcpServers(cwd = process.cwd()): McpServerSummary[] {
   const configPath = join(cwd, '.mcp.json');
   if (!existsSync(configPath)) return [];
@@ -665,6 +587,7 @@ function extractSessionSummaries(result: Record<string, unknown> | null | undefi
   return candidate
     .map((entry): SessionSummary | undefined => {
       const row = entry as Record<string, unknown>;
+      const studio = row.studio as Record<string, unknown> | undefined;
       const id = row.id;
       if (typeof id !== 'string') return undefined;
       return {
@@ -681,18 +604,26 @@ function extractSessionSummaries(result: Record<string, unknown> | null | undefi
             ? row.workspaceName
             : typeof row.workspace_name === 'string'
               ? row.workspace_name
+              : typeof studio?.worktreeFolder === 'string'
+                ? studio.worktreeFolder
               : undefined,
         studioId:
           typeof row.studioId === 'string'
             ? row.studioId
             : typeof row.studio_id === 'string'
               ? row.studio_id
+              : typeof studio?.id === 'string'
+                ? studio.id
               : undefined,
         studioName:
           typeof row.studioName === 'string'
             ? row.studioName
             : typeof row.studio_name === 'string'
               ? row.studio_name
+              : typeof studio?.worktreeFolder === 'string'
+                ? studio.worktreeFolder
+                : typeof studio?.branch === 'string'
+                  ? studio.branch
               : undefined,
         status: typeof row.status === 'string' ? row.status : undefined,
         currentPhase: typeof row.currentPhase === 'string' ? row.currentPhase : undefined,
@@ -767,6 +698,119 @@ function extractActivitySummaries(result: Record<string, unknown> | null | undef
     .filter((activity): activity is ActivitySummary => Boolean(activity));
 }
 
+function extractSessionContextMessages(
+  result: Record<string, unknown> | null | undefined
+): SessionContextMessage[] {
+  if (!result) return [];
+  const candidate = (Array.isArray(result.context) ? result.context : undefined) || [];
+
+  return candidate
+    .map((entry): SessionContextMessage | undefined => {
+      const row = entry as Record<string, unknown>;
+      const content = typeof row.content === 'string' ? row.content.trim() : '';
+      if (!content) return undefined;
+
+      const type =
+        typeof row.type === 'string'
+          ? row.type
+          : typeof row.activityType === 'string'
+            ? row.activityType
+            : 'unknown';
+      const source =
+        typeof row.subtype === 'string'
+          ? `${type}:${row.subtype}`
+          : typeof row.source === 'string'
+            ? row.source
+            : type;
+      const ts =
+        typeof row.createdAt === 'string'
+          ? row.createdAt
+          : typeof row.created_at === 'string'
+            ? row.created_at
+            : undefined;
+
+      if (type === 'message_in' || type === 'user') {
+        return {
+          role: 'user',
+          content,
+          ts,
+          source,
+        };
+      }
+      if (type === 'message_out' || type === 'assistant') {
+        return {
+          role: 'assistant',
+          content,
+          ts,
+          source,
+        };
+      }
+      if (type === 'inbox' || type === 'notification' || type === 'task_request' || type === 'session_resume') {
+        return {
+          role: 'inbox',
+          content,
+          ts,
+          source,
+        };
+      }
+
+      return {
+        role: 'system',
+        content,
+        ts,
+        source,
+      };
+    })
+    .filter((entry): entry is SessionContextMessage => Boolean(entry));
+}
+
+function hydrateLedgerFromSessionContext(
+  ledger: ContextLedger,
+  messages: SessionContextMessage[]
+): HistoryHydrationResult {
+  let loaded = 0;
+  let messageCount = 0;
+  const preview: HistoryHydrationResult['tailPreview'] = [];
+  const pushPreview = (role: 'user' | 'assistant' | 'inbox', content: string, ts?: string) => {
+    preview.push({ role, content: compactForLedger(content, 180), ts });
+    if (preview.length > 12) preview.shift();
+  };
+
+  for (const message of messages) {
+    if (message.role === 'user') {
+      ledger.addEntry('user', message.content, `pcp-history:${message.source}`);
+      loaded += 1;
+      messageCount += 1;
+      pushPreview('user', message.content, message.ts);
+      continue;
+    }
+    if (message.role === 'assistant') {
+      ledger.addEntry('assistant', message.content, `pcp-history:${message.source}`);
+      loaded += 1;
+      messageCount += 1;
+      pushPreview('assistant', message.content, message.ts);
+      continue;
+    }
+    if (message.role === 'inbox') {
+      ledger.addEntry('inbox', compactForLedger(message.content), `pcp-history:${message.source}`);
+      loaded += 1;
+      messageCount += 1;
+      pushPreview('inbox', message.content, message.ts);
+      continue;
+    }
+
+    ledger.addEntry('system', compactForLedger(message.content, 320), `pcp-history:${message.source}`);
+    loaded += 1;
+  }
+
+  return {
+    loaded,
+    messageCount,
+    source: 'pcp-session-context',
+    tailPreview: preview,
+  };
+}
+
 function summarizeForSessionEnd(ledger: ContextLedger): string {
   const entries = ledger.listEntries().slice(-8);
   const snippets = entries
@@ -802,27 +846,6 @@ function buildContextStatusSummary(params: {
   return `context:${total.toLocaleString()}/${params.maxContextTokens.toLocaleString()} (${pct.toFixed(
     1
   )}%) ${queue} backend:${params.backend}${window}`;
-}
-
-function clearStatusLane(state: StatusLaneState): void {
-  if (!state.live) return;
-  if (!state.line) return;
-  output.write('\r\x1b[2K');
-  state.line = '';
-}
-
-function printStatusLane(summary: string, timezone: string | undefined, state: StatusLaneState): void {
-  const rendered = `status> ${summary} • ${formatNow(timezone)}`;
-  if (!state.live) {
-    console.log(chalk.dim(rendered));
-    return;
-  }
-  if (state.promptActive) {
-    state.dirtyWhilePrompt = true;
-    return;
-  }
-  state.line = rendered;
-  output.write(`\r\x1b[2K${chalk.dim(rendered)}`);
 }
 
 function printUsage(
@@ -898,23 +921,6 @@ function formatTimestampForSessionList(value?: string, timezone?: string): strin
     return new Date(ms).toLocaleTimeString([], {
       hour: 'numeric',
       minute: '2-digit',
-    });
-  }
-}
-
-function formatNow(timezone?: string): string {
-  try {
-    return new Date().toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit',
-      timeZone: timezone,
-    });
-  } catch {
-    return new Date().toLocaleTimeString([], {
-      hour: 'numeric',
-      minute: '2-digit',
-      second: '2-digit',
     });
   }
 }
@@ -1383,18 +1389,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
     toolPolicy.setMutationScope('agent');
   }
   runtime.toolMode = toolPolicy.getMode();
-  const statusLaneState: StatusLaneState = {
-    live: runtime.uiMode === 'live' && Boolean(output.isTTY),
-    line: '',
-    promptActive: false,
-    dirtyWhilePrompt: false,
-  };
-  const printLine = (line = '') => {
-    if (statusLaneState.live) {
-      clearStatusLane(statusLaneState);
-    }
-    console.log(line);
-  };
+  const statusLane = new LiveStatusLane(runtime.uiMode === 'live' && Boolean(output.isTTY), runtime.userTimezone);
+  const printLine = (line = '') => statusLane.printLine(line);
 
   const ledger = new ContextLedger();
   const seenInboxIds = new Set<string>();
@@ -1424,6 +1420,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const timezone = (bootstrapResult.user as Record<string, unknown> | undefined)?.timezone;
     if (typeof timezone === 'string' && timezone.trim()) {
       runtime.userTimezone = timezone;
+      statusLane.setTimezone(timezone);
     }
     ledger.addEntry(
       'system',
@@ -1583,13 +1580,21 @@ export async function runChat(options: ChatOptions): Promise<void> {
       transcriptPath: existingTranscript,
       tailPreview: hydrated.tailPreview,
     };
-  } else if (attachedToExistingSession) {
-    historyHydration = {
-      loaded: 0,
-      messageCount: 0,
-      source: 'none',
-      tailPreview: [],
-    };
+  } else if (attachedToExistingSession && runtime.sessionId) {
+    const sessionContextResult = (await pcp
+      .callTool('get_session_context', { sessionId: runtime.sessionId, limit: 120 })
+      .catch(() => null)) as Record<string, unknown> | null;
+    const contextMessages = extractSessionContextMessages(sessionContextResult);
+    if (contextMessages.length > 0) {
+      historyHydration = hydrateLedgerFromSessionContext(ledger, contextMessages);
+    } else {
+      historyHydration = {
+        loaded: 0,
+        messageCount: 0,
+        source: 'none',
+        tailPreview: [],
+      };
+    }
   }
 
   appendTranscript(runtime.transcriptPath, {
@@ -1620,11 +1625,17 @@ export async function runChat(options: ChatOptions): Promise<void> {
   console.log(chalk.magentaBright('\n✦━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━✦'));
   console.log(chalk.bold.white('  SB Chat · first-class PCP REPL'));
   console.log(chalk.magentaBright('✦━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━✦\n'));
+  const runtimeStudioLabel = attachedSessionSummary
+    ? sessionStudioLabel(attachedSessionSummary, 'short')
+    : sessionStudioLabel({ studioId: runtime.studioId, workspaceId: runtime.workspaceId }, 'short');
+  const runtimeStudioLabelFull = attachedSessionSummary
+    ? sessionStudioLabel(attachedSessionSummary, 'full')
+    : sessionStudioLabel({ studioId: runtime.studioId, workspaceId: runtime.workspaceId }, 'full');
   console.log(
     [
       chip('agent', agentId, chalk.cyan),
       chip('backend', `${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}`, chalk.yellow),
-      chip('studio', formatStudioForDisplay(runtime.studioId), chalk.cyan),
+      chip('studio', runtimeStudioLabel, chalk.cyan),
       chip('routing', runtime.toolRouting, runtime.toolRouting === 'local' ? chalk.magenta : chalk.dim),
       chip('ui', runtime.uiMode, runtime.uiMode === 'live' ? chalk.cyan : chalk.dim),
       chip('window', `${formatTokenCount(runtime.backendTokenWindow)} tok`, chalk.green),
@@ -1633,6 +1644,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     ].join(chalk.dim('  •  '))
   );
   if (runtime.threadKey) console.log(chalk.dim(`Thread: ${runtime.threadKey}`));
+  console.log(chalk.dim(`Studio: ${runtimeStudioLabelFull}`));
   if (attachedToExistingSession) console.log(chalk.dim('Mode: attached to existing session'));
   if (autoAttachedLatest) console.log(chalk.dim('Mode: auto-attached to latest active session'));
   if (runtime.sessionId) console.log(chalk.dim(`Session: ${runtime.sessionId}`));
@@ -1652,14 +1664,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
       )
     );
     if (historyHydration.tailPreview.length > 0) {
-      console.log(chalk.dim('Recent history preview:'));
-      for (const entry of historyHydration.tailPreview) {
-        const ts = entry.ts ? `${formatTimestampForSessionList(entry.ts, runtime.userTimezone)} ` : '';
-        console.log(chalk.dim(`  - ${ts}${entry.role}: ${entry.content}`));
+      console.log(chalk.bold('Recent history preview:'));
+      for (const line of renderResumeHistoryLines(historyHydration.tailPreview, runtime.userTimezone)) {
+        console.log(line);
       }
     }
   } else if (historyHydration?.source === 'none') {
-    console.log(chalk.dim('History loaded: none (no local REPL transcript found for this session).'));
+    console.log(chalk.dim('History loaded: none (no local REPL transcript or session context found).'));
   }
   console.log(chalk.dim(`Transcript: ${runtime.transcriptPath}`));
   console.log(chalk.dim('Type /help for commands.\n'));
@@ -1771,7 +1782,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         messageType: msg.messageType || null,
         relatedSessionId: msg.relatedSessionId || null,
       });
-      printLine(`\n${chalk.cyan(rendered)} ${chalk.dim(`• ${formatNow(runtime.userTimezone)}`)}\n`);
+      printLine(`\n${renderTimedBlock(chalk.cyan(rendered), runtime.userTimezone)}\n`);
 
       const eligibleForAutoRun =
         runtime.autoRunInbox &&
@@ -1794,7 +1805,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (autoRuns > 0) {
       printLine(chalk.green(`Auto-run processed ${autoRuns} inbox message${autoRuns === 1 ? '' : 's'}.`));
     }
-    if (statusLaneState.live) {
+    if (statusLane.isLive()) {
       emitStatusLaneIfChanged(true);
     }
     return fresh.length;
@@ -1858,13 +1869,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
         sessionId: activity.sessionId || null,
         content: activity.content || null,
       });
-      printLine(`\n${chalk.magenta(rendered)} ${chalk.dim(`• ${formatNow(runtime.userTimezone)}`)}\n`);
+      printLine(`\n${renderTimedBlock(chalk.magenta(rendered), runtime.userTimezone)}\n`);
     }
 
     if (force && activities.length === 0) {
       printLine(chalk.dim('No new activity events.'));
     }
-    if (statusLaneState.live) {
+    if (statusLane.isLive()) {
       emitStatusLaneIfChanged(true);
     }
     return activities.length;
@@ -1916,9 +1927,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
 
     const stopWaiting = startWaitingIndicator(runtime.backend, {
-      inline: statusLaneState.live,
+      statusLane,
       logger: printLine,
-      promptActive: () => statusLaneState.promptActive,
       renderAbovePrompt: true,
     });
     let turnCtrlCAt = 0;
@@ -2023,7 +2033,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
     }
 
-    printLine(`\n${chalk.white(assistantDisplayText)} ${chalk.dim(`• ${formatNow(runtime.userTimezone)}`)}\n`);
+    printLine(`\n${renderTimedBlock(chalk.white(assistantDisplayText), runtime.userTimezone)}\n`);
     if (runResult.usage) {
       printLine(chalk.dim(`↳ ${formatBackendTokenUsage(runResult.usage)}\n`));
     }
@@ -2040,10 +2050,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
       pendingTurns,
       backend: runtime.backend,
     });
-    if (force || summary !== lastStatusSummary || statusLaneState.dirtyWhilePrompt) {
-      printStatusLane(summary, runtime.userTimezone, statusLaneState);
+    if (force || summary !== lastStatusSummary || statusLane.shouldRefreshAfterPrompt()) {
+      statusLane.renderSummary(summary, force);
       lastStatusSummary = summary;
-      statusLaneState.dirtyWhilePrompt = false;
+      statusLane.markPromptRefreshed();
     }
   };
   const enqueueTurn = (raw: string, source: 'user' | 'inbox-auto' = 'user'): Promise<void> => {
@@ -2146,15 +2156,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
     emitStatusLaneIfChanged();
     let raw = '';
-    statusLaneState.promptActive = true;
+    statusLane.setPromptActive(true);
     try {
       const promptLabel = pendingTurns > 0 ? `${agentId}+${pendingTurns}> ` : `${agentId}> `;
-      const renderedPrompt = statusLaneState.live ? `\n${promptLabel}` : promptLabel;
+      const renderedPrompt = statusLane.isLive() ? `\n${promptLabel}` : promptLabel;
       raw = (await rl.question(chalk.green(renderedPrompt))).trim();
       lastCtrlCAt = 0;
     } catch (error) {
-      statusLaneState.promptActive = false;
-      if (statusLaneState.dirtyWhilePrompt) {
+      statusLane.setPromptActive(false);
+      if (statusLane.shouldRefreshAfterPrompt()) {
         emitStatusLaneIfChanged(true);
       }
       if (isReadlineClosedError(error)) {
@@ -2193,8 +2203,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       throw error;
     }
-    statusLaneState.promptActive = false;
-    if (statusLaneState.dirtyWhilePrompt) {
+    statusLane.setPromptActive(false);
+    if (statusLane.shouldRefreshAfterPrompt()) {
       emitStatusLaneIfChanged(true);
     }
     if (!raw) continue;
@@ -2292,14 +2302,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
             const transcriptMeta = runtime.sessionId
               ? getSessionTranscriptMetadata(runtime.sessionId)
               : null;
+            const sessionStudio = attachedSessionSummary
+              ? sessionStudioLabel(attachedSessionSummary, 'full')
+              : sessionStudioLabel({ studioId: runtime.studioId, workspaceId: runtime.workspaceId }, 'full');
           console.log(
             chalk.dim(
               `session=${runtime.sessionId || 'none'} backend=${runtime.backend} model=${
                 runtime.model || '(default)'
-              } routing=${runtime.toolRouting} thread=${runtime.threadKey || '(none)'} studio=${formatStudioForDisplay(
-                runtime.studioId,
-                'full'
-              )} events=${runtime.eventPolling ? 'on' : 'off'} autorun=${
+              } routing=${runtime.toolRouting} thread=${runtime.threadKey || '(none)'} studio=${sessionStudio} events=${
+                runtime.eventPolling ? 'on' : 'off'
+              } autorun=${
                 runtime.autoRunInbox ? 'on' : 'off'
               } ui=${runtime.uiMode} budget=${formatTokenCount(
                 runtime.maxContextTokens
@@ -2357,10 +2369,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             break;
           }
           runtime.uiMode = mode as 'scroll' | 'live';
-          statusLaneState.live = runtime.uiMode === 'live' && Boolean(output.isTTY);
-          if (!statusLaneState.live) {
-            clearStatusLane(statusLaneState);
-          }
+          statusLane.setLiveMode(runtime.uiMode === 'live' && Boolean(output.isTTY));
           printLine(chalk.green(`UI mode set to ${runtime.uiMode}.`));
           emitStatusLaneIfChanged(true);
           break;

@@ -230,6 +230,52 @@ describe('runChat integration', () => {
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('History loaded: 2 prior message(s)');
+    expect(logText).toContain('Recent history preview:');
+    expect(logText).toContain('assistant: old assistant reply');
+  });
+
+  it('hydrates ledger context from PCP session context when no local transcript exists', async () => {
+    const sessionId = 'sess-pcp-history-1';
+    testState.callToolImpl.mockImplementation(async (tool: string) => {
+      switch (tool) {
+        case 'bootstrap':
+          return { user: { timezone: 'America/Los_Angeles' } };
+        case 'get_session_context':
+          return {
+            context: [
+              {
+                id: 'ctx-1',
+                type: 'message_in',
+                content: 'previous user request',
+                createdAt: '2026-02-26T01:00:00.000Z',
+              },
+              {
+                id: 'ctx-2',
+                type: 'message_out',
+                content: 'previous assistant reply',
+                createdAt: '2026-02-26T01:00:03.000Z',
+              },
+            ],
+          };
+        case 'get_inbox':
+          return { messages: [] };
+        default:
+          return { success: true };
+      }
+    });
+
+    testState.inputs = ['/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      sessionId,
+      pollSeconds: '999',
+    });
+
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('History loaded: 2 prior message(s) (2 ledger entries, source=pcp-session-context)');
+    expect(logText).toContain('user: previous user request');
+    expect(logText).toContain('assistant: previous assistant reply');
   });
 
   it('supports interactive attach picker from active sessions', async () => {
