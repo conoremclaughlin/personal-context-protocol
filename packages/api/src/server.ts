@@ -374,17 +374,25 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       }
     }
 
-    // Resolve studioHint from channel_routes for the delivery channel
+    // Resolve studioHint from channel_routes for the delivery channel + target
+    // delivery_target is the chat/conversation ID (e.g., Telegram chat ID)
+    // This enables per-chat routing for multi-user scenarios
     let reminderStudioHint: string | null = null;
     if (dataComposer && reminder.delivery_channel) {
       const route = await resolveRouteAgentId(
         dataComposer.getClient(),
         userId,
-        reminder.delivery_channel
+        reminder.delivery_channel,
+        undefined, // platformAccountId — not stored on reminders yet
+        reminder.delivery_target || undefined
       );
       if (route?.studioHint) {
         reminderStudioHint = route.studioHint;
-        logger.debug(`[Heartbeat] Resolved studioHint from channel_route: ${reminderStudioHint}`);
+        logger.debug(`[Heartbeat] Resolved studioHint from channel_route`, {
+          studioHint: reminderStudioHint,
+          deliveryChannel: reminder.delivery_channel,
+          deliveryTarget: reminder.delivery_target,
+        });
       }
     }
 
