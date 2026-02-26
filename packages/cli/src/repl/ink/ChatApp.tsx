@@ -99,7 +99,7 @@ export const ChatApp = React.forwardRef<ChatAppHandle, ChatAppProps>(
     }, [ctrlCCount, ctrlCTimer, onExit, exit]);
 
     const now = formatNow(timezone);
-    const promptLabel = `${agentId}> `;
+    const promptLabel = '> ';
 
     return (
       <Box flexDirection="column">

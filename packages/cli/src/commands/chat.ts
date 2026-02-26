@@ -877,18 +877,20 @@ function buildContextStatusSummary(params: {
   backendTokenWindow: number;
   pendingTurns: number;
   backend: string;
+  bootstrapTokens?: number;
 }): string {
-  const total = params.ledger.totalTokens();
+  const transcriptTokens = params.ledger.totalTokens();
+  const bootstrapTokens = params.bootstrapTokens || 0;
+  const total = transcriptTokens + bootstrapTokens;
   const pct = params.maxContextTokens > 0 ? (total / params.maxContextTokens) * 100 : 0;
   const queue =
     params.pendingTurns > 0 ? `queue:${params.pendingTurns}` : 'queue:idle';
-  const window =
-    params.backendTokenWindow !== params.maxContextTokens
-      ? ` window:${params.backendTokenWindow.toLocaleString()}`
-      : '';
-  return `context:${total.toLocaleString()}/${params.maxContextTokens.toLocaleString()} (${pct.toFixed(
+  const breakdown = bootstrapTokens > 0
+    ? `ctx:${transcriptTokens.toLocaleString()}+id:${bootstrapTokens.toLocaleString()}`
+    : `${total.toLocaleString()}`;
+  return `${breakdown}/${params.maxContextTokens.toLocaleString()} (${pct.toFixed(
     1
-  )}%) ${queue} backend:${params.backend}${window}`;
+  )}%) ${queue} backend:${params.backend}`;
 }
 
 function printUsage(
@@ -1833,27 +1835,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
   if (historyHydration && historyHydration.messageCount > 0) {
     console.log(
       chalk.dim(
-        `History loaded: ${historyHydration.messageCount} prior message(s) (${historyHydration.loaded} ledger entries, source=${historyHydration.source})`
+        `History: ${historyHydration.messageCount} prior message(s) loaded (source=${historyHydration.source})`
       )
     );
-    if (historyHydration.tailPreview.length > 0) {
-      console.log(chalk.bold('Recent history preview:'));
-      for (const entry of historyHydration.tailPreview) {
-        const role = entry.role === 'user' ? 'user' as const
-          : entry.role === 'assistant' ? 'assistant' as const
-          : 'inbox' as const;
-        const label = entry.role === 'user' ? 'you'
-          : entry.role === 'assistant' ? agentId
-          : 'inbox';
-        console.log(renderMessageLine(role, entry.content, {
-          label,
-          timezone: runtime.userTimezone,
-          ts: entry.ts,
-        }));
-      }
-    }
   } else if (historyHydration?.source === 'none') {
-    console.log(chalk.dim('History loaded: none (no local REPL transcript or session context found).'));
+    console.log(chalk.dim('History: none (no local transcript or session context found).'));
   }
   console.log(chalk.dim(`Transcript: ${runtime.transcriptPath}`));
   console.log(chalk.dim('Type /help for commands.\n'));
@@ -2027,9 +2013,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (autoRuns > 0) {
       printLine(chalk.green(`Auto-run processed ${autoRuns} inbox message${autoRuns === 1 ? '' : 's'}.`));
     }
-    if (statusLane.isLive()) {
-      emitStatusLaneIfChanged();
-    }
+    emitStatusLaneIfChanged();
     return fresh.length;
   };
 
@@ -2107,9 +2091,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (force && activities.length === 0) {
       printLine(chalk.dim('No new activity events.'));
     }
-    if (statusLane.isLive()) {
-      emitStatusLaneIfChanged();
-    }
+    emitStatusLaneIfChanged();
     return activities.length;
   };
 
@@ -2319,6 +2301,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       backendTokenWindow: runtime.backendTokenWindow,
       pendingTurns,
       backend: runtime.backend,
+      bootstrapTokens: runtime.bootstrapContext ? estimateTokens(runtime.bootstrapContext) : 0,
     });
     if (inkRepl) {
       if (force || summary !== lastStatusSummary) {
@@ -2420,7 +2403,18 @@ export async function runChat(options: ChatOptions): Promise<void> {
       timezone: runtime.userTimezone,
       infoItems: initialInfoItems,
     });
-    emitStatusLaneIfChanged(true);
+    // Initial status update — ChatApp starts with 'waiting for input'
+    // so push the real context budget summary immediately
+    const initialSummary = buildContextStatusSummary({
+      ledger,
+      maxContextTokens: runtime.maxContextTokens,
+      backendTokenWindow: runtime.backendTokenWindow,
+      pendingTurns: 0,
+      backend: runtime.backend,
+      bootstrapTokens: runtime.bootstrapContext ? estimateTokens(runtime.bootstrapContext) : 0,
+    });
+    inkRepl.setStatus(initialSummary);
+    lastStatusSummary = initialSummary;
   } else {
     // ── Legacy readline path ──
     const createRl = () => {
@@ -2720,6 +2714,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
           break;
         }
         case 'ui': {
+          if (inkRepl) {
+            printLine('UI mode: ink (React). Switch to scroll with --ui scroll on start.');
+            break;
+          }
           const mode = (slash.args[0] || '').toLowerCase();
           if (!mode) {
             printLine(chalk.dim(`UI mode is ${runtime.uiMode}.`));

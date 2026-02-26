@@ -229,10 +229,7 @@ describe('runChat integration', () => {
     expect(backendRequest.prompt).toContain('old assistant reply');
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(logText).toContain('History loaded: 2 prior message(s)');
-    expect(logText).toContain('Recent history preview:');
-    expect(logText).toContain('lumen');
-    expect(logText).toContain('old assistant reply');
+    expect(logText).toContain('History: 2 prior message(s) loaded');
   });
 
   it('hydrates ledger context from PCP session context when no local transcript exists', async () => {
@@ -274,12 +271,7 @@ describe('runChat integration', () => {
     });
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(logText).toContain('History loaded: 2 prior message(s) (2 ledger entries, source=pcp-session-context)');
-    // renderMessageLine format: "  you  previous user request  <timestamp>"
-    expect(logText).toContain('you');
-    expect(logText).toContain('previous user request');
-    expect(logText).toContain('lumen');
-    expect(logText).toContain('previous assistant reply');
+    expect(logText).toContain('History: 2 prior message(s) loaded');
   });
 
   it('supports interactive attach picker from active sessions', async () => {
@@ -824,8 +816,10 @@ describe('runChat integration', () => {
     });
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    // With history preview removed, the hydrated inbox message should not
+    // appear at all — neither in the banner nor via a duplicate inbox poll.
     const matchCount = (logText.match(/already hydrated/g) || []).length;
-    expect(matchCount).toBe(1);
+    expect(matchCount).toBe(0);
   });
 
   it('filters auto-run inbox messages to active thread/session scope', async () => {

@@ -20,7 +20,7 @@ const ROLE_COLORS: Record<MessageRole, string> = {
   system: 'gray',
 };
 
-/** Single chat message: "  label  content                timestamp" */
+/** Single chat message with label, content, and trailing metadata. */
 export function MessageLine({
   role,
   content,
@@ -33,16 +33,22 @@ export function MessageLine({
   const meta = [time, trailingMeta].filter(Boolean).join('  ·  ');
 
   return (
-    <Box justifyContent="space-between">
+    <Box flexDirection="column">
+      {/* Header: label + metadata on one line */}
       <Box>
         <Text>{'  '}</Text>
-        <Text bold color={color}>
-          {displayLabel}
-        </Text>
-        <Text>{'  '}</Text>
-        <Text color={color}>{content}</Text>
+        <Text bold color={color}>{displayLabel}</Text>
+        {meta ? (
+          <>
+            <Text>{'  '}</Text>
+            <Text dimColor>{meta}</Text>
+          </>
+        ) : null}
       </Box>
-      {meta ? <Text dimColor>{meta}</Text> : null}
+      {/* Content: indented, wraps naturally */}
+      <Box paddingLeft={4}>
+        <Text color={color} wrap="wrap">{content}</Text>
+      </Box>
     </Box>
   );
 }
