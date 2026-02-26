@@ -4,3 +4,4 @@ export { StatusBar } from './StatusBar.js';
 export { InfoBar } from './InfoBar.js';
 export { PromptInput } from './PromptInput.js';
 export { Separator } from './Separator.js';
+export { renderInkChat, InkExitSignal, type InkRepl } from './renderApp.js';

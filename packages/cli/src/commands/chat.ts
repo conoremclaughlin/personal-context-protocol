@@ -34,6 +34,7 @@ import {
   separator,
   startWaitingIndicator,
 } from '../repl/tui-components.js';
+import { renderInkChat, InkExitSignal, type InkRepl } from '../repl/ink/index.js';
 import {
   decodeDelegationToken,
   mintDelegationToken,
@@ -1501,27 +1502,32 @@ export async function runChat(options: ChatOptions): Promise<void> {
     toolPolicy.setMutationScope('agent');
   }
   runtime.toolMode = toolPolicy.getMode();
-  const statusLane = new LiveStatusLane(runtime.uiMode === 'live' && Boolean(output.isTTY), runtime.userTimezone);
-  // Set up the bottom info bar with workspace/git context
-  {
-    const cwd = process.cwd();
-    // Show just the last 2 path components to keep the info bar compact
-    const parts = cwd.replace(process.env.HOME || '', '~').split('/');
-    const shortCwd = parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : parts.join('/');
-    let gitBranch = '';
-    try {
-      const { execSync } = await import('child_process');
-      gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8' }).trim();
-    } catch { /* not a git repo */ }
-    statusLane.setInfoItems([
-      '/help',
-      'ctrl+c ×2 quit',
-      shortCwd,
-      gitBranch,
-    ].filter(Boolean));
-  }
+  const useInk = runtime.uiMode === 'live' && Boolean(output.isTTY);
+  const statusLane = new LiveStatusLane(!useInk && Boolean(output.isTTY), runtime.userTimezone);
+  // Build the info items used by both Ink and legacy dock
+  const cwd = process.cwd();
+  const parts = cwd.replace(process.env.HOME || '', '~').split('/');
+  const shortCwd = parts.length > 2 ? `…/${parts.slice(-2).join('/')}` : parts.join('/');
+  let gitBranch = '';
+  try {
+    const { execSync } = await import('child_process');
+    gitBranch = execSync('git rev-parse --abbrev-ref HEAD', { cwd, encoding: 'utf-8' }).trim();
+  } catch { /* not a git repo */ }
+  const initialInfoItems = ['/help', 'ctrl+c ×2 quit', shortCwd, gitBranch].filter(Boolean);
+  statusLane.setInfoItems(initialInfoItems);
+
+  // Ink renderer — created lazily after the banner section has printed
+  let inkRepl: InkRepl | null = null;
+
   let restorePromptAfterWrite: (() => void) | null = null;
   const printLine = (line = '') => {
+    if (inkRepl) {
+      // Strip empty lines — Ink handles spacing via layout
+      if (line.trim()) {
+        inkRepl.printSystem(line);
+      }
+      return;
+    }
     statusLane.printLine(line);
     restorePromptAfterWrite?.();
   };
@@ -2102,12 +2108,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
   const runUserTurn = async (raw: string, source: 'user' | 'inbox-auto' = 'user') => {
     if (!raw.trim()) return;
     if (source === 'user') {
-      // Echo the user's message in the consistent format
-      printLine(renderMessageLine('user', raw, {
-        label: 'you',
-        timezone: runtime.userTimezone,
-      }));
-      printLine('');
+      // Echo the user's message
+      if (inkRepl) {
+        inkRepl.addMessage('user', raw, { label: 'you' });
+      } else {
+        printLine(renderMessageLine('user', raw, {
+          label: 'you',
+          timezone: runtime.userTimezone,
+        }));
+        printLine('');
+      }
       ledger.addEntry('user', raw, 'repl');
       appendTranscript(runtime.transcriptPath, { type: 'user', content: raw });
     } else {
@@ -2150,22 +2160,33 @@ export async function runChat(options: ChatOptions): Promise<void> {
       );
     }
 
-    const stopWaiting = startWaitingIndicator(runtime.backend, {
-      statusLane,
-      logger: printLine,
-      renderAbovePrompt: true,
-    });
+    // Ink handles waiting via its own component; legacy uses animated indicator
+    const stopWaiting = inkRepl
+      ? (() => { /* Ink waiting managed by enqueueTurn via setWaiting */ return () => {}; })()
+      : startWaitingIndicator(runtime.backend, {
+          statusLane,
+          logger: printLine,
+          renderAbovePrompt: true,
+        });
     let turnDurationSeconds = 0;
     let turnCtrlCAt = 0;
     const onSigintDuringTurn = () => {
       const now = Date.now();
       if (turnCtrlCAt > 0 && now - turnCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
         forceQuitAfterTurn = true;
-        statusLane.renderHint('Will exit after current backend turn completes.');
+        if (inkRepl) {
+          inkRepl.printSystem('Will exit after current backend turn completes.');
+        } else {
+          statusLane.renderHint('Will exit after current backend turn completes.');
+        }
         return;
       }
       turnCtrlCAt = now;
-      statusLane.renderHint('Backend turn in progress. Press Ctrl+C again to exit after this turn.');
+      if (inkRepl) {
+        inkRepl.printSystem('Backend turn in progress. Press Ctrl+C again to exit after this turn.');
+      } else {
+        statusLane.renderHint('Backend turn in progress. Press Ctrl+C again to exit after this turn.');
+      }
     };
     process.on('SIGINT', onSigintDuringTurn);
     const runResult = await runBackendTurn({
@@ -2259,16 +2280,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
     }
 
-    printLine('');
-    printLine(renderMessageLine('assistant', assistantDisplayText, {
-      label: agentId,
-      timezone: runtime.userTimezone,
-      trailingMeta: `${turnDurationSeconds}s`,
-    }));
-    if (runResult.usage) {
-      printLine(chalk.dim(`    ↳ ${formatBackendTokenUsage(runResult.usage)}`));
+    if (inkRepl) {
+      const usageMeta = runResult.usage ? formatBackendTokenUsage(runResult.usage) : undefined;
+      const trailingParts = [`${turnDurationSeconds}s`, usageMeta].filter(Boolean).join('  ·  ');
+      inkRepl.addMessage('assistant', assistantDisplayText, {
+        label: agentId,
+        trailingMeta: trailingParts,
+      });
+    } else {
+      printLine('');
+      printLine(renderMessageLine('assistant', assistantDisplayText, {
+        label: agentId,
+        timezone: runtime.userTimezone,
+        trailingMeta: `${turnDurationSeconds}s`,
+      }));
+      if (runResult.usage) {
+        printLine(chalk.dim(`    ↳ ${formatBackendTokenUsage(runResult.usage)}`));
+      }
+      printLine('');
     }
-    printLine('');
   };
 
   let turnQueue: Promise<void> = Promise.resolve();
@@ -2282,6 +2312,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
       pendingTurns,
       backend: runtime.backend,
     });
+    if (inkRepl) {
+      if (force || summary !== lastStatusSummary) {
+        inkRepl.setStatus(summary);
+        lastStatusSummary = summary;
+      }
+      return;
+    }
     if (force || summary !== lastStatusSummary || statusLane.shouldRefreshAfterPrompt()) {
       statusLane.renderSummary(summary, force);
       lastStatusSummary = summary;
@@ -2292,13 +2329,21 @@ export async function runChat(options: ChatOptions): Promise<void> {
     pendingTurns += 1;
     emitStatusLaneIfChanged();
     const run = async () => {
-      statusLane.setTurnActive(true);
+      if (inkRepl) {
+        inkRepl.setWaiting(true, runtime.backend);
+      } else {
+        statusLane.setTurnActive(true);
+      }
       try {
         await runUserTurn(raw, source);
       } catch (error) {
         printLine(chalk.red(`Turn failed: ${String(error)}`));
       } finally {
-        statusLane.setTurnActive(false);
+        if (inkRepl) {
+          inkRepl.setWaiting(false);
+        } else {
+          statusLane.setTurnActive(false);
+        }
         pendingTurns = Math.max(0, pendingTurns - 1);
         emitStatusLaneIfChanged();
         // Restore the dock now that the turn is done (if prompt is waiting)
@@ -2349,45 +2394,59 @@ export async function runChat(options: ChatOptions): Promise<void> {
     return;
   }
 
+  // ── Mount the REPL input layer (Ink or legacy readline) ──
+
   let readlineClosed = false;
-  const createRl = () => {
-    const iface = createInterface({ input, output });
-    iface.on('close', () => {
-      readlineClosed = true;
-    });
-    return iface;
-  };
-  let rl = createRl();
+  let rl: ReturnType<typeof createInterface> | null = null;
   let keepRunning = true;
   let lastUsageTotal: number | undefined;
   let lastCtrlCAt = 0;
   let lastSigintAt = 0;
   let exitAfterTurnNoticeShown = false;
   let activePromptLabel = `${agentId}> `;
-  const onPromptSigint = () => {
-    lastSigintAt = Date.now();
-  };
-  process.on('SIGINT', onPromptSigint);
-  restorePromptAfterWrite = () => {
-    if (!statusLane.isLive() || !statusLane.isPromptActive() || readlineClosed) return;
-    // During a backend turn, don't restore the dock — messages print cleanly
-    // and the dock is redrawn once when the turn completes.
-    if (statusLane.isTurnActive()) return;
-    const currentLine = (rl as unknown as { line?: string }).line || '';
-    output.write(chalk.green(statusLane.buildPromptLabel(activePromptLabel)));
-    if (currentLine) {
-      output.write(currentLine);
-    }
-  };
+
+  if (useInk) {
+    // ── Ink path ──
+    inkRepl = renderInkChat({
+      agentId,
+      timezone: runtime.userTimezone,
+      infoItems: initialInfoItems,
+    });
+    emitStatusLaneIfChanged(true);
+  } else {
+    // ── Legacy readline path ──
+    const createRl = () => {
+      const iface = createInterface({ input, output });
+      iface.on('close', () => {
+        readlineClosed = true;
+      });
+      return iface;
+    };
+    rl = createRl();
+    const onPromptSigint = () => {
+      lastSigintAt = Date.now();
+    };
+    process.on('SIGINT', onPromptSigint);
+    restorePromptAfterWrite = () => {
+      if (!statusLane.isLive() || !statusLane.isPromptActive() || readlineClosed) return;
+      if (statusLane.isTurnActive()) return;
+      const currentLine = (rl as unknown as { line?: string })?.line || '';
+      output.write(chalk.green(statusLane.buildPromptLabel(activePromptLabel)));
+      if (currentLine) {
+        output.write(currentLine);
+      }
+    };
+  }
 
   while (keepRunning) {
-    if (readlineClosed) {
+    // ── Pre-input checks ──
+    if (!inkRepl && readlineClosed) {
       keepRunning = false;
       continue;
     }
     if (forceQuitAfterTurn) {
       if (!exitAfterTurnNoticeShown) {
-        console.log(chalk.dim('Exit requested; waiting for active turn to finish...'));
+        printLine('Exit requested; waiting for active turn to finish...');
         exitAfterTurnNoticeShown = true;
       }
       if (pendingTurns === 0) {
@@ -2403,60 +2462,78 @@ export async function runChat(options: ChatOptions): Promise<void> {
       printSessionsSnapshot(snapshot, { timezone: runtime.userTimezone });
     }
     emitStatusLaneIfChanged();
+
+    // ── Wait for user input ──
     let raw = '';
-    statusLane.setPromptActive(true);
-    try {
-      const promptLabel = pendingTurns > 0 ? `${agentId}+${pendingTurns}> ` : `${agentId}> `;
-      activePromptLabel = promptLabel;
-      const renderedPrompt = statusLane.buildPromptLabel(promptLabel);
-      raw = (await rl.question(chalk.green(renderedPrompt))).trim();
-      statusLane.clearDockFromScrollback();
-      lastCtrlCAt = 0;
-    } catch (error) {
-      statusLane.clearDockFromScrollback();
+    if (inkRepl) {
+      // Ink: waitForInput() resolves when user presses Enter, rejects on exit
+      try {
+        raw = (await inkRepl.waitForInput()).trim();
+      } catch (error) {
+        if (error instanceof InkExitSignal) {
+          keepRunning = false;
+          continue;
+        }
+        throw error;
+      }
+    } else if (rl) {
+      // Legacy readline
+      statusLane.setPromptActive(true);
+      try {
+        const promptLabel = pendingTurns > 0 ? `${agentId}+${pendingTurns}> ` : `${agentId}> `;
+        activePromptLabel = promptLabel;
+        const renderedPrompt = statusLane.buildPromptLabel(promptLabel);
+        raw = (await rl.question(chalk.green(renderedPrompt))).trim();
+        statusLane.clearDockFromScrollback();
+        lastCtrlCAt = 0;
+      } catch (error) {
+        statusLane.clearDockFromScrollback();
+        statusLane.setPromptActive(false);
+        if (statusLane.shouldRefreshAfterPrompt()) {
+          emitStatusLaneIfChanged(true);
+        }
+        if (isReadlineClosedError(error)) {
+          const now = Date.now();
+          if (lastCtrlCAt > 0 && now - lastCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
+            printLine(chalk.yellow('\nExiting chat (double Ctrl+C).\n'));
+            keepRunning = false;
+            continue;
+          }
+          if (now - lastSigintAt > 1_200) {
+            printLine(chalk.dim('\nReadline closed. Exiting chat gracefully.\n'));
+            keepRunning = false;
+            continue;
+          }
+          lastCtrlCAt = now;
+          rl = createInterface({ input, output });
+          rl.on('close', () => { readlineClosed = true; });
+          readlineClosed = false;
+          statusLane.renderHint('Press Ctrl+C again to quit, or continue typing.');
+          continue;
+        }
+        if (isAbortError(error)) {
+          const now = Date.now();
+          if (lastCtrlCAt > 0 && now - lastCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
+            printLine(chalk.yellow('\nExiting chat (double Ctrl+C).\n'));
+            keepRunning = false;
+            continue;
+          }
+          lastCtrlCAt = now;
+          if (readlineClosed) {
+            rl = createInterface({ input, output });
+            rl.on('close', () => { readlineClosed = true; });
+            readlineClosed = false;
+          }
+          statusLane.renderHint('Press Ctrl+C again to quit, or continue typing.');
+          continue;
+        }
+        throw error;
+      }
       statusLane.setPromptActive(false);
+      statusLane.setHint('ready');
       if (statusLane.shouldRefreshAfterPrompt()) {
         emitStatusLaneIfChanged(true);
       }
-      if (isReadlineClosedError(error)) {
-        const now = Date.now();
-        if (lastCtrlCAt > 0 && now - lastCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
-          printLine(chalk.yellow('\nExiting chat (double Ctrl+C).\n'));
-          keepRunning = false;
-          continue;
-        }
-        if (now - lastSigintAt > 1_200) {
-          printLine(chalk.dim('\nReadline closed. Exiting chat gracefully.\n'));
-          keepRunning = false;
-          continue;
-        }
-        lastCtrlCAt = now;
-        rl = createRl();
-        readlineClosed = false;
-        statusLane.renderHint('Press Ctrl+C again to quit, or continue typing.');
-        continue;
-      }
-      if (isAbortError(error)) {
-        const now = Date.now();
-        if (lastCtrlCAt > 0 && now - lastCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
-          printLine(chalk.yellow('\nExiting chat (double Ctrl+C).\n'));
-          keepRunning = false;
-          continue;
-        }
-        lastCtrlCAt = now;
-        if (readlineClosed) {
-          rl = createRl();
-          readlineClosed = false;
-        }
-        statusLane.renderHint('Press Ctrl+C again to quit, or continue typing.');
-        continue;
-      }
-      throw error;
-    }
-    statusLane.setPromptActive(false);
-    statusLane.setHint('ready');
-    if (statusLane.shouldRefreshAfterPrompt()) {
-      emitStatusLaneIfChanged(true);
     }
     if (!raw) continue;
     if (raw === '/') {
@@ -2855,7 +2932,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               tool,
               sessionId: runtime.sessionId,
               prompt: (reason) =>
-                promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason),
+                promptForToolApproval(rl!, toolPolicy, runtime.sessionId, tool, reason),
             });
             if (!approved) {
               console.log(chalk.yellow(`Skipped ${tool}`));
@@ -2957,7 +3034,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             tool,
             sessionId: runtime.sessionId,
             prompt: (reason) =>
-              promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason),
+              promptForToolApproval(rl!, toolPolicy, runtime.sessionId, tool, reason),
           });
           if (!approved) {
             console.log(chalk.yellow(`Skipped ${tool}`));
@@ -3222,7 +3299,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             tool: 'send_to_inbox',
             sessionId: runtime.sessionId,
             prompt: (reason) =>
-              promptForToolApproval(rl, toolPolicy, runtime.sessionId, 'send_to_inbox', reason),
+              promptForToolApproval(rl!, toolPolicy, runtime.sessionId, 'send_to_inbox', reason),
           });
           if (!approved) {
             console.log(chalk.yellow('Skipped delegated send_to_inbox (policy blocked).'));
@@ -3321,7 +3398,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 for (const line of previewLines) console.log(chalk.dim(line));
               }
               const confirm = (
-                await rl.question(chalk.yellow('Proceed with ejection? [y/N]: '))
+                await rl!.question(chalk.yellow('Proceed with ejection? [y/N]: '))
               ).trim();
               if (!['y', 'yes'].includes(confirm.toLowerCase())) {
                 console.log(chalk.dim('Ejection cancelled.'));
@@ -3411,15 +3488,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
     void enqueueTurn(raw);
   }
 
-  if (!readlineClosed) {
+  // ── Cleanup ──
+  if (inkRepl) {
+    inkRepl.cleanup();
+    inkRepl = null;
+  }
+  if (rl && !readlineClosed) {
     rl.close();
   }
   restorePromptAfterWrite = null;
-  process.off('SIGINT', onPromptSigint);
   if (pollTimer) clearInterval(pollTimer);
 
   if (pendingTurns > 0) {
-    printLine(chalk.dim(`Waiting for ${pendingTurns} pending turn(s) to finish...`));
+    console.log(chalk.dim(`Waiting for ${pendingTurns} pending turn(s) to finish...`));
     await turnQueue;
   }
 
@@ -3436,9 +3517,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
   });
 
   if (runtime.sessionId) {
-    printLine(chalk.dim(`Reattach: sb chat -a ${agentId} --attach ${runtime.sessionId}`));
+    console.log(chalk.dim(`Reattach: sb chat -a ${agentId} --attach ${runtime.sessionId}`));
   }
-  printLine(chalk.dim('\nChat ended.\n'));
+  console.log(chalk.dim('\nChat ended.\n'));
 }
 
 export function registerChatCommand(program: Command): void {
