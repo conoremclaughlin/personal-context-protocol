@@ -96,7 +96,7 @@ export function renderInkChat(options: {
   };
 
   // Mount the Ink app
-  const { unmount, waitUntilExit } = render(
+  const { unmount } = render(
     <ChatApp
       ref={handleRef}
       agentId={options.agentId}
