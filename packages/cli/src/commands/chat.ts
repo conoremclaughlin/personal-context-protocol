@@ -23,6 +23,7 @@ import { formatBackendTokenUsage, type BackendTokenUsage } from '../repl/token-u
 import { discoverSkills, loadSkillInstruction, type SkillInstruction } from '../repl/skills.js';
 import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-approval.js';
 import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
+import { parsePermissionGrant, applyPermissionGrant, buildPermissionGrantMetadata, type PermissionGrantAction } from '../repl/permission-grant.js';
 import { canActivateSkill, filterSkillsByPolicy } from '../repl/skill-policy.js';
 import {
   formatHumanTime,
@@ -76,6 +77,7 @@ interface InboxMessage {
   relatedSessionId?: string;
   recipientStudioId?: string;
   delegationToken?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface ChatRuntime {
@@ -617,6 +619,7 @@ function extractInboxMessages(result: Record<string, unknown> | null | undefined
                 ? metadata.recipientStudioId
                 : undefined,
         delegationToken,
+        metadata: metadata && typeof metadata === 'object' ? metadata : undefined,
       } satisfies InboxMessage;
     })
     .filter((m): m is InboxMessage => Boolean(m));
@@ -1301,20 +1304,28 @@ function pickLatestSession(
 }
 
 async function promptForToolApproval(
-  rl: ReturnType<typeof createInterface>,
+  rl: ReturnType<typeof createInterface> | null,
   toolPolicy: ToolPolicyState,
   sessionId: string | undefined,
   tool: string,
-  reason: string
+  reason: string,
+  inkRepl?: InkRepl | null
 ): Promise<boolean> {
-  console.log(chalk.yellow(reason));
-  const answer = (
-    await rl.question(
-      chalk.yellow(
-        `Allow ${tool}? [y] once, [s] this session, [a] always allow, [d] deny always, [n] cancel: `
-      )
-    )
-  ).trim();
+  const promptText = `Allow ${tool}? [y] once, [s] session, [a] always, [d] deny, [n] cancel`;
+
+  let answer: string;
+  if (inkRepl) {
+    // Render approval request as a system message in Ink, then capture input
+    inkRepl.addMessage('system', `${reason}\n${promptText}`);
+    answer = (await inkRepl.waitForInput()).trim();
+  } else if (rl) {
+    console.log(chalk.yellow(reason));
+    answer = (
+      await rl.question(chalk.yellow(`${promptText}: `))
+    ).trim();
+  } else {
+    return false;
+  }
 
   const result = applyToolApprovalChoice({
     policy: toolPolicy,
@@ -1323,8 +1334,13 @@ async function promptForToolApproval(
     choice: parseToolApprovalInput(answer),
   });
   if (result.message) {
-    const printer = result.approved ? chalk.green : chalk.yellow;
-    console.log(printer(result.message));
+    if (inkRepl) {
+      const label = result.approved ? '✅ granted' : '🚫 denied';
+      inkRepl.addMessage('grant', `${tool}: ${result.message}`, { label });
+    } else {
+      const printer = result.approved ? chalk.green : chalk.yellow;
+      console.log(printer(result.message));
+    }
   }
   return result.approved;
 }
@@ -1900,13 +1916,58 @@ export async function runChat(options: ChatOptions): Promise<void> {
       )
       .sort((a, b) => safeDateMs(a.createdAt) - safeDateMs(b.createdAt));
     let autoRuns = 0;
-    // Partition into collapsed (old) and expanded (recent) messages.
+
+    // Process permission grants separately — they modify local policy, not chat flow.
+    const permissionGrants = fresh.filter((msg) => msg.messageType === 'permission_grant');
+    const nonGrantMessages = fresh.filter((msg) => msg.messageType !== 'permission_grant');
+    for (const msg of permissionGrants) {
+      seenInboxIds.add(msg.id);
+      const grant = parsePermissionGrant(msg.metadata);
+      if (!grant) {
+        printLine(chalk.yellow(`Received malformed permission grant from ${msg.from || 'unknown'} — ignoring.`));
+        continue;
+      }
+      const result = applyPermissionGrant({
+        policy: toolPolicy,
+        grant,
+        sessionId: runtime.sessionId,
+      });
+      const from = msg.from || 'remote';
+      const action = grant.action;
+      const label = action === 'deny' ? '🚫 denied' : action === 'revoke' ? '↩ revoked' : '✅ granted';
+      if (inkRepl) {
+        inkRepl.addMessage('grant', result.summary, {
+          label,
+          time: formatHumanTime(msg.createdAt, runtime.userTimezone),
+          trailingMeta: `from ${from}`,
+        });
+      } else {
+        printLine('');
+        printLine(renderMessageLine('grant', result.summary, {
+          label,
+          timezone: runtime.userTimezone,
+          ts: msg.createdAt,
+          trailingMeta: `from ${from}`,
+        }));
+      }
+      appendTranscript(runtime.transcriptPath, {
+        type: 'permission_grant',
+        messageId: msg.id,
+        action,
+        tools: grant.tools,
+        summary: result.summary,
+        from,
+        createdAt: msg.createdAt || null,
+      });
+    }
+
+    // Partition non-grant messages into collapsed (old) and expanded (recent).
     // Ink uses a 24-hour threshold; legacy uses 5-day.
     const isCollapsed = inkRepl
       ? (msg: InboxMessage) => isOlderThan24Hours(msg.createdAt)
       : (msg: InboxMessage) => isOlderThan5Days(msg.createdAt);
-    const oldMessages = fresh.filter(isCollapsed);
-    const recentMessages = fresh.filter((msg) => !isCollapsed(msg));
+    const oldMessages = nonGrantMessages.filter(isCollapsed);
+    const recentMessages = nonGrantMessages.filter((msg) => !isCollapsed(msg));
     // Show collapsed summary for old messages
     if (oldMessages.length > 0) {
       for (const msg of oldMessages) {
@@ -2888,6 +2949,50 @@ export async function runChat(options: ChatOptions): Promise<void> {
           console.log(chalk.green(`Granted ${tool} for this PCP session.`));
           break;
         }
+        case 'grant-remote': {
+          // /grant-remote <agent> <toolSpec> [scope]
+          // Send a permission grant to another SB via inbox
+          const targetAgent = slash.args[0];
+          const toolSpec = slash.args[1];
+          if (!targetAgent || !toolSpec) {
+            console.log(chalk.yellow('Usage: /grant-remote <agent> <toolSpec> [once|session|always|deny|revoke]'));
+            break;
+          }
+          const scopeArg = (slash.args[2] || 'session').toLowerCase();
+          const actionMap: Record<string, PermissionGrantAction> = {
+            once: 'grant',
+            session: 'grant-session',
+            always: 'allow',
+            deny: 'deny',
+            revoke: 'revoke',
+          };
+          const action = actionMap[scopeArg];
+          if (!action) {
+            console.log(chalk.yellow(`Unknown scope: ${scopeArg}. Use: once, session, always, deny, revoke`));
+            break;
+          }
+          const grantResult = await pcp
+            .callTool('send_to_inbox', {
+              recipientAgentId: targetAgent,
+              senderAgentId: agentId,
+              messageType: 'permission_grant',
+              content: `Permission ${action}: ${toolSpec}`,
+              trigger: true,
+              metadata: buildPermissionGrantMetadata({
+                action,
+                tools: [toolSpec],
+                uses: action === 'grant' ? 1 : undefined,
+              }),
+            })
+            .catch((err: unknown) => {
+              console.log(chalk.red(`Failed to send grant: ${err instanceof Error ? err.message : String(err)}`));
+              return null;
+            });
+          if (grantResult) {
+            console.log(chalk.green(`Sent ${action} for ${toolSpec} to ${targetAgent}.`));
+          }
+          break;
+        }
         case 'deny': {
           const tool = slash.args[0];
           if (!tool) {
@@ -2979,7 +3084,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               tool,
               sessionId: runtime.sessionId,
               prompt: (reason) =>
-                promptForToolApproval(rl!, toolPolicy, runtime.sessionId, tool, reason),
+                promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl),
             });
             if (!approved) {
               console.log(chalk.yellow(`Skipped ${tool}`));
@@ -3081,7 +3186,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             tool,
             sessionId: runtime.sessionId,
             prompt: (reason) =>
-              promptForToolApproval(rl!, toolPolicy, runtime.sessionId, tool, reason),
+              promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl),
           });
           if (!approved) {
             console.log(chalk.yellow(`Skipped ${tool}`));
@@ -3346,7 +3451,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
             tool: 'send_to_inbox',
             sessionId: runtime.sessionId,
             prompt: (reason) =>
-              promptForToolApproval(rl!, toolPolicy, runtime.sessionId, 'send_to_inbox', reason),
+              promptForToolApproval(rl, toolPolicy, runtime.sessionId, 'send_to_inbox', reason, inkRepl),
           });
           if (!approved) {
             console.log(chalk.yellow('Skipped delegated send_to_inbox (policy blocked).'));

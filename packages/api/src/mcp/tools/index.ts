@@ -3301,9 +3301,10 @@ Message types:
 - task_request: Request another agent to do work
 - session_resume: Request agent to resume a specific session
 - notification: FYI, no response needed
+- permission_grant: Grant or revoke tool permissions (include permissionGrant in metadata)
 
 Trigger defaults:
-- task_request / session_resume / notification: trigger recipient wake-up by default
+- task_request / session_resume / notification / permission_grant: trigger recipient wake-up by default
 - message: does not trigger by default
 - Any default can be overridden with the \`trigger\` boolean flag
 

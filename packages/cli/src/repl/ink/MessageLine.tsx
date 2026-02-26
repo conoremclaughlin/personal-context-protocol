@@ -1,7 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 
-export type MessageRole = 'user' | 'assistant' | 'inbox' | 'activity' | 'system';
+export type MessageRole = 'user' | 'assistant' | 'inbox' | 'activity' | 'system' | 'grant';
 
 export interface MessageLineProps {
   id: string;
@@ -18,6 +18,7 @@ const ROLE_COLORS: Record<MessageRole, string> = {
   inbox: 'cyan',
   activity: 'magenta',
   system: 'gray',
+  grant: 'greenBright',
 };
 
 /** Single chat message with label, content, and trailing metadata. */

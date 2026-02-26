@@ -49,7 +49,7 @@ export function infoBar(items: string[]): string {
 
 /** Unified message renderer with role-based prefix + right-aligned time. */
 export function renderMessageLine(
-  role: 'user' | 'assistant' | 'inbox' | 'activity' | 'system',
+  role: 'user' | 'assistant' | 'inbox' | 'activity' | 'system' | 'grant',
   content: string,
   options: {
     label?: string;
@@ -80,6 +80,10 @@ export function renderMessageLine(
     case 'activity':
       prefix = options.label || 'activity';
       colorFn = chalk.magenta;
+      break;
+    case 'grant':
+      prefix = options.label || 'granted';
+      colorFn = chalk.greenBright;
       break;
     default:
       prefix = options.label || 'system';

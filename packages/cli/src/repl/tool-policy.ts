@@ -150,7 +150,7 @@ export const DEFAULT_SAFE_PCP_TOOLS = new Set<string>([
   'get_focus',
 ]);
 
-const TOOL_GROUPS: ToolGroupMap = {
+export const TOOL_GROUPS: ToolGroupMap = {
   'group:pcp-safe': Array.from(DEFAULT_SAFE_PCP_TOOLS),
   'group:pcp-comms': ['send_to_inbox', 'trigger_agent', 'send_response'],
   'group:pcp-memory': ['remember', 'recall', 'forget', 'update_memory', 'restore_memory'],
