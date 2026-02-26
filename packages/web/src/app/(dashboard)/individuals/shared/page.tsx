@@ -8,6 +8,7 @@ import { ArrowLeft, History, Loader2, Shield, Sparkles, User, Workflow } from 'l
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useApiQuery } from '@/lib/api';
 
 interface UserIdentity {
@@ -25,7 +26,7 @@ interface UserIdentityResponse {
   userIdentity: UserIdentity | null;
 }
 
-function SharedDocumentCard({
+function SharedDocumentPanel({
   title,
   subtitle,
   icon,
@@ -115,26 +116,49 @@ export default function SharedDocumentsPage() {
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <SharedDocumentCard
-          title="About you"
-          subtitle="User profile"
-          icon={<User className="h-5 w-5 text-blue-600" />}
-          content={userIdentity.userProfileMd}
-        />
-        <SharedDocumentCard
-          title="Shared values"
-          subtitle="Cross-agent principles"
-          icon={<Sparkles className="h-5 w-5 text-amber-600" />}
-          content={userIdentity.sharedValuesMd}
-        />
-        <SharedDocumentCard
-          title="Collaboration process"
-          subtitle="How we operate"
-          icon={<Workflow className="h-5 w-5 text-emerald-600" />}
-          content={userIdentity.processMd}
-        />
-      </div>
+      <Tabs defaultValue="user" className="w-full">
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-2 bg-transparent p-0">
+          <TabsTrigger value="user" className="border bg-white data-[state=active]:border-blue-300 data-[state=active]:bg-blue-50">
+            <User className="mr-2 h-4 w-4" />
+            About you
+          </TabsTrigger>
+          <TabsTrigger value="values" className="border bg-white data-[state=active]:border-amber-300 data-[state=active]:bg-amber-50">
+            <Sparkles className="mr-2 h-4 w-4" />
+            Shared values
+          </TabsTrigger>
+          <TabsTrigger value="process" className="border bg-white data-[state=active]:border-emerald-300 data-[state=active]:bg-emerald-50">
+            <Workflow className="mr-2 h-4 w-4" />
+            Process
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="user" className="mt-4">
+          <SharedDocumentPanel
+            title="About you"
+            subtitle="User profile"
+            icon={<User className="h-5 w-5 text-blue-600" />}
+            content={userIdentity.userProfileMd}
+          />
+        </TabsContent>
+
+        <TabsContent value="values" className="mt-4">
+          <SharedDocumentPanel
+            title="Shared values"
+            subtitle="Cross-agent principles"
+            icon={<Sparkles className="h-5 w-5 text-amber-600" />}
+            content={userIdentity.sharedValuesMd}
+          />
+        </TabsContent>
+
+        <TabsContent value="process" className="mt-4">
+          <SharedDocumentPanel
+            title="Collaboration process"
+            subtitle="How we operate"
+            icon={<Workflow className="h-5 w-5 text-emerald-600" />}
+            content={userIdentity.processMd}
+          />
+        </TabsContent>
+      </Tabs>
 
       <Card className="border-indigo-200 bg-indigo-50/40">
         <CardContent className="flex items-start gap-3 p-4 text-sm text-indigo-900">
