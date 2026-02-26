@@ -20,6 +20,7 @@ import {
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useApiQuery } from '@/lib/api';
+import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 
 interface Identity {
   id: string;
@@ -241,7 +242,7 @@ export default function AgentDetailPage() {
             <CardContent>
               <div className="prose prose-sm max-w-none dark:prose-invert prose-headings:mt-4 prose-headings:mb-2 prose-p:my-2">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {identity.soul || ''}
+                  {normalizeDocMarkdown(identity.soul)}
                 </ReactMarkdown>
               </div>
             </CardContent>
@@ -263,7 +264,7 @@ export default function AgentDetailPage() {
             <CardContent>
               <div className="prose prose-sm max-w-none dark:prose-invert">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {identity.heartbeat || ''}
+                  {normalizeDocMarkdown(identity.heartbeat)}
                 </ReactMarkdown>
               </div>
             </CardContent>

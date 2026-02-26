@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Loader2, Sparkles, FileText, Zap } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
+import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 import clsx from 'clsx';
 
 // Dynamic import for TipTap diff viewer (client-only, heavy deps)
@@ -303,8 +304,8 @@ export default function VersionExplorerPage() {
                       <div className="p-4">
                         {soulChanged ? (
                           <MarkdownVersionDiff
-                            currentMarkdown={selectedVersion?.soul || ''}
-                            previousMarkdown={comparisonVersion?.soul || ''}
+                            currentMarkdown={normalizeDocMarkdown(selectedVersion?.soul)}
+                            previousMarkdown={normalizeDocMarkdown(comparisonVersion?.soul)}
                           />
                         ) : (
                           <p className="text-sm text-gray-500 italic">No changes in this file</p>
@@ -337,8 +338,8 @@ export default function VersionExplorerPage() {
                       <div className="p-4">
                         {heartbeatChanged ? (
                           <MarkdownVersionDiff
-                            currentMarkdown={selectedVersion?.heartbeat || ''}
-                            previousMarkdown={comparisonVersion?.heartbeat || ''}
+                            currentMarkdown={normalizeDocMarkdown(selectedVersion?.heartbeat)}
+                            previousMarkdown={normalizeDocMarkdown(comparisonVersion?.heartbeat)}
                           />
                         ) : (
                           <p className="text-sm text-gray-500 italic">No changes in this file</p>

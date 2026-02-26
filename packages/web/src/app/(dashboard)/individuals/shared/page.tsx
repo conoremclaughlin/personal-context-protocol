@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useApiQuery } from '@/lib/api';
+import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 
 interface UserIdentity {
   id: string;
@@ -137,7 +138,7 @@ export default function SharedDocumentsPage() {
             title="About you"
             subtitle="User profile"
             icon={<User className="h-5 w-5 text-blue-600" />}
-            content={userIdentity.userProfileMd}
+            content={normalizeDocMarkdown(userIdentity.userProfileMd)}
           />
         </TabsContent>
 
@@ -146,7 +147,7 @@ export default function SharedDocumentsPage() {
             title="Shared values"
             subtitle="Cross-agent principles"
             icon={<Sparkles className="h-5 w-5 text-amber-600" />}
-            content={userIdentity.sharedValuesMd}
+            content={normalizeDocMarkdown(userIdentity.sharedValuesMd)}
           />
         </TabsContent>
 
@@ -155,7 +156,7 @@ export default function SharedDocumentsPage() {
             title="Collaboration process"
             subtitle="How we operate"
             icon={<Workflow className="h-5 w-5 text-emerald-600" />}
-            content={userIdentity.processMd}
+            content={normalizeDocMarkdown(userIdentity.processMd)}
           />
         </TabsContent>
       </Tabs>

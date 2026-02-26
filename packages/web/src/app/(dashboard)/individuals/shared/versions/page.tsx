@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useApiQuery } from '@/lib/api';
+import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 
 const MarkdownVersionDiff = dynamic(() => import('@/stories/diff-versions/markdown-version-diff'), {
   ssr: false,
@@ -223,8 +224,8 @@ export default function SharedVersionsPage() {
                         icon={<User className="h-4 w-4 text-blue-600" />}
                         label="About you"
                         changed={userProfileChanged}
-                        current={selectedVersion.userProfileMd || ''}
-                        previous={comparisonVersion.userProfileMd || ''}
+                        current={normalizeDocMarkdown(selectedVersion.userProfileMd)}
+                        previous={normalizeDocMarkdown(comparisonVersion.userProfileMd)}
                       />
                     )}
 
@@ -233,8 +234,8 @@ export default function SharedVersionsPage() {
                         icon={<Sparkles className="h-4 w-4 text-amber-600" />}
                         label="Shared values"
                         changed={valuesChanged}
-                        current={selectedVersion.sharedValuesMd || ''}
-                        previous={comparisonVersion.sharedValuesMd || ''}
+                        current={normalizeDocMarkdown(selectedVersion.sharedValuesMd)}
+                        previous={normalizeDocMarkdown(comparisonVersion.sharedValuesMd)}
                       />
                     )}
 
@@ -243,8 +244,8 @@ export default function SharedVersionsPage() {
                         icon={<Workflow className="h-4 w-4 text-emerald-600" />}
                         label="Process"
                         changed={processChanged}
-                        current={selectedVersion.processMd || ''}
-                        previous={comparisonVersion.processMd || ''}
+                        current={normalizeDocMarkdown(selectedVersion.processMd)}
+                        previous={normalizeDocMarkdown(comparisonVersion.processMd)}
                       />
                     )}
                   </div>

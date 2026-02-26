@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useApiQuery } from '@/lib/api';
+import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 import {
   Activity,
   ArrowRight,
@@ -159,19 +160,19 @@ function SharedContextCard({ userIdentity }: { userIdentity: UserIdentity }) {
           icon={<User className="h-4 w-4 text-blue-600" />}
           title="About you"
           subtitle="User profile"
-          content={userIdentity.userProfileMd}
+          content={normalizeDocMarkdown(userIdentity.userProfileMd)}
         />
         <SharedDocPreview
           icon={<Sparkles className="h-4 w-4 text-amber-600" />}
           title="Shared values"
           subtitle="Core principles"
-          content={userIdentity.sharedValuesMd}
+          content={normalizeDocMarkdown(userIdentity.sharedValuesMd)}
         />
         <SharedDocPreview
           icon={<Workflow className="h-4 w-4 text-emerald-600" />}
           title="Team process"
           subtitle="Operating rhythm"
-          content={userIdentity.processMd}
+          content={normalizeDocMarkdown(userIdentity.processMd)}
         />
       </CardContent>
     </Card>
