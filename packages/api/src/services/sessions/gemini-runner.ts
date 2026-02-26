@@ -6,8 +6,8 @@
  *   - Message via -p flag (not stdin)
  *   - JSON output via -o stream-json
  *   - Auto-approve via --yolo
- *   - Resume via -r (index-based, not UUID — session continuity is best-effort)
- *   - System prompt via --policy or prepended to message
+ *   - Resume via -r <uuid> (Gemini emits session_id in the init event)
+ *   - System prompt via --policy
  */
 
 import { spawn, type ChildProcess } from 'child_process';
@@ -48,15 +48,12 @@ export class GeminiRunner implements IClaudeRunner {
       config: ClaudeRunnerConfig;
     }
   ): Promise<ClaudeRunnerResult> {
-    const { injectedContext, config } = options;
+    const { claudeSessionId, injectedContext, config } = options;
+    const isResume = !!claudeSessionId;
 
-    // Gemini uses index-based session resume (-r), not UUID-based.
-    // For now, always start fresh sessions — resume support is best-effort.
-    const sessionId = randomUUID();
-
-    // Build the message with injected context (prepended, like Codex runner)
+    // Build the message with injected context on first turn (same as Claude/Codex)
     let fullMessage = message;
-    if (injectedContext) {
+    if (injectedContext && !isResume) {
       const contextBlock = formatInjectedContext(injectedContext);
       fullMessage = `${contextBlock}\n\n---\n\n${message}`;
     }
@@ -67,9 +64,10 @@ export class GeminiRunner implements IClaudeRunner {
     );
 
     try {
-      const args = this.buildArgs(fullMessage, config, policyPath);
+      const args = this.buildArgs(fullMessage, config, policyPath, claudeSessionId);
       logger.info('Spawning Gemini CLI', {
-        sessionId,
+        isResume,
+        claudeSessionId: claudeSessionId || '(new)',
         workingDirectory: config.workingDirectory,
         messageLength: fullMessage.length,
         hasPcpAccessToken: !!config.pcpAccessToken,
@@ -77,9 +75,12 @@ export class GeminiRunner implements IClaudeRunner {
 
       const result = await this.spawnProcess(args, config);
 
+      // Use session ID from Gemini's init event, fall back to the one we passed in
+      const resolvedSessionId = result.sessionId || claudeSessionId || randomUUID();
+
       return {
         success: true,
-        claudeSessionId: sessionId,
+        claudeSessionId: resolvedSessionId,
         responses: result.responses,
         usage: result.usage,
         finalTextResponse: result.finalTextResponse,
@@ -87,12 +88,12 @@ export class GeminiRunner implements IClaudeRunner {
       };
     } catch (error) {
       logger.error('Gemini process failed', {
-        sessionId,
+        claudeSessionId,
         error: error instanceof Error ? error.message : String(error),
       });
       return {
         success: false,
-        claudeSessionId: sessionId,
+        claudeSessionId: claudeSessionId || randomUUID(),
         responses: [],
         error: error instanceof Error ? error.message : 'Unknown error',
       };
@@ -101,8 +102,17 @@ export class GeminiRunner implements IClaudeRunner {
     }
   }
 
-  private buildArgs(message: string, config: ClaudeRunnerConfig, policyPath?: string): string[] {
+  private buildArgs(
+    message: string,
+    config: ClaudeRunnerConfig,
+    policyPath?: string,
+    resumeSessionId?: string
+  ): string[] {
     const args: string[] = ['-p', message, '-o', 'stream-json', '--yolo'];
+
+    if (resumeSessionId) {
+      args.push('-r', resumeSessionId);
+    }
 
     if (config.model) {
       args.push('-m', config.model);
@@ -123,6 +133,7 @@ export class GeminiRunner implements IClaudeRunner {
     usage?: GeminiUsageStats;
     finalTextResponse?: string;
     toolCalls: ToolCall[];
+    sessionId?: string;
   }> {
     return new Promise((resolve, reject) => {
       // Strip CLAUDECODE to prevent env leaking into subprocess
@@ -144,6 +155,7 @@ export class GeminiRunner implements IClaudeRunner {
       const toolCalls: ToolCall[] = [];
       let usage: GeminiUsageStats | undefined;
       let finalTextResponse: string | undefined;
+      let resolvedSessionId: string | undefined;
       let settled = false;
       let lastActivityAt = Date.now();
 
@@ -166,6 +178,7 @@ export class GeminiRunner implements IClaudeRunner {
               usage,
               toolCalls,
               finalTextResponse: finalTextResponse || `[Process timed out after ${idleSecs}s idle]`,
+              sessionId: resolvedSessionId,
             });
           }
         }, IDLE_TIMEOUT_MS);
@@ -185,6 +198,7 @@ export class GeminiRunner implements IClaudeRunner {
             usage,
             toolCalls,
             finalTextResponse: finalTextResponse || '[Process hit hard timeout]',
+            sessionId: resolvedSessionId,
           });
         }
       }, PROCESS_TIMEOUT_MS);
@@ -206,6 +220,11 @@ export class GeminiRunner implements IClaudeRunner {
             const parsed = JSON.parse(line);
             this.handleStreamEvent(parsed, responses);
             this.captureToolCall(parsed, toolCalls);
+
+            // Capture session_id from init event (Gemini emits this on every session)
+            if (parsed.type === 'init' && typeof parsed.session_id === 'string') {
+              resolvedSessionId = parsed.session_id;
+            }
 
             // Capture usage stats
             if (parsed.usageMetadata || parsed.usage) {
@@ -315,7 +334,7 @@ export class GeminiRunner implements IClaudeRunner {
           }
         }
 
-        resolve({ responses, usage, toolCalls, finalTextResponse });
+        resolve({ responses, usage, toolCalls, finalTextResponse, sessionId: resolvedSessionId });
       });
     });
   }
