@@ -37,7 +37,7 @@ import {
   delimiter as pathDelimiter,
 } from 'path';
 import { homedir } from 'os';
-import { installHooks } from './hooks.js';
+import { installHooks, callPcpTool } from './hooks.js';
 import { loadAuth, decodeJwtPayload, isTokenExpired } from '../auth/tokens.js';
 import { resolveAgentId } from '../backends/identity.js';
 
@@ -833,10 +833,38 @@ async function renameStudio(from: string, to: string): Promise<void> {
       process.exit(1);
     }
 
+    // Read studioId before moving (for DB update)
+    let studioId: string | undefined;
+    try {
+      const identityPath = join(fromPath, '.pcp', 'identity.json');
+      if (existsSync(identityPath)) {
+        const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
+        studioId = identity.studioId;
+      }
+    } catch {
+      // Non-fatal
+    }
+
     git(`worktree move "${fromPath}" "${toPath}"`, gitRoot);
 
     spinner.text = 'Updating studio identity metadata...';
     const updatedIdentity = updateIdentityForStudioRename(toPath, from, to);
+
+    // Update the cloud record if we have a studioId
+    if (studioId) {
+      spinner.text = 'Syncing rename to cloud...';
+      try {
+        await callPcpTool('update_workspace', {
+          workspaceId: studioId,
+          agentId: resolveAgentId() || 'unknown',
+          worktreePath: toPath,
+          slug: to,
+        });
+      } catch {
+        // Non-fatal: local rename succeeded, cloud sync can be retried
+        console.log(chalk.yellow('\n  Note: Cloud sync failed — slug will update on next session start'));
+      }
+    }
 
     // Intentionally keep existing branch name unchanged.
     // Studio names are path/identity labels; branch naming is an independent concern.

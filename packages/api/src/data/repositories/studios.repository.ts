@@ -58,6 +58,8 @@ export interface UpdateStudioInput {
   purpose?: string;
   workType?: WorkType;
   roleTemplate?: string | null;
+  worktreePath?: string;
+  slug?: string | null;
   metadata?: Json;
   archivedAt?: string;
   cleanedAt?: string;
@@ -242,6 +244,8 @@ export class StudiosRepository {
     if (input.purpose !== undefined) updateData.purpose = input.purpose;
     if (input.workType !== undefined) updateData.work_type = input.workType;
     if (input.roleTemplate !== undefined) updateData.role_template = input.roleTemplate;
+    if (input.worktreePath !== undefined) updateData.worktree_path = input.worktreePath;
+    if (input.slug !== undefined) updateData.slug = input.slug;
     if (input.metadata !== undefined) updateData.metadata = input.metadata;
     if (input.archivedAt !== undefined) updateData.archived_at = input.archivedAt;
     if (input.cleanedAt !== undefined) updateData.cleaned_at = input.cleanedAt;

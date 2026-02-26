@@ -81,6 +81,8 @@ const updateWorkspaceSchema = userIdentifierBaseSchema.extend({
   status: z.enum(['active', 'idle', 'archived']).optional().describe('New workspace status'),
   purpose: z.string().optional().describe('Updated purpose description'),
   roleTemplate: z.string().optional().describe('Role template name to set'),
+  worktreePath: z.string().optional().describe('Updated worktree path (after rename/move)'),
+  slug: z.string().optional().describe('Updated studio slug'),
   sessionId: z.string().uuid().optional().describe('Session ID to link'),
   unlinkSession: z
     .boolean()
@@ -341,7 +343,17 @@ export async function handleUpdateWorkspace(args: unknown, dataComposer: DataCom
   const parsed = updateWorkspaceSchema.parse(args);
   await resolveUserOrThrow(parsed, dataComposer);
 
-  const { workspaceId, agentId, status, purpose, roleTemplate, sessionId, unlinkSession } = parsed;
+  const {
+    workspaceId,
+    agentId,
+    status,
+    purpose,
+    roleTemplate,
+    worktreePath,
+    slug,
+    sessionId,
+    unlinkSession,
+  } = parsed;
   const studiosRepo = dataComposer.repositories.studios;
 
   // Verify workspace exists
@@ -366,6 +378,12 @@ export async function handleUpdateWorkspace(args: unknown, dataComposer: DataCom
     }
     if (roleTemplate !== undefined) {
       updateObj.roleTemplate = roleTemplate;
+    }
+    if (worktreePath !== undefined) {
+      updateObj.worktreePath = worktreePath;
+    }
+    if (slug !== undefined) {
+      updateObj.slug = slug;
     }
     updated = await studiosRepo.update(workspaceId, updateObj);
   }
