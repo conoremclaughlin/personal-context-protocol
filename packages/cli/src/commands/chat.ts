@@ -64,6 +64,7 @@ interface InboxMessage {
   content: string;
   from?: string;
   subject?: string;
+  createdAt?: string;
   threadKey?: string;
   messageType?: string;
   relatedSessionId?: string;
@@ -439,8 +440,7 @@ function compactForHistoryPreview(role: 'user' | 'assistant' | 'inbox', content:
   if (role === 'inbox') {
     return compactForLedger(normalized, 180);
   }
-  if (normalized.length <= 4000) return normalized;
-  return `${normalized.slice(0, 3999)}…`;
+  return normalized;
 }
 
 function extractLocalToolCalls(responseText: string): LocalToolCall[] {
@@ -549,6 +549,12 @@ function extractInboxMessages(result: Record<string, unknown> | null | undefined
         content: String(msg.content || ''),
         from: msg.senderAgentId ? String(msg.senderAgentId) : msg.from ? String(msg.from) : undefined,
         subject: msg.subject ? String(msg.subject) : undefined,
+        createdAt:
+          typeof msg.createdAt === 'string'
+            ? msg.createdAt
+            : typeof msg.created_at === 'string'
+              ? msg.created_at
+              : undefined,
         threadKey: msg.threadKey ? String(msg.threadKey) : undefined,
         messageType:
           typeof msg.messageType === 'string'
@@ -1399,7 +1405,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
   }
   runtime.toolMode = toolPolicy.getMode();
   const statusLane = new LiveStatusLane(runtime.uiMode === 'live' && Boolean(output.isTTY), runtime.userTimezone);
-  const printLine = (line = '') => statusLane.printLine(line);
+  let restorePromptAfterWrite: (() => void) | null = null;
+  const printLine = (line = '') => {
+    statusLane.printLine(line);
+    restorePromptAfterWrite?.();
+  };
 
   const ledger = new ContextLedger();
   const seenInboxIds = new Set<string>();
@@ -1791,11 +1801,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
         type: 'inbox',
         messageId: msg.id,
         rendered,
+        createdAt: msg.createdAt || null,
         delegationToken: msg.delegationToken || null,
         messageType: msg.messageType || null,
         relatedSessionId: msg.relatedSessionId || null,
       });
-      printLine(`\n${renderTimedBlock(chalk.cyan(rendered), runtime.userTimezone)}\n`);
+      printLine(`\n${renderTimedBlock(chalk.cyan(rendered), runtime.userTimezone, msg.createdAt)}\n`);
 
       const eligibleForAutoRun =
         runtime.autoRunInbox &&
@@ -1880,9 +1891,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
         activitySubtype: activity.subtype || null,
         agentId: activity.agentId || null,
         sessionId: activity.sessionId || null,
+        createdAt: activity.createdAt || null,
         content: activity.content || null,
       });
-      printLine(`\n${renderTimedBlock(chalk.magenta(rendered), runtime.userTimezone)}\n`);
+      printLine(`\n${renderTimedBlock(chalk.magenta(rendered), runtime.userTimezone, activity.createdAt)}\n`);
     }
 
     if (force && activities.length === 0) {
@@ -2140,10 +2152,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
   let lastCtrlCAt = 0;
   let lastSigintAt = 0;
   let exitAfterTurnNoticeShown = false;
+  let activePromptLabel = `${agentId}> `;
   const onPromptSigint = () => {
     lastSigintAt = Date.now();
   };
   process.on('SIGINT', onPromptSigint);
+  restorePromptAfterWrite = () => {
+    if (!statusLane.isLive() || !statusLane.isPromptActive() || readlineClosed) return;
+    const currentLine = (rl as unknown as { line?: string }).line || '';
+    output.write(chalk.green(statusLane.buildPromptLabel(activePromptLabel)));
+    if (currentLine) {
+      output.write(currentLine);
+    }
+  };
 
   while (keepRunning) {
     if (readlineClosed) {
@@ -2172,6 +2193,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     statusLane.setPromptActive(true);
     try {
       const promptLabel = pendingTurns > 0 ? `${agentId}+${pendingTurns}> ` : `${agentId}> `;
+      activePromptLabel = promptLabel;
       const renderedPrompt = statusLane.buildPromptLabel(promptLabel);
       raw = (await rl.question(chalk.green(renderedPrompt))).trim();
       lastCtrlCAt = 0;
@@ -2182,13 +2204,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       if (isReadlineClosedError(error)) {
         const now = Date.now();
-        const looksLikeSigint = now - lastSigintAt <= 750;
         if (lastCtrlCAt > 0 && now - lastCtrlCAt <= CTRL_C_EXIT_WINDOW_MS) {
           printLine(chalk.yellow('\nExiting chat (double Ctrl+C).\n'));
           keepRunning = false;
           continue;
         }
-        if (!looksLikeSigint) {
+        if (now - lastSigintAt > 1_200) {
           printLine(chalk.dim('\nReadline closed. Exiting chat gracefully.\n'));
           keepRunning = false;
           continue;
@@ -3153,6 +3174,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   if (!readlineClosed) {
     rl.close();
   }
+  restorePromptAfterWrite = null;
   process.off('SIGINT', onPromptSigint);
   if (pollTimer) clearInterval(pollTimer);
 

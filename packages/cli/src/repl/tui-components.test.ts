@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { LiveStatusLane, renderResumeHistoryLines } from './tui-components.js';
+import { LiveStatusLane, renderResumeHistoryLines, renderTimedBlock } from './tui-components.js';
 
 function stripAnsi(value: string): string {
   return value.replace(/\u001b\[[0-9;]*m/g, '');
@@ -43,5 +43,13 @@ describe('tui-components', () => {
     expect(prompt).toContain('status> context:99/100 queue:idle');
     expect(prompt).toContain('hint> Press Ctrl+C again to quit');
     expect(prompt).toContain('wren> ');
+  });
+
+  it('uses provided event timestamp for timed blocks', () => {
+    const rendered = stripAnsi(
+      renderTimedBlock('hello', 'America/Los_Angeles', '2026-02-26T04:09:14.000Z')
+    );
+    expect(rendered).toContain('hello');
+    expect(rendered).toContain('8:09:14');
   });
 });

@@ -31,6 +31,25 @@ export function formatNow(timezone?: string): string {
   }
 }
 
+function formatClock(value: string, timezone?: string): string {
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return formatNow(timezone);
+  try {
+    return new Date(ms).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+      timeZone: timezone,
+    });
+  } catch {
+    return new Date(ms).toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  }
+}
+
 function pickWaitingVerb(tick: number): string {
   if (WAITING_VERBS.length === 0) return 'Working';
   return WAITING_VERBS[tick % WAITING_VERBS.length]!;
@@ -133,8 +152,9 @@ export class LiveStatusLane {
   }
 }
 
-export function renderTimedBlock(content: string, timezone?: string): string {
-  return `${content} ${chalk.dim(`• ${formatNow(timezone)}`)}`;
+export function renderTimedBlock(content: string, timezone?: string, ts?: string): string {
+  const clock = ts ? formatClock(ts, timezone) : formatNow(timezone);
+  return `${content} ${chalk.dim(`• ${clock}`)}`;
 }
 
 function formatClockTime(value: string, timezone?: string): string {

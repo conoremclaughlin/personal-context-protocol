@@ -595,6 +595,7 @@ describe('runChat integration', () => {
                   senderAgentId: 'wren',
                   subject: 'PR #50',
                   threadKey: 'pr:50',
+                  createdAt: '2026-02-26T04:03:04.000Z',
                 },
               ],
             };
@@ -618,6 +619,7 @@ describe('runChat integration', () => {
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('📥 wren — PR #50: please re-review');
+    expect(logText).toContain('• 8:03:04 PM');
     expect(logText).toContain('thread=pr:50');
   });
 
