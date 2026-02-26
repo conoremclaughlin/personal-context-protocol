@@ -25,7 +25,9 @@ import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-ap
 import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
 import { canActivateSkill, filterSkillsByPolicy } from '../repl/skill-policy.js';
 import {
+  formatHumanTime,
   formatNow,
+  isOlderThan24Hours,
   isOlderThan5Days,
   LiveStatusLane,
   renderCollapsedInbox,
@@ -1894,9 +1896,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
       )
       .sort((a, b) => safeDateMs(a.createdAt) - safeDateMs(b.createdAt));
     let autoRuns = 0;
-    // Partition into old (>5d) and recent messages
-    const oldMessages = fresh.filter((msg) => isOlderThan5Days(msg.createdAt));
-    const recentMessages = fresh.filter((msg) => !isOlderThan5Days(msg.createdAt));
+    // Partition into collapsed (old) and expanded (recent) messages.
+    // Ink uses a 24-hour threshold; legacy uses 5-day.
+    const isCollapsed = inkRepl
+      ? (msg: InboxMessage) => isOlderThan24Hours(msg.createdAt)
+      : (msg: InboxMessage) => isOlderThan5Days(msg.createdAt);
+    const oldMessages = fresh.filter(isCollapsed);
+    const recentMessages = fresh.filter((msg) => !isCollapsed(msg));
     // Show collapsed summary for old messages
     if (oldMessages.length > 0) {
       for (const msg of oldMessages) {
@@ -1919,7 +1925,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
         });
       }
       if (inkRepl) {
-        inkRepl.addMessage('system', `${oldMessages.length} older inbox message(s) collapsed`);
+        // Show one-line summaries for each collapsed message
+        const summaries = oldMessages.map((msg) => {
+          const from = msg.from || 'unknown';
+          const subj = msg.subject ? ` — ${msg.subject}` : '';
+          return `${from}${subj}`;
+        });
+        inkRepl.addMessage('system', `${oldMessages.length} older message(s): ${summaries.join(', ')}. Use /inbox to expand.`);
       } else {
         printLine('');
         printLine(renderCollapsedInbox(oldMessages.length));
@@ -1962,7 +1974,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
         relatedSessionId: msg.relatedSessionId || null,
       });
       if (inkRepl) {
-        inkRepl.addMessage('inbox', rendered, { time: msg.createdAt ? formatNow(runtime.userTimezone) : undefined });
+        // Emoji in label, clean content without emoji prefix
+        const inboxContent = `${heading}${delegationLabel}: ${msg.content}`.trim();
+        inkRepl.addMessage('inbox', inboxContent, {
+          label: '📬 inbox',
+          time: formatHumanTime(msg.createdAt, runtime.userTimezone),
+        });
       } else {
         printLine('');
         printLine(separator());
@@ -2408,8 +2425,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
           : 'inbox' as const;
         const label = entry.role === 'user' ? 'you'
           : entry.role === 'assistant' ? agentId
-          : 'inbox';
-        inkRepl.addMessage(role, entry.content, { label, time: entry.ts });
+          : '📬 inbox';
+        inkRepl.addMessage(role, entry.content, { label, time: formatHumanTime(entry.ts, runtime.userTimezone) });
       }
     }
   } else {
@@ -2560,6 +2577,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/quit | /exit              End chat',
               '/refresh                   Re-bootstrap identity context from PCP',
               '/inbox                     Poll inbox now',
+              '/inbox full                Show all unread messages expanded',
               '/events [now|on|off]       Poll/toggle merged activity stream',
               '/session                   Show active session info',
               '/autorun [on|off]          Toggle inbox auto-run execution',
@@ -2611,7 +2629,28 @@ export async function runChat(options: ChatOptions): Promise<void> {
           if (inkRepl) inkRepl.requestExit();
           break;
         case 'inbox':
-          await pollInbox(true);
+          if (slash.args[0] === 'full' && inkRepl) {
+            // Show all inbox messages fully expanded (re-fetch and display)
+            const fullResult = (await pcp
+              .callTool('get_inbox', { agentId, status: 'unread', limit: 20 })
+              .catch(() => null)) as Record<string, unknown> | null;
+            const allInbox = extractInboxMessages(fullResult)
+              .sort((a, b) => safeDateMs(a.createdAt) - safeDateMs(b.createdAt));
+            if (allInbox.length === 0) {
+              inkRepl.printSystem('No unread inbox messages.');
+            } else {
+              for (const msg of allInbox) {
+                const from = msg.from || 'unknown';
+                const heading = msg.subject ? `${from} — ${msg.subject}` : from;
+                inkRepl.addMessage('inbox', `${heading}: ${msg.content}`.trim(), {
+                  label: '📬 inbox',
+                  time: formatHumanTime(msg.createdAt, runtime.userTimezone),
+                });
+              }
+            }
+          } else {
+            await pollInbox(true);
+          }
           break;
         case 'refresh': {
           console.log(chalk.dim('Refreshing identity context from PCP...'));

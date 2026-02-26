@@ -33,7 +33,7 @@ export function MessageLine({
   const meta = [time, trailingMeta].filter(Boolean).join('  ·  ');
 
   return (
-    <Box flexDirection="column" paddingLeft={1}>
+    <Box flexDirection="column" paddingLeft={1} marginTop={1}>
       {/* Header: label + metadata on one line */}
       <Box>
         <Text bold color={color}>{displayLabel}</Text>
