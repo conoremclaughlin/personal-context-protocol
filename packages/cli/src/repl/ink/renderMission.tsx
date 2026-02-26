@@ -33,13 +33,17 @@ export function renderInkMission(options: {
     }
   };
 
-  const { unmount } = render(
+  const { unmount, clear } = render(
     <MissionApp
       ref={handleRef}
       timezone={options.timezone}
       onExit={onExit}
     />
   );
+
+  // Clear Ink's dynamic area on resize to prevent ghost dock duplicates
+  const onResize = () => { clear(); };
+  process.stdout.on('resize', onResize);
 
   const getHandle = (): MissionAppHandle => {
     if (!handleRef.current) {
@@ -52,7 +56,10 @@ export function renderInkMission(options: {
     addEvent: (event) => getHandle().addEvent(event),
     setAgents: (agents) => getHandle().setAgents(agents),
     setStatus: (status) => getHandle().setStatus(status),
-    cleanup: () => unmount(),
+    cleanup: () => {
+      process.stdout.off('resize', onResize);
+      unmount();
+    },
     waitForExit: () => exitPromise,
   };
 }

@@ -96,7 +96,7 @@ export function renderInkChat(options: {
   };
 
   // Mount the Ink app
-  const { unmount } = render(
+  const { unmount, clear } = render(
     <ChatApp
       ref={handleRef}
       agentId={options.agentId}
@@ -106,6 +106,12 @@ export function renderInkChat(options: {
       onExit={onExit}
     />
   );
+
+  // On terminal resize, clear Ink's dynamic output area so it re-renders
+  // cleanly at the new width. Without this, the old dock gets pushed into
+  // scrollback as a ghost duplicate.
+  const onResize = () => { clear(); };
+  process.stdout.on('resize', onResize);
 
   // Get the handle (available synchronously after render)
   const getHandle = (): ChatAppHandle => {
@@ -161,6 +167,7 @@ export function renderInkChat(options: {
     },
 
     cleanup: () => {
+      process.stdout.off('resize', onResize);
       unmount();
     },
 
