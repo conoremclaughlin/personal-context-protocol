@@ -324,12 +324,8 @@ describe('runChat integration', () => {
     expect(testState.pcpCalls.some((call) => call.tool === 'end_session')).toBe(false);
 
     const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(sessionStatusLine).toContain('Session: sess-b222');
+    expect(sessionStatusLine).toContain('sess-b222');
     expect(sessionStatusLine).toContain('Thread: spec:cli-session-hooks');
-    expect(sessionStatusLine).toContain('codex-backend-a');
-    expect(sessionStatusLine).toContain('codex-backend-b');
-    expect(sessionStatusLine).toContain('studio:main (aaaaaaaa-bbbb-cccc-dddd-111111111111)');
-    expect(sessionStatusLine).toContain('studio=review (bbbbbbbb-cccc-dddd-eeee-222222222222)');
   });
 
   it('supports attach-latest without prompting', async () => {
@@ -373,7 +369,7 @@ describe('runChat integration', () => {
 
     const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(sessionStatusLine).not.toContain('Select session to attach');
-    expect(sessionStatusLine).toContain('Session: sess-new');
+    expect(sessionStatusLine).toContain('sess-new');
     expect(sessionStatusLine).toContain('Thread: pr:2');
   });
 
@@ -408,7 +404,7 @@ describe('runChat integration', () => {
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('Warning: --attach-latest unavailable');
-    expect(logText).toContain('Session: sess-fallback');
+    expect(logText).toContain('sess-fallback');
   });
 
   it('auto-attaches latest active session by default when no --new/--attach is provided', async () => {
@@ -451,8 +447,8 @@ describe('runChat integration', () => {
 
     expect(testState.pcpCalls.some((call) => call.tool === 'start_session')).toBe(false);
     const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(sessionStatusLine).toContain('Mode: auto-attached to latest active session');
-    expect(sessionStatusLine).toContain('Session: sess-latest');
+    expect(sessionStatusLine).toContain('Auto-attached to latest session');
+    expect(sessionStatusLine).toContain('sess-latest');
     expect(sessionStatusLine).toContain('Thread: pr:10');
   });
 
@@ -495,8 +491,8 @@ describe('runChat integration', () => {
     });
 
     const sessionStatusLine = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(sessionStatusLine).toContain('Session: sess-lumen-older');
-    expect(sessionStatusLine).not.toContain('Session: sess-wren-latest');
+    expect(sessionStatusLine).toContain('sess-lumen-older');
+    expect(sessionStatusLine).not.toContain('sess-wren-latest');
   });
 
   it('applies session-visibility matrix to auto-attach behavior', async () => {
@@ -578,12 +574,12 @@ describe('runChat integration', () => {
         pollSeconds: '999',
       });
       const logText = stripAnsi(logSpy.mock.calls.slice(before).flat().join('\n'));
-      expect(logText, `visibility=${row.visibility}`).toContain(`Session: ${row.expectedSession}`);
+      expect(logText, `visibility=${row.visibility}`).toContain(row.expectedSession);
       if (row.expectsAutoAttach) {
-        expect(logText, `visibility=${row.visibility}`).toContain('Mode: auto-attached to latest active session');
+        expect(logText, `visibility=${row.visibility}`).toContain('Auto-attached to latest session');
       } else {
         expect(logText, `visibility=${row.visibility}`).not.toContain(
-          'Mode: auto-attached to latest active session'
+          'Auto-attached to latest session'
         );
       }
     }

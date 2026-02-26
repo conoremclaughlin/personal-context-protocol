@@ -1793,55 +1793,32 @@ export async function runChat(options: ChatOptions): Promise<void> {
       .catch(() => undefined);
   }
 
+  // ── Banner (prints before Ink mounts, goes to terminal scrollback) ──
   {
     const bannerWidth = Math.min(process.stdout.columns || 80, 60);
     const bar = '━'.repeat(Math.max(0, bannerWidth - 2));
     console.log(chalk.magentaBright(`\n✦${bar}✦`));
-    console.log(chalk.bold.white('  SB Chat · first-class PCP REPL'));
-    console.log(chalk.magentaBright(`✦${bar}✦\n`));
+    console.log(chalk.bold.white('  SB Chat'));
+    console.log(chalk.magentaBright(`✦${bar}✦`));
   }
-  const runtimeStudioLabel = attachedSessionSummary
-    ? sessionStudioLabel(attachedSessionSummary, 'short')
-    : sessionStudioLabel({ studioId: runtime.studioId, workspaceId: runtime.workspaceId }, 'short');
-  const runtimeStudioLabelFull = attachedSessionSummary
-    ? sessionStudioLabel(attachedSessionSummary, 'full')
-    : sessionStudioLabel({ studioId: runtime.studioId, workspaceId: runtime.workspaceId }, 'full');
-  console.log(
-    [
-      chip('agent', agentId, chalk.cyan),
-      chip('backend', `${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}`, chalk.yellow),
-      chip('studio', runtimeStudioLabel, chalk.cyan),
-      chip('routing', runtime.toolRouting, runtime.toolRouting === 'local' ? chalk.magenta : chalk.dim),
-      chip('ui', runtime.uiMode, runtime.uiMode === 'live' ? chalk.cyan : chalk.dim),
-      chip('window', `${formatTokenCount(runtime.backendTokenWindow)} tok`, chalk.green),
-      chip('inbox auto-run', runtime.autoRunInbox ? 'on' : 'off', runtime.autoRunInbox ? chalk.green : chalk.dim),
-      chip('local time', formatNow(runtime.userTimezone), chalk.magenta),
-    ].join(chalk.dim('  •  '))
-  );
+  // Use studio slug/name where available, fall back to short ID
+  const studioSlug = (attachedSessionSummary?.studioName || attachedSessionSummary?.workspaceName)
+    || (identity?.workspaceId ? formatStudioForDisplay(identity.workspaceId, 'short') : undefined);
+  const bannerParts = [
+    chip('agent', agentId, chalk.cyan),
+    chip('backend', `${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}`, chalk.yellow),
+    studioSlug ? chip('studio', studioSlug, chalk.cyan) : null,
+    chip('window', `${formatTokenCount(runtime.backendTokenWindow)} tok`, chalk.green),
+    chip('time', formatNow(runtime.userTimezone), chalk.magenta),
+  ].filter(Boolean);
+  console.log(bannerParts.join(chalk.dim('  •  ')));
   if (runtime.threadKey) console.log(chalk.dim(`Thread: ${runtime.threadKey}`));
-  console.log(chalk.dim(`Studio: ${runtimeStudioLabelFull}`));
-  if (attachedToExistingSession) console.log(chalk.dim('Mode: attached to existing session'));
-  if (autoAttachedLatest) console.log(chalk.dim('Mode: auto-attached to latest active session'));
-  if (runtime.sessionId) console.log(chalk.dim(`Session: ${runtime.sessionId}`));
-  if (attachedSessionSummary) {
-    console.log(
-      chalk.dim(
-        `Attached session metadata: studio=${sessionStudioLabel(attachedSessionSummary, 'full')} backend=${sessionBackendLabel(
-          attachedSessionSummary
-        )}`
-      )
-    );
+  if (attachedToExistingSession) {
+    console.log(chalk.dim(autoAttachedLatest ? 'Auto-attached to latest session' : 'Attached to existing session'));
   }
   if (historyHydration && historyHydration.messageCount > 0) {
-    console.log(
-      chalk.dim(
-        `History: ${historyHydration.messageCount} prior message(s) loaded (source=${historyHydration.source})`
-      )
-    );
-  } else if (historyHydration?.source === 'none') {
-    console.log(chalk.dim('History: none (no local transcript or session context found).'));
+    console.log(chalk.dim(`History: ${historyHydration.messageCount} prior message(s) loaded`));
   }
-  console.log(chalk.dim(`Transcript: ${runtime.transcriptPath}`));
   console.log(chalk.dim('Type /help for commands.\n'));
 
   const refreshSessionsSnapshot = async (force = false): Promise<SessionSummary[]> => {
@@ -2365,7 +2342,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
       void pollActivity(false);
     }
   }, Math.max(runtime.pollSeconds, 5) * 1000);
-  emitStatusLaneIfChanged();
+  // Status update deferred until after Ink/readline mount below
+  if (!useInk) {
+    emitStatusLaneIfChanged();
+  }
 
   if (options.nonInteractive || options.message) {
     const message = options.message?.trim();
@@ -2419,6 +2399,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
     });
     inkRepl.setStatus(initialSummary);
     lastStatusSummary = initialSummary;
+
+    // Push prior messages into Ink scrollback so user sees conversation history
+    if (historyHydration && historyHydration.tailPreview.length > 0) {
+      for (const entry of historyHydration.tailPreview) {
+        const role = entry.role === 'user' ? 'user' as const
+          : entry.role === 'assistant' ? 'assistant' as const
+          : 'inbox' as const;
+        const label = entry.role === 'user' ? 'you'
+          : entry.role === 'assistant' ? agentId
+          : 'inbox';
+        inkRepl.addMessage(role, entry.content, { label, time: entry.ts });
+      }
+    }
   } else {
     // ── Legacy readline path ──
     const createRl = () => {
