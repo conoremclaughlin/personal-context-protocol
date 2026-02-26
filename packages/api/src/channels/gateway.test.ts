@@ -581,11 +581,15 @@ describe('Activity Stream Integration', () => {
   let mockDataComposer: any;
 
   let mockFindByPlatformId: Mock;
+  let mockFindConversationByPlatformId: Mock;
+  let mockUpsertConversationByPlatformId: Mock;
 
   beforeEach(() => {
     vi.useFakeTimers();
     mockLogMessage = vi.fn().mockResolvedValue({ id: 'activity-123' });
     mockFindByPlatformId = vi.fn().mockResolvedValue(null);
+    mockFindConversationByPlatformId = vi.fn().mockResolvedValue(null);
+    mockUpsertConversationByPlatformId = vi.fn().mockResolvedValue({ id: 'conversation-123' });
     mockDataComposer = {
       repositories: {
         activityStream: {
@@ -593,6 +597,10 @@ describe('Activity Stream Integration', () => {
         },
         users: {
           findByPlatformId: mockFindByPlatformId,
+        },
+        conversations: {
+          findConversationByPlatformId: mockFindConversationByPlatformId,
+          upsertConversationByPlatformId: mockUpsertConversationByPlatformId,
         },
       },
     };
@@ -770,6 +778,22 @@ describe('Activity Stream Integration', () => {
         isDm: true,
       });
     });
+
+    it('should persist conversationId to userId mapping in DB for cache-miss recovery', async () => {
+      const handler = vi.fn().mockResolvedValue(undefined);
+      gateway.setMessageHandler(handler);
+
+      const forwardToHandler = (gateway as any).forwardToHandler.bind(gateway);
+      await forwardToHandler('telegram', 'chat123', { id: 'sender456' }, 'Hello', {
+        userId: 'user-uuid-123',
+      });
+
+      expect(mockUpsertConversationByPlatformId).toHaveBeenCalledWith({
+        user_id: 'user-uuid-123',
+        platform: 'telegram',
+        platform_conversation_id: 'chat123',
+      });
+    });
   });
 
   describe('Outgoing Messages', () => {
@@ -820,6 +844,30 @@ describe('Activity Stream Integration', () => {
 
       // No incoming message was processed for this chat, so no userId in map
       expect(mockLogMessage).not.toHaveBeenCalled();
+    });
+
+    it('should recover userId from DB when conversationUserMap cache misses', async () => {
+      mockFindConversationByPlatformId.mockResolvedValueOnce({
+        user_id: 'db-user-uuid',
+      });
+
+      (gateway as any).telegramListener = {
+        sendMessage: vi.fn().mockResolvedValue(undefined),
+      };
+
+      const sendTelegramMessage = (gateway as any).sendTelegramMessage.bind(gateway);
+      await sendTelegramMessage('chat-db-fallback', 'Recovered mapping reply');
+
+      expect(mockFindConversationByPlatformId).toHaveBeenCalledWith('telegram', 'chat-db-fallback');
+      expect(mockLogMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'db-user-uuid',
+          direction: 'out',
+          content: 'Recovered mapping reply',
+          platform: 'telegram',
+          platformChatId: 'chat-db-fallback',
+        })
+      );
     });
   });
 });
