@@ -1003,8 +1003,8 @@ function sessionBackendLabel(session: SessionSummary): string {
 }
 
 function sessionHistoryLabel(meta: SessionTranscriptMetadata | null): string {
-  if (!meta) return 'pcp-only';
-  return `repl:${meta.messageCount}`;
+  if (!meta) return 'remote';
+  return `${meta.messageCount} msgs`;
 }
 
 function chip(label: string, value: string, color: (text: string) => string): string {
