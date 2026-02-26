@@ -25,6 +25,7 @@ import { env } from '../config/env';
 import { InboundMediaPipeline } from './media-pipeline';
 import { TextToSpeechService } from './text-to-speech';
 import telegramifyMarkdown from 'telegramify-markdown';
+import type { Platform } from '@shared/types/common';
 
 // Supported messaging channels
 export type GatewayChannel = 'telegram' | 'whatsapp' | 'discord' | 'slack';
@@ -124,7 +125,7 @@ export class ChannelGateway extends EventEmitter {
   private autoVoiceReplyOnAudio = process.env.TELEGRAM_AUTO_VOICE_REPLY === 'true';
   private includeTextAfterVoiceReply = process.env.TELEGRAM_VOICE_INCLUDE_TEXT !== 'false';
   private pendingVoiceReplyConversations: Set<string> = new Set();
-  private conversationUserMap = new Map<string, string>(); // conversationId -> userId
+  private conversationUserMap = new Map<string, string>(); // channel:conversationId -> userId
 
   constructor(config: ChannelGatewayConfig = {}) {
     super();
@@ -308,6 +309,70 @@ export class ChannelGateway extends EventEmitter {
    */
   private getBufferKey(channel: GatewayChannel, conversationId: string): string {
     return `${channel}:${conversationId}`;
+  }
+
+  private toPersistentConversationPlatform(channel: GatewayChannel): Platform | null {
+    // conversations.platform currently supports telegram/whatsapp/discord/api
+    if (channel === 'telegram' || channel === 'whatsapp' || channel === 'discord') {
+      return channel;
+    }
+    return null;
+  }
+
+  private async resolveUserIdForConversation(
+    channel: GatewayChannel,
+    conversationId: string
+  ): Promise<string | undefined> {
+    const key = this.getBufferKey(channel, conversationId);
+    const cachedUserId = this.conversationUserMap.get(key);
+    if (cachedUserId) return cachedUserId;
+
+    const platform = this.toPersistentConversationPlatform(channel);
+    if (!platform || !this.dataComposer) return undefined;
+
+    try {
+      const conversation =
+        await this.dataComposer.repositories.conversations.findConversationByPlatformId(
+          platform,
+          conversationId
+        );
+      const userId = conversation?.user_id;
+      if (!userId) return undefined;
+
+      this.conversationUserMap.set(key, userId);
+      return userId;
+    } catch (error) {
+      logger.warn('Failed to resolve conversation user from DB', {
+        channel,
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  private persistConversationUserMapping(
+    channel: GatewayChannel,
+    conversationId: string,
+    userId: string
+  ): void {
+    const platform = this.toPersistentConversationPlatform(channel);
+    if (!platform || !this.dataComposer) return;
+
+    void this.dataComposer.repositories.conversations
+      .upsertConversationByPlatformId({
+        user_id: userId,
+        platform,
+        platform_conversation_id: conversationId,
+      })
+      .catch((error) => {
+        logger.warn('Failed to persist conversation user mapping', {
+          channel,
+          conversationId,
+          userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
   }
 
   /**
@@ -510,7 +575,8 @@ export class ChannelGateway extends EventEmitter {
       }
     }
     if (userId) {
-      this.conversationUserMap.set(conversationId, userId);
+      this.conversationUserMap.set(this.getBufferKey(channel, conversationId), userId);
+      this.persistConversationUserMapping(channel, conversationId, userId);
     }
 
     if (
@@ -632,7 +698,7 @@ export class ChannelGateway extends EventEmitter {
         await this.whatsappListener.sendMessage(conversationId, content);
         // Log outgoing WhatsApp message to activity stream
         {
-          const userId = this.conversationUserMap.get(conversationId);
+          const userId = await this.resolveUserIdForConversation('whatsapp', conversationId);
           if (this.dataComposer && userId) {
             try {
               await this.dataComposer.repositories.activityStream.logMessage({
@@ -661,7 +727,7 @@ export class ChannelGateway extends EventEmitter {
         await this.discordListener.sendMessage(conversationId, content);
         // Log outgoing Discord message to activity stream
         {
-          const userId = this.conversationUserMap.get(conversationId);
+          const userId = await this.resolveUserIdForConversation('discord', conversationId);
           if (this.dataComposer && userId) {
             try {
               await this.dataComposer.repositories.activityStream.logMessage({
@@ -690,7 +756,7 @@ export class ChannelGateway extends EventEmitter {
         await this.slackListener.sendMessage(conversationId, content);
         // Log outgoing Slack message to activity stream
         {
-          const userId = this.conversationUserMap.get(conversationId);
+          const userId = await this.resolveUserIdForConversation('slack', conversationId);
           if (this.dataComposer && userId) {
             try {
               await this.dataComposer.repositories.activityStream.logMessage({
@@ -838,7 +904,7 @@ export class ChannelGateway extends EventEmitter {
 
   private async logOutgoingTelegram(conversationId: string, content: string): Promise<void> {
     // Log outgoing message to activity stream
-    const userId = this.conversationUserMap.get(conversationId);
+    const userId = await this.resolveUserIdForConversation('telegram', conversationId);
     if (this.dataComposer && userId) {
       try {
         await this.dataComposer.repositories.activityStream.logMessage({
