@@ -12,6 +12,13 @@ while IFS='=' read -r key value; do
   printf 'export %s=%q\n' "${key}" "${value}" >>"${PRESERVED_ENV_FILE}"
 done < <(env)
 
+cleanup() {
+  if [[ -n "${PRESERVED_ENV_FILE:-}" ]]; then rm -f "${PRESERVED_ENV_FILE}" 2>/dev/null || true; fi
+  if [[ -n "${API_PID:-}" ]]; then kill "${API_PID}" 2>/dev/null || true; fi
+  if [[ -n "${WEB_PID:-}" ]]; then kill "${WEB_PID}" 2>/dev/null || true; fi
+}
+trap cleanup EXIT INT TERM
+
 load_env_file() {
   local file="$1"
   if [[ -f "${file}" ]]; then
@@ -29,7 +36,6 @@ load_env_file "${ROOT_DIR}/.env"
 # Restore original environment values from the caller (prefix assignments, exported vars).
 # shellcheck disable=SC1090
 source "${PRESERVED_ENV_FILE}"
-rm -f "${PRESERVED_ENV_FILE}"
 
 # Run API + web directly (no PM2), useful for parallel worktrees.
 BASE_PORT="${PCP_PORT_BASE:-3001}"
@@ -47,12 +53,6 @@ echo "  ENABLE_HEARTBEAT_SERVICE=${ENABLE_HEARTBEAT_SERVICE:-<unset>}"
 echo "  ENABLE_HEARTBEATS=${ENABLE_HEARTBEATS:-<unset>}"
 echo "  ENABLE_REMINDERS=${ENABLE_REMINDERS:-<unset>}"
 echo "  API_URL=${API_URL}"
-
-cleanup() {
-  if [[ -n "${API_PID:-}" ]]; then kill "${API_PID}" 2>/dev/null || true; fi
-  if [[ -n "${WEB_PID:-}" ]]; then kill "${WEB_PID}" 2>/dev/null || true; fi
-}
-trap cleanup EXIT INT TERM
 
 (
   PCP_PORT_BASE="${BASE_PORT}" \
