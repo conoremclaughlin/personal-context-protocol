@@ -16,10 +16,9 @@ export interface InkMission {
   waitForExit: () => Promise<void>;
 }
 
-export function renderInkMission(options: {
-  timezone?: string;
-}): InkMission {
-  const handleRef = React.createRef<MissionAppHandle>() as React.MutableRefObject<MissionAppHandle | null>;
+export function renderInkMission(options: { timezone?: string }): InkMission {
+  const handleRef =
+    React.createRef<MissionAppHandle>() as React.MutableRefObject<MissionAppHandle | null>;
 
   let exitResolve: (() => void) | null = null;
   const exitPromise = new Promise<void>((resolve) => {
@@ -33,17 +32,12 @@ export function renderInkMission(options: {
     }
   };
 
-  const { unmount, clear } = render(
-    <MissionApp
-      ref={handleRef}
-      timezone={options.timezone}
-      onExit={onExit}
-    />
+  const { unmount } = render(
+    <MissionApp ref={handleRef} timezone={options.timezone} onExit={onExit} />
   );
 
-  // Clear Ink's dynamic area on resize to prevent ghost dock duplicates
-  const onResize = () => { clear(); };
-  process.stdout.on('resize', onResize);
+  // Ink v6 handles SIGWINCH and re-renders on resize natively.
+  // External clear() fights with Ink's line tracking and causes drift.
 
   const getHandle = (): MissionAppHandle => {
     if (!handleRef.current) {
@@ -57,7 +51,6 @@ export function renderInkMission(options: {
     setAgents: (agents) => getHandle().setAgents(agents),
     setStatus: (status) => getHandle().setStatus(status),
     cleanup: () => {
-      process.stdout.off('resize', onResize);
       unmount();
     },
     waitForExit: () => exitPromise,

@@ -637,7 +637,21 @@ async function runInkMission(options: MissionOptions): Promise<void> {
         return (Number.isNaN(ams) ? 0 : ams) - (Number.isNaN(bms) ? 0 : bms);
       });
 
-      const sessionsById = new Map(snapshot.sessions.map((s) => [s.id, s]));
+      // Build sessions map for feed enrichment.
+      // snapshot.sessions only has active sessions, but activities often belong
+      // to ended sessions. Fetch recent sessions (any status) for the join.
+      const recentSessionsResult = (await pcp
+        .callTool('list_sessions', {
+          email: config.email,
+          limit: 50,
+        })
+        .catch(() => null)) as Record<string, unknown> | null;
+      const recentSessions = recentSessionsResult ? parseSessions(recentSessionsResult) : [];
+      const sessionsById = new Map<string, Session>();
+      for (const s of recentSessions) sessionsById.set(s.id, s);
+      // Active sessions override (more current data)
+      for (const s of snapshot.sessions) sessionsById.set(s.id, s);
+
       let newCount = 0;
       for (const activity of activities) {
         if (seenActivityIds.has(activity.id)) continue;

@@ -7,10 +7,29 @@ interface PromptInputProps {
   isActive?: boolean;
 }
 
+/** Find the position of the previous word boundary (start of current/previous word). */
+function prevWordBoundary(text: string, pos: number): number {
+  let i = pos;
+  // Skip any whitespace immediately before cursor
+  while (i > 0 && /\s/.test(text[i - 1]!)) i--;
+  // Skip non-whitespace (the word itself)
+  while (i > 0 && !/\s/.test(text[i - 1]!)) i--;
+  return i;
+}
+
+/** Find the position of the next word boundary (end of current/next word). */
+function nextWordBoundary(text: string, pos: number): number {
+  let i = pos;
+  // Skip non-whitespace (the word itself)
+  while (i < text.length && !/\s/.test(text[i]!)) i++;
+  // Skip any whitespace after the word
+  while (i < text.length && /\s/.test(text[i]!)) i++;
+  return i;
+}
+
 /**
  * REPL prompt with line editing.
- * Handles: typing, backspace, enter to submit, cursor movement (home/end).
- * History (up/down arrow) can be added later.
+ * Supports: typing, backspace, enter, cursor movement, word-level navigation.
  */
 export function PromptInput({
   label,
@@ -34,6 +53,15 @@ export function PromptInput({
         return;
       }
 
+      // Option+Backspace: delete word before cursor
+      if ((key.backspace || key.delete) && key.meta) {
+        const boundary = prevWordBoundary(value, cursor);
+        setValue((prev) => prev.slice(0, boundary) + prev.slice(cursor));
+        setCursor(boundary);
+        return;
+      }
+
+      // Regular backspace: delete one character
       if (key.backspace || key.delete) {
         if (cursor > 0) {
           setValue((prev) => prev.slice(0, cursor - 1) + prev.slice(cursor));
@@ -52,18 +80,45 @@ export function PromptInput({
         return;
       }
 
-      // Ctrl+A / Home: beginning of line
-      if ((key.ctrl && input === 'a') || key.meta) {
+      // Ctrl+W: delete word before cursor (Unix convention)
+      if (key.ctrl && input === 'w') {
+        const boundary = prevWordBoundary(value, cursor);
+        setValue((prev) => prev.slice(0, boundary) + prev.slice(cursor));
+        setCursor(boundary);
+        return;
+      }
+
+      // Ctrl+A: beginning of line
+      if (key.ctrl && input === 'a') {
         setCursor(0);
         return;
       }
 
-      // Ctrl+E / End: end of line
+      // Ctrl+E: end of line
       if (key.ctrl && input === 'e') {
         setCursor(value.length);
         return;
       }
 
+      // Ctrl+K: kill to end of line
+      if (key.ctrl && input === 'k') {
+        setValue((prev) => prev.slice(0, cursor));
+        return;
+      }
+
+      // Option+Left: move to previous word boundary
+      if (key.leftArrow && key.meta) {
+        setCursor((prev) => prevWordBoundary(value, prev));
+        return;
+      }
+
+      // Option+Right: move to next word boundary
+      if (key.rightArrow && key.meta) {
+        setCursor((prev) => nextWordBoundary(value, prev));
+        return;
+      }
+
+      // Regular left/right arrow
       if (key.leftArrow) {
         setCursor((prev) => Math.max(0, prev - 1));
         return;

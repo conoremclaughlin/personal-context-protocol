@@ -7,7 +7,11 @@ import { formatNow } from '../tui-components.js';
 /**
  * Deferred promise helper — creates a promise with externally-exposed resolve/reject.
  */
-function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (v: T) => void;
+  reject: (e: unknown) => void;
+} {
   let resolve!: (v: T) => void;
   let reject!: (e: unknown) => void;
   const promise = new Promise<T>((res, rej) => {
@@ -33,11 +37,15 @@ export interface InkRepl {
   /** Block until the user submits a line (replaces rl.question). */
   waitForInput: () => Promise<string>;
   /** Push a chat message into the scrollback. */
-  addMessage: (role: MessageRole, content: string, options?: {
-    label?: string;
-    time?: string;
-    trailingMeta?: string;
-  }) => void;
+  addMessage: (
+    role: MessageRole,
+    content: string,
+    options?: {
+      label?: string;
+      time?: string;
+      trailingMeta?: string;
+    }
+  ) => void;
   /** Print a system/info line (replaces printLine for non-message output). */
   printSystem: (content: string) => void;
   /** Update the status bar summary. */
@@ -71,7 +79,8 @@ export function renderInkChat(options: {
   timezone?: string;
   infoItems: string[];
 }): InkRepl {
-  const handleRef = React.createRef<ChatAppHandle>() as React.MutableRefObject<ChatAppHandle | null>;
+  const handleRef =
+    React.createRef<ChatAppHandle>() as React.MutableRefObject<ChatAppHandle | null>;
 
   // Pending input promise — resolved when user submits a line
   let pendingInput: ReturnType<typeof deferred<string>> | null = null;
@@ -107,11 +116,10 @@ export function renderInkChat(options: {
     />
   );
 
-  // On terminal resize, clear Ink's dynamic output area so it re-renders
-  // cleanly at the new width. Without this, the old dock gets pushed into
-  // scrollback as a ghost duplicate.
-  const onResize = () => { clear(); };
-  process.stdout.on('resize', onResize);
+  // Ink v6 internally handles SIGWINCH and re-renders on terminal resize.
+  // Calling clear() externally fights with Ink's own resize logic — it erases
+  // too many lines (including scrollback), causing the dock to drift upward
+  // and eventually duplicate. Let Ink manage resize natively.
 
   // Get the handle (available synchronously after render)
   const getHandle = (): ChatAppHandle => {
@@ -167,7 +175,6 @@ export function renderInkChat(options: {
     },
 
     cleanup: () => {
-      process.stdout.off('resize', onResize);
       unmount();
     },
 
