@@ -1728,6 +1728,11 @@ Returns:
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
         ...userIdentifierFields,
+        workspaceId: z
+          .string()
+          .uuid()
+          .optional()
+          .describe('Optional product workspace scope for shared document resolution'),
         includeRecentMemories: z
           .boolean()
           .optional()

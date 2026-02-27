@@ -67,20 +67,34 @@ export class KindleService {
     // Get agent identity
     const { data: identity } = await this.supabase
       .from('agent_identities')
-      .select('agent_id, name, values, soul')
+      .select('agent_id, name, values, soul, workspace_id')
       .eq('user_id', userId)
       .eq('agent_id', agentId)
       .single();
 
-    // Get shared values from workspace-level shared docs (preferred)
-    const { data: workspaceShared } = await this.supabase
-      .from('workspaces')
-      .select('shared_values')
-      .eq('user_id', userId)
-      .is('archived_at', null)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
+    let workspaceShared: { shared_values: string | null } | null = null;
+    if (identity?.workspace_id) {
+      const { data } = await this.supabase
+        .from('workspaces')
+        .select('shared_values')
+        .eq('id', identity.workspace_id as string)
+        .eq('user_id', userId)
+        .is('archived_at', null)
+        .maybeSingle();
+      workspaceShared = (data as { shared_values: string | null } | null) || null;
+    } else {
+      // Deterministic fallback: personal workspace (not most-recent workspace)
+      const { data } = await this.supabase
+        .from('workspaces')
+        .select('shared_values')
+        .eq('user_id', userId)
+        .eq('type', 'personal')
+        .is('archived_at', null)
+        .order('created_at', { ascending: true })
+        .limit(1)
+        .maybeSingle();
+      workspaceShared = (data as { shared_values: string | null } | null) || null;
+    }
 
     // Legacy fallback: user_identity table
     const { data: userIdentity } = await this.supabase

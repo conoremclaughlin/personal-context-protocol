@@ -13,11 +13,11 @@ COMMENT ON COLUMN public.workspaces.process IS
   'Shared collaboration process document content at workspace scope.';
 
 -- Backfill workspace-level docs from existing user_identity records.
+-- Note: this only backfills rows that already have user_identity.workspace_id set.
 UPDATE public.workspaces w
 SET
   shared_values = COALESCE(w.shared_values, ui.shared_values_md),
-  process = COALESCE(w.process, ui.process_md),
-  updated_at = NOW()
+  process = COALESCE(w.process, ui.process_md)
 FROM public.user_identity ui
 WHERE ui.workspace_id = w.id
   AND (

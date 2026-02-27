@@ -481,6 +481,11 @@ export const restoreMemorySchema = userIdentifierBaseSchema.extend({
 // =====================================================
 
 export const bootstrapSchema = userIdentifierBaseSchema.extend({
+  workspaceId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe('Optional product workspace scope for shared document resolution'),
   includeRecentMemories: z
     .boolean()
     .optional()
@@ -1513,6 +1518,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
   const includeMemories = params.includeRecentMemories !== false;
   const agentId = params.agentId;
   const basePath = params.identityBasePath || path.join(os.homedir(), '.pcp');
+  const supabase = dataComposer.getClient();
 
   // Load identity files if agentId is provided
   let identityFiles: {
@@ -1560,8 +1566,6 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
     activeSessions,
     knowledgeMemories,
     dbIdentity,
-    dbWorkspaceSharedDocs,
-    dbUserIdentity,
     userTimezone,
     userSkills,
   ] = await Promise.all([
@@ -1588,25 +1592,6 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
           .single()
           .then(({ data }) => data)
       : Promise.resolve(null),
-    // Workspace-level shared docs (preferred)
-    dataComposer
-      .getClient()
-      .from('workspaces')
-      .select('process')
-      .eq('user_id', user.id)
-      .is('archived_at', null)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .then(({ data }) => data?.[0] || null),
-    // Shared user identity (PROCESS.md from DB for cloud sync)
-    dataComposer
-      .getClient()
-      .from('user_identity')
-      .select('process_md')
-      .eq('user_id', user.id)
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .then(({ data }) => data?.[0] || null),
     // User timezone for timestamp conversion
     dataComposer
       .getClient()
@@ -1621,6 +1606,54 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
       return [];
     }),
   ]);
+
+  // Resolve workspace scope for shared docs:
+  // 1) explicit workspaceId param
+  // 2) if all active sessions agree on one workspace, use that
+  // 3) deterministic fallback to personal workspace
+  let resolvedWorkspaceId = params.workspaceId;
+  if (!resolvedWorkspaceId) {
+    const sessionWorkspaceIds = Array.from(
+      new Set(activeSessions.map((s) => s.workspaceId).filter((id): id is string => !!id))
+    );
+    if (sessionWorkspaceIds.length === 1) {
+      resolvedWorkspaceId = sessionWorkspaceIds[0];
+    }
+  }
+
+  if (!resolvedWorkspaceId) {
+    const { data: personalWorkspace } = await supabase
+      .from('workspaces')
+      .select('id')
+      .eq('user_id', user.id)
+      .eq('type', 'personal')
+      .is('archived_at', null)
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    resolvedWorkspaceId = personalWorkspace?.id || undefined;
+  }
+
+  const { data: dbWorkspaceSharedDocs } = resolvedWorkspaceId
+    ? await supabase
+        .from('workspaces')
+        .select('shared_values, process')
+        .eq('id', resolvedWorkspaceId)
+        .eq('user_id', user.id)
+        .maybeSingle()
+    : { data: null };
+
+  const legacyUserIdentityQuery = supabase
+    .from('user_identity')
+    .select('shared_values_md, process_md')
+    .eq('user_id', user.id);
+  const { data: dbUserIdentity } = resolvedWorkspaceId
+    ? await legacyUserIdentityQuery.eq('workspace_id', resolvedWorkspaceId).maybeSingle()
+    : await legacyUserIdentityQuery
+        .is('workspace_id', null)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
 
   // Organize contexts by type
   const identityCore = {
@@ -1664,13 +1697,17 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
 
   // Merge identity: prioritize Supabase over local files
   // dbIdentity has: name, role, description, heartbeat, soul (per-agent)
-  // dbWorkspaceSharedDocs has: process (workspace-level shared doc)
-  // dbUserIdentity has: process_md (legacy fallback)
+  // dbWorkspaceSharedDocs has: shared_values/process (workspace-level shared docs)
+  // dbUserIdentity has: shared_values_md/process_md (legacy fallback)
   // identityFiles has: values, user, process, self, heartbeat, soul (from filesystem)
   const mergedIdentity = identityFiles
     ? {
         ...identityFiles,
         // Override local files with Supabase content if available
+        values:
+          (dbWorkspaceSharedDocs?.shared_values as string | null) ||
+          (dbUserIdentity?.shared_values_md as string | null) ||
+          identityFiles.values,
         process:
           (dbWorkspaceSharedDocs?.process as string | null) ||
           (dbUserIdentity?.process_md as string | null) ||
