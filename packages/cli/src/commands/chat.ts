@@ -1311,17 +1311,20 @@ async function promptForToolApproval(
   reason: string,
   inkRepl?: InkRepl | null
 ): Promise<boolean> {
-  const promptText = `Allow ${tool}? [y] once, [s] session, [a] always, [d] deny, [n] cancel`;
-
   let answer: string;
   if (inkRepl) {
-    // Render approval request as a system message in Ink, then capture input
-    inkRepl.addMessage('system', `${reason}\n${promptText}`);
+    // Render a visually distinct permission prompt in Ink
+    inkRepl.addMessage('system', [
+      `🔐 ${tool}`,
+      reason,
+      '',
+      '[y] once · [s] session · [a] always · [d] deny · [n] cancel',
+    ].join('\n'), { label: '🔐 permission' });
     answer = (await inkRepl.waitForInput()).trim();
   } else if (rl) {
-    console.log(chalk.yellow(reason));
+    console.log(chalk.yellow(`🔐 ${tool} — ${reason}`));
     answer = (
-      await rl.question(chalk.yellow(`${promptText}: `))
+      await rl.question(chalk.yellow(`Allow? [y] once, [s] session, [a] always, [d] deny, [n] cancel: `))
     ).trim();
   } else {
     return false;

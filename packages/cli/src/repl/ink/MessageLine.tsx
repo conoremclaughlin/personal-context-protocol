@@ -21,6 +21,21 @@ const ROLE_COLORS: Record<MessageRole, string> = {
   grant: 'greenBright',
 };
 
+/**
+ * Collapse image file paths to numbered [Image #N] tokens.
+ * Matches absolute paths and file:// URIs ending in common image extensions.
+ * Path segments use non-greedy matching and stop at whitespace boundaries.
+ */
+const IMAGE_PATH_RE = /(?:file:\/\/)?\/(?:[^\s/]+\/)*[^\s/]+\.(?:png|jpg|jpeg|gif|webp|svg|bmp|tiff|heic)\b/gi;
+
+export function collapseImagePaths(text: string): string {
+  let counter = 0;
+  return text.replace(IMAGE_PATH_RE, () => {
+    counter += 1;
+    return `[Image #${counter}]`;
+  });
+}
+
 /** Single chat message with label, content, and trailing metadata. */
 export function MessageLine({
   role,
@@ -32,6 +47,7 @@ export function MessageLine({
   const displayLabel = label || role;
   const color = ROLE_COLORS[role] || 'gray';
   const meta = [time, trailingMeta].filter(Boolean).join('  ·  ');
+  const displayContent = collapseImagePaths(content);
 
   return (
     <Box flexDirection="column" paddingLeft={1} marginTop={1}>
@@ -47,7 +63,7 @@ export function MessageLine({
       </Box>
       {/* Content: small indent from label, wraps naturally */}
       <Box paddingLeft={2}>
-        <Text color={color} wrap="wrap">{content}</Text>
+        <Text color={color} wrap="wrap">{displayContent}</Text>
       </Box>
     </Box>
   );
