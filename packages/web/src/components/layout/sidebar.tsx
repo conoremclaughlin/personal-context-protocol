@@ -13,7 +13,6 @@ import {
   Link2,
   FileText,
   Puzzle,
-  MessageSquare,
   Plus,
   UserPlus,
   Building2,
@@ -42,7 +41,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: Home },
-  { name: 'Chat', href: '/chat', icon: MessageSquare },
   { name: 'Sessions', href: '/sessions', icon: Activity },
   { name: 'Trusted Users', href: '/trusted-users', icon: Users },
   { name: 'Groups', href: '/groups', icon: UsersRound },
