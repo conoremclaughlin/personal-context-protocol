@@ -13,6 +13,7 @@ import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { getBackend, resolveAgentId } from '../backends/index.js';
 import { getValidAccessToken } from '../auth/tokens.js';
+import { callPcpTool, getPcpServerUrl } from '../lib/pcp-mcp.js';
 import {
   getCurrentRuntimeSession,
   setCurrentRuntimeSession,
@@ -136,56 +137,6 @@ function isPromptCancelError(err: unknown): boolean {
     name === 'AbortPromptError' ||
     /force closed|ctrl\+c|sigint|cancell?ed|aborted/i.test(message)
   );
-}
-
-function getPcpServerUrl(): string {
-  return process.env.PCP_SERVER_URL || 'http://localhost:3001';
-}
-
-function getPcpToolCallBaseUrls(): string[] {
-  const urls: string[] = [];
-  const add = (value: string | undefined): void => {
-    if (!value) return;
-    if (!urls.includes(value)) urls.push(value);
-  };
-
-  const configured = process.env.PCP_SERVER_URL;
-  const explicitToolUrl = process.env.PCP_TOOL_CALL_URL;
-  const envPortBase = process.env.PCP_PORT_BASE
-    ? Number.parseInt(process.env.PCP_PORT_BASE, 10)
-    : undefined;
-
-  add(explicitToolUrl);
-
-  if (envPortBase && Number.isFinite(envPortBase)) {
-    add(`http://localhost:${envPortBase + 1}`); // web proxy (serves /api/mcp/call)
-    add(`http://localhost:${envPortBase}`); // api/auth server
-  } else {
-    // Default local dev topology: API on 3001, web proxy on 3002.
-    add('http://localhost:3002');
-    add('http://localhost:3001');
-  }
-
-  add(configured);
-
-  // If explicitly pointed at localhost:3001, also try sibling web port 3002.
-  if (configured) {
-    try {
-      const parsed = new URL(configured);
-      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
-        const port = parsed.port ? Number.parseInt(parsed.port, 10) : undefined;
-        if (port && Number.isFinite(port)) {
-          const sibling = new URL(configured);
-          sibling.port = String(port + 1);
-          add(sibling.origin);
-        }
-      }
-    } catch {
-      // Ignore malformed URLs in env overrides.
-    }
-  }
-
-  return urls;
 }
 
 async function resolvePcpAuthEnv(verbose: boolean): Promise<Record<string, string>> {
@@ -669,99 +620,6 @@ export function hasBackendSessionOverride(
   }
 
   return has('--resume') || has('-r') || has('--session-id');
-}
-
-async function callPcpTool<T = Record<string, unknown>>(tool: string, args: object): Promise<T> {
-  const baseUrls = getPcpToolCallBaseUrls();
-  let lastError: Error | undefined;
-  const tried: string[] = [];
-  let jsonRpcId = Date.now();
-
-  for (const baseUrl of baseUrls) {
-    const mcpEndpoint = `${baseUrl}/mcp`;
-    const legacyEndpoint = `${baseUrl}/api/mcp/call`;
-    tried.push(mcpEndpoint);
-    tried.push(legacyEndpoint);
-
-    try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-        Accept: 'application/json, text/event-stream',
-      };
-      const token = await getValidAccessToken(baseUrl);
-      if (token) headers.Authorization = `Bearer ${token}`;
-
-      const response = await fetch(mcpEndpoint, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'tools/call',
-          params: { name: tool, arguments: args },
-          id: jsonRpcId++,
-        }),
-      });
-
-      if (response.ok) {
-        const contentType = response.headers.get('content-type') || '';
-        let payload: Record<string, unknown>;
-
-        if (contentType.includes('text/event-stream')) {
-          const text = await response.text();
-          const dataLines = text
-            .split('\n')
-            .filter((line) => line.startsWith('data: '))
-            .map((line) => line.slice(6));
-          const lastData = dataLines[dataLines.length - 1];
-          if (!lastData) throw new Error('PCP SSE response contained no data lines');
-          payload = JSON.parse(lastData) as Record<string, unknown>;
-        } else {
-          payload = (await response.json()) as Record<string, unknown>;
-        }
-
-        if (payload.error) {
-          const err = payload.error as { message?: string; code?: number };
-          throw new Error(`PCP tool error (${err.code}): ${err.message}`);
-        }
-
-        const result = payload.result as { content?: Array<{ text?: string }> } | undefined;
-        const mcpText = result?.content?.[0]?.text;
-        if (typeof mcpText === 'string') {
-          try {
-            return JSON.parse(mcpText) as T;
-          } catch {
-            return { text: mcpText } as unknown as T;
-          }
-        }
-
-        return (result as unknown as T) || (payload as unknown as T);
-      }
-
-      // Legacy fallback endpoint (/api/mcp/call) for older server deployments.
-      if (response.status === 404 || response.status === 405) {
-        const legacyResponse = await fetch(legacyEndpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tool, args }),
-        });
-        if (legacyResponse.ok) {
-          return (await legacyResponse.json()) as T;
-        }
-        lastError = new Error(
-          `legacy fallback failed: ${legacyResponse.status} ${await legacyResponse.text()}`
-        );
-        continue;
-      }
-
-      lastError = new Error(`PCP tool ${tool} failed: ${response.status} ${await response.text()}`);
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-    }
-  }
-
-  throw new Error(
-    `PCP tool ${tool} failed after trying ${tried.length} endpoint(s): ${tried.join(', ')}${lastError ? ` — ${lastError.message}` : ''}`
-  );
 }
 
 function extractActivityIdFromLogResult(result: unknown): string | undefined {
