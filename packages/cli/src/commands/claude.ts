@@ -8,8 +8,8 @@
 import { spawn } from 'child_process';
 import chalk from 'chalk';
 import { randomUUID } from 'crypto';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'fs';
+import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { getBackend, resolveAgentId } from '../backends/index.js';
 import { getValidAccessToken } from '../auth/tokens.js';
@@ -41,10 +41,20 @@ interface PcpSessionSummary {
   backend?: string | null;
   backendSessionId?: string | null;
   claudeSessionId?: string | null;
+  workingDir?: string | null;
 }
 
 interface ListSessionsResult {
   sessions?: PcpSessionSummary[];
+}
+
+interface ClaudeLocalSessionSummary {
+  sessionId: string;
+  projectPath: string;
+  modified: string;
+  firstPrompt?: string;
+  messageCount?: number;
+  gitBranch?: string;
 }
 
 function isPromptCancelError(err: unknown): boolean {
@@ -107,6 +117,129 @@ function getIdentityContextFromIdentityJson(cwd = process.cwd()): {
   } catch {
     return {};
   }
+}
+
+function normalizePath(path: string | null | undefined): string | null {
+  if (!path) return null;
+  try {
+    return realpathSync(path);
+  } catch {
+    try {
+      return resolvePath(path);
+    } catch {
+      return null;
+    }
+  }
+}
+
+export function filterPcpSessionsForContext(
+  sessions: PcpSessionSummary[],
+  backend: string,
+  cwd = process.cwd(),
+  localClaudeSessionIds: Set<string> = new Set()
+): PcpSessionSummary[] {
+  const normalizedCwd = normalizePath(cwd);
+
+  const backendMatched = sessions.filter((session) => {
+    if (!session.backend) return true;
+    return session.backend === backend;
+  });
+
+  if (backend !== 'claude' || !normalizedCwd) {
+    return backendMatched;
+  }
+
+  return backendMatched.filter((session) => {
+    const localMatchedId = session.backendSessionId || session.claudeSessionId;
+    if (localMatchedId && localClaudeSessionIds.has(localMatchedId)) return true;
+
+    const normalizedWorkingDir = normalizePath(session.workingDir);
+    return !!normalizedWorkingDir && normalizedWorkingDir === normalizedCwd;
+  });
+}
+
+export function getClaudeLocalSessionsForProject(
+  cwd = process.cwd(),
+  limit = 20
+): ClaudeLocalSessionSummary[] {
+  const claudeProjectsDir = join(homedir(), '.claude', 'projects');
+  if (!existsSync(claudeProjectsDir)) return [];
+
+  const normalizedCwd = normalizePath(cwd);
+  if (!normalizedCwd) return [];
+
+  const results: ClaudeLocalSessionSummary[] = [];
+
+  for (const entry of readdirSync(claudeProjectsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const indexPath = join(claudeProjectsDir, entry.name, 'sessions-index.json');
+    if (!existsSync(indexPath)) continue;
+
+    try {
+      const parsed = JSON.parse(readFileSync(indexPath, 'utf-8')) as {
+        entries?: Array<{
+          sessionId?: string;
+          projectPath?: string;
+          modified?: string;
+          firstPrompt?: string;
+          messageCount?: number;
+          gitBranch?: string;
+        }>;
+      };
+
+      for (const item of parsed.entries || []) {
+        if (!item.sessionId || !item.projectPath || !item.modified) continue;
+        const normalizedProjectPath = normalizePath(item.projectPath);
+        if (!normalizedProjectPath || normalizedProjectPath !== normalizedCwd) continue;
+
+        results.push({
+          sessionId: item.sessionId,
+          projectPath: item.projectPath,
+          modified: item.modified,
+          firstPrompt: item.firstPrompt,
+          messageCount: item.messageCount,
+          gitBranch: item.gitBranch,
+        });
+      }
+    } catch {
+      // Ignore malformed local index files and continue.
+    }
+  }
+
+  const dedupedBySessionId = new Map<string, ClaudeLocalSessionSummary>();
+  for (const session of results) {
+    const existing = dedupedBySessionId.get(session.sessionId);
+    if (!existing || new Date(session.modified).getTime() > new Date(existing.modified).getTime()) {
+      dedupedBySessionId.set(session.sessionId, session);
+    }
+  }
+
+  return Array.from(dedupedBySessionId.values())
+    .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
+    .slice(0, limit);
+}
+
+function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
+  console.log(chalk.yellow(`\n⚠ PCP session service unavailable (${reason}).`));
+  const mcpPath = join(cwd, '.mcp.json');
+  if (!existsSync(mcpPath)) {
+    console.log(chalk.yellow('  .mcp.json not found in this repo.'));
+  } else {
+    try {
+      const parsed = JSON.parse(readFileSync(mcpPath, 'utf-8')) as {
+        mcpServers?: Record<string, unknown>;
+      };
+      if (!parsed.mcpServers?.pcp) {
+        console.log(chalk.yellow('  .mcp.json is missing mcpServers.pcp.'));
+      }
+    } catch {
+      console.log(chalk.yellow('  .mcp.json could not be parsed.'));
+    }
+  }
+  console.log(chalk.dim('  To reconnect PCP features:'));
+  console.log(chalk.dim('    sb auth login'));
+  console.log(chalk.dim('    sb init'));
+  console.log(chalk.dim('    sb status'));
 }
 
 export function hasBackendSessionOverride(
@@ -223,6 +356,7 @@ async function persistBackendSessionLink(options: {
       sessionId: options.pcpSessionId,
       backendSessionId: options.backendSessionId,
       status: 'active',
+      workingDir: process.cwd(),
     });
   } catch {
     // Best-effort linkage update only.
@@ -240,10 +374,11 @@ async function ensurePcpSessionContext(
 
   const config = getPcpConfig();
   const email = config?.email;
-  if (!email) return {};
-
   const cwd = process.cwd();
   const { studioId, identityId } = getIdentityContextFromIdentityJson(cwd);
+  const localClaudeSessions = backend === 'claude' ? getClaudeLocalSessionsForProject(cwd, 20) : [];
+  const localClaudeSessionIds = new Set(localClaudeSessions.map((session) => session.sessionId));
+  const sessionChoiceByValue = new Map<string, string>();
 
   // Fast path: runtime already knows current session for this backend.
   const existing = getCurrentRuntimeSession(cwd, backend);
@@ -256,57 +391,42 @@ async function ensurePcpSessionContext(
 
   // Pull active session list so caller can resume or start new.
   let activeSessions: PcpSessionSummary[] = [];
-  try {
-    const listed = await callPcpTool<ListSessionsResult>('list_sessions', {
-      email,
-      agentId,
-      ...(studioId ? { studioId } : {}),
-      limit: 20,
-    });
-    activeSessions = (listed.sessions || []).filter((s) => !s.endedAt);
-  } catch {
-    // Non-fatal; fallback to start new below.
-  }
+  let pcpAvailable = Boolean(email);
+  let pcpUnavailableReason: string | undefined;
 
-  let chosen: PcpSessionSummary | undefined;
-
-  if (process.stdin.isTTY) {
-    const choices = activeSessions.map((s) => ({
-      name: `Resume ${s.id.slice(0, 8)}${s.threadKey ? ` (${s.threadKey})` : ''}${s.currentPhase ? ` — ${s.currentPhase}` : ''}`,
-      value: s.id,
-    }));
-    choices.unshift({ name: 'Start new session', value: '__new__' });
-
+  if (!email) {
+    pcpAvailable = false;
+    pcpUnavailableReason = 'not authenticated';
+  } else {
     try {
-      const { select } = await import('@inquirer/prompts');
-      const selection = await select({
-        message: `Session for ${agentId}/${backend}`,
-        choices,
+      const listed = await callPcpTool<ListSessionsResult>('list_sessions', {
+        email,
+        agentId,
+        ...(studioId ? { studioId } : {}),
+        limit: 20,
       });
-      if (selection === '__new__') {
-        const newSessionId = randomUUID();
-        const started = await callPcpTool<{ session?: PcpSessionSummary }>('start_session', {
-          email,
-          agentId,
-          ...(studioId ? { studioId } : {}),
-          backend,
-          forceNew: true,
-          sessionId: newSessionId,
-        });
-        chosen = started.session || { id: newSessionId, startedAt: new Date().toISOString() };
-      } else {
-        chosen = activeSessions.find((s) => s.id === selection);
-      }
+      activeSessions = filterPcpSessionsForContext(
+        (listed.sessions || []).filter((s) => !s.endedAt),
+        backend,
+        cwd,
+        localClaudeSessionIds
+      );
     } catch (err) {
-      if (isPromptCancelError(err)) {
-        console.log(chalk.yellow('\nSession selection canceled.'));
-        process.exit(130);
-      }
-      // Prompt canceled or unavailable; fallback to start new.
+      pcpAvailable = false;
+      pcpUnavailableReason = err instanceof Error ? err.message : 'request failed';
     }
   }
 
-  if (!chosen) {
+  if (!pcpAvailable) {
+    printPcpUnavailableWarning(pcpUnavailableReason || 'unknown error', cwd);
+  }
+
+  let chosen: PcpSessionSummary | undefined;
+  let selectedLocalBackendSessionId: string | undefined;
+
+  const startNewPcpSession = async (): Promise<PcpSessionSummary | undefined> => {
+    if (!pcpAvailable || !email) return undefined;
+
     const newSessionId = randomUUID();
     try {
       const started = await callPcpTool<{ session?: PcpSessionSummary }>('start_session', {
@@ -317,13 +437,84 @@ async function ensurePcpSessionContext(
         forceNew: true,
         sessionId: newSessionId,
       });
-      chosen = started.session || { id: newSessionId, startedAt: new Date().toISOString() };
+      return started.session || { id: newSessionId, startedAt: new Date().toISOString() };
     } catch {
-      chosen = { id: newSessionId, startedAt: new Date().toISOString() };
+      return { id: newSessionId, startedAt: new Date().toISOString() };
+    }
+  };
+
+  if (process.stdin.isTTY) {
+    const choices: Array<{ name: string; value: string }> = [
+      {
+        name: pcpAvailable ? 'Start new session' : 'Start new backend session',
+        value: '__new__',
+      },
+    ];
+
+    for (const session of activeSessions) {
+      const value = `__pcp__:${session.id}`;
+      choices.push({
+        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}`,
+        value,
+      });
+      sessionChoiceByValue.set(value, session.id);
+    }
+
+    if (backend === 'claude') {
+      for (const localSession of localClaudeSessions) {
+        const value = `__claude__:${localSession.sessionId}`;
+        const preview = localSession.firstPrompt ? ` — ${localSession.firstPrompt}` : '';
+        choices.push({
+          name: `Resume Claude ${localSession.sessionId.slice(0, 8)} (${new Date(localSession.modified).toLocaleString()})${preview}`,
+          value,
+        });
+        sessionChoiceByValue.set(value, localSession.sessionId);
+      }
+    }
+
+    try {
+      const { select } = await import('@inquirer/prompts');
+      const selection = await select({
+        message: `Session for ${agentId}/${backend}`,
+        choices,
+      });
+      if (selection === '__new__') {
+        chosen = await startNewPcpSession();
+      } else if (selection.startsWith('__pcp__:')) {
+        const sessionId = sessionChoiceByValue.get(selection);
+        chosen = activeSessions.find((session) => session.id === sessionId);
+      } else if (selection.startsWith('__claude__:')) {
+        selectedLocalBackendSessionId = sessionChoiceByValue.get(selection);
+        if (selectedLocalBackendSessionId && pcpAvailable) {
+          chosen = await startNewPcpSession();
+        }
+      }
+    } catch (err) {
+      if (isPromptCancelError(err)) {
+        console.log(chalk.yellow('\nSession selection canceled.'));
+        process.exit(130);
+      }
+      // Prompt canceled or unavailable; fallback to start new.
     }
   }
 
+  if (!chosen && !selectedLocalBackendSessionId && pcpAvailable) {
+    chosen = await startNewPcpSession();
+  }
+
+  if (!chosen?.id && !selectedLocalBackendSessionId) return {};
+
+  if (!chosen?.id && selectedLocalBackendSessionId) {
+    return { backendSessionId: selectedLocalBackendSessionId };
+  }
+
   if (!chosen?.id) return {};
+
+  const backendSessionId =
+    selectedLocalBackendSessionId ||
+    (!chosen.backend || chosen.backend === backend
+      ? chosen.backendSessionId || chosen.claudeSessionId || undefined
+      : undefined);
 
   upsertRuntimeSession(cwd, {
     pcpSessionId: chosen.id,
@@ -332,10 +523,7 @@ async function ensurePcpSessionContext(
     ...(identityId ? { identityId } : {}),
     ...(studioId ? { studioId } : {}),
     ...(chosen.threadKey ? { threadKey: chosen.threadKey } : {}),
-    ...((!chosen.backend || chosen.backend === backend) &&
-    (chosen.backendSessionId || chosen.claudeSessionId)
-      ? { backendSessionId: chosen.backendSessionId || chosen.claudeSessionId || undefined }
-      : {}),
+    ...(backendSessionId ? { backendSessionId } : {}),
     startedAt: chosen.startedAt,
   });
   setCurrentRuntimeSession(cwd, chosen.id, backend, {
@@ -346,12 +534,24 @@ async function ensurePcpSessionContext(
 
   if (verbose) {
     console.log(chalk.dim(`PCP session: ${chosen.id}`));
+    if (backendSessionId) {
+      console.log(chalk.dim(`Backend session: ${backendSessionId}`));
+    }
   }
 
-  const backendSessionId =
-    !chosen.backend || chosen.backend === backend
-      ? chosen.backendSessionId || chosen.claudeSessionId || undefined
-      : undefined;
+  if (email) {
+    try {
+      await callPcpTool('update_session_phase', {
+        email,
+        agentId,
+        sessionId: chosen.id,
+        status: 'active',
+        workingDir: cwd,
+      });
+    } catch {
+      // Best-effort only.
+    }
+  }
 
   return {
     pcpSessionId: chosen.id,
