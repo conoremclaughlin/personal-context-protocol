@@ -58,6 +58,13 @@ interface BackendLocalSessionSummary {
   gitBranch?: string;
 }
 
+interface ClaudeHistoryLine {
+  display?: string;
+  timestamp?: number;
+  project?: string;
+  sessionId?: string;
+}
+
 interface BackendExecutionLogContext {
   pcpConfig: PcpConfig | null;
   agentId: string;
@@ -133,6 +140,52 @@ function isPromptCancelError(err: unknown): boolean {
 
 function getPcpServerUrl(): string {
   return process.env.PCP_SERVER_URL || 'http://localhost:3001';
+}
+
+function getPcpToolCallBaseUrls(): string[] {
+  const urls: string[] = [];
+  const add = (value: string | undefined): void => {
+    if (!value) return;
+    if (!urls.includes(value)) urls.push(value);
+  };
+
+  const configured = process.env.PCP_SERVER_URL;
+  const explicitToolUrl = process.env.PCP_TOOL_CALL_URL;
+  const envPortBase = process.env.PCP_PORT_BASE
+    ? Number.parseInt(process.env.PCP_PORT_BASE, 10)
+    : undefined;
+
+  add(explicitToolUrl);
+
+  if (envPortBase && Number.isFinite(envPortBase)) {
+    add(`http://localhost:${envPortBase + 1}`); // web proxy (serves /api/mcp/call)
+    add(`http://localhost:${envPortBase}`); // api/auth server
+  } else {
+    // Default local dev topology: API on 3001, web proxy on 3002.
+    add('http://localhost:3002');
+    add('http://localhost:3001');
+  }
+
+  add(configured);
+
+  // If explicitly pointed at localhost:3001, also try sibling web port 3002.
+  if (configured) {
+    try {
+      const parsed = new URL(configured);
+      if (parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') {
+        const port = parsed.port ? Number.parseInt(parsed.port, 10) : undefined;
+        if (port && Number.isFinite(port)) {
+          const sibling = new URL(configured);
+          sibling.port = String(port + 1);
+          add(sibling.origin);
+        }
+      }
+    } catch {
+      // Ignore malformed URLs in env overrides.
+    }
+  }
+
+  return urls;
 }
 
 async function resolvePcpAuthEnv(verbose: boolean): Promise<Record<string, string>> {
@@ -321,6 +374,21 @@ export function getClaudeLocalSessionsForProject(
     }
   }
 
+  // Fallback path: some Claude installations persist session linkage in history.jsonl
+  // even when per-project sessions-index files are missing/out-of-date.
+  const historyPath = join(homedir(), '.claude', 'history.jsonl');
+  if (existsSync(historyPath)) {
+    try {
+      const historySessions = extractClaudeHistorySessionsForProject(
+        readFileSync(historyPath, 'utf-8'),
+        normalizedCwd
+      );
+      results.push(...historySessions);
+    } catch {
+      // Ignore unreadable history file.
+    }
+  }
+
   const dedupedBySessionId = new Map<string, BackendLocalSessionSummary>();
   for (const session of results) {
     const existing = dedupedBySessionId.get(session.sessionId);
@@ -332,6 +400,42 @@ export function getClaudeLocalSessionsForProject(
   return Array.from(dedupedBySessionId.values())
     .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
     .slice(0, limit);
+}
+
+export function extractClaudeHistorySessionsForProject(
+  historyJsonl: string,
+  normalizedCwd: string
+): BackendLocalSessionSummary[] {
+  const sessions: BackendLocalSessionSummary[] = [];
+  for (const line of historyJsonl.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    let parsed: ClaudeHistoryLine;
+    try {
+      parsed = JSON.parse(trimmed) as ClaudeHistoryLine;
+    } catch {
+      continue;
+    }
+
+    if (!parsed.sessionId || !parsed.project) continue;
+    const normalizedProjectPath = normalizePath(parsed.project);
+    if (!normalizedProjectPath || normalizedProjectPath !== normalizedCwd) continue;
+
+    const modified =
+      typeof parsed.timestamp === 'number' && Number.isFinite(parsed.timestamp)
+        ? new Date(parsed.timestamp).toISOString()
+        : new Date().toISOString();
+
+    sessions.push({
+      backend: 'claude',
+      sessionId: parsed.sessionId,
+      projectPath: parsed.project,
+      modified,
+      firstPrompt: parsed.display,
+    });
+  }
+
+  return sessions;
 }
 
 export function getCodexLocalSessionsForProject(
@@ -568,17 +672,39 @@ export function hasBackendSessionOverride(
 }
 
 async function callPcpTool<T = Record<string, unknown>>(tool: string, args: object): Promise<T> {
-  const response = await fetch(`${getPcpServerUrl()}/api/mcp/call`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ tool, args }),
-  });
+  const baseUrls = getPcpToolCallBaseUrls();
+  let lastError: Error | undefined;
+  const tried: string[] = [];
 
-  if (!response.ok) {
-    throw new Error(`PCP tool ${tool} failed: ${response.status} ${await response.text()}`);
+  for (const baseUrl of baseUrls) {
+    const endpoint = `${baseUrl}/api/mcp/call`;
+    tried.push(endpoint);
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tool, args }),
+      });
+
+      if (response.ok) {
+        return (await response.json()) as T;
+      }
+
+      // Common misconfiguration case: hitting API/auth origin instead of web proxy.
+      if (response.status === 404) {
+        lastError = new Error(`404 ${await response.text()}`);
+        continue;
+      }
+
+      lastError = new Error(`PCP tool ${tool} failed: ${response.status} ${await response.text()}`);
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
   }
 
-  return (await response.json()) as T;
+  throw new Error(
+    `PCP tool ${tool} failed after trying ${tried.length} endpoint(s): ${tried.join(', ')}${lastError ? ` — ${lastError.message}` : ''}`
+  );
 }
 
 function extractActivityIdFromLogResult(result: unknown): string | undefined {

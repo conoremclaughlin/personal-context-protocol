@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  extractClaudeHistorySessionsForProject,
   filterPcpSessionsForContext,
   filterUntrackedLocalClaudeSessions,
   hasBackendSessionOverride,
@@ -205,5 +206,33 @@ describe('shouldAutoResumeRuntimeSession', () => {
     expect(shouldAutoResumeRuntimeSession({ pcpSessionId: 'pcp-1' }, true)).toBe(false);
     expect(shouldAutoResumeRuntimeSession(undefined, false)).toBe(false);
     expect(shouldAutoResumeRuntimeSession({ backendSessionId: 'b-1' }, false)).toBe(false);
+  });
+});
+
+describe('extractClaudeHistorySessionsForProject', () => {
+  it('parses local claude sessions from history.jsonl for the current project path', () => {
+    const jsonl = [
+      JSON.stringify({
+        sessionId: 'sess-clearpol-1',
+        project: '/Users/conormclaughlin/ws/clearpol-ai',
+        timestamp: 1772254853007,
+        display: 'Hi Wren',
+      }),
+      JSON.stringify({
+        sessionId: 'sess-other',
+        project: '/Users/conormclaughlin/ws/another-repo',
+        timestamp: 1772254853007,
+      }),
+    ].join('\n');
+
+    const parsed = extractClaudeHistorySessionsForProject(
+      jsonl,
+      '/Users/conormclaughlin/ws/clearpol-ai'
+    );
+
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].sessionId).toBe('sess-clearpol-1');
+    expect(parsed[0].backend).toBe('claude');
+    expect(parsed[0].firstPrompt).toBe('Hi Wren');
   });
 });
