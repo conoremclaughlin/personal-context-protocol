@@ -36,10 +36,14 @@ import {
   resolve as resolvePath,
   delimiter as pathDelimiter,
 } from 'path';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { installHooks, callPcpTool } from './hooks.js';
 import { loadAuth, decodeJwtPayload, isTokenExpired } from '../auth/tokens.js';
 import { resolveAgentId } from '../backends/identity.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 interface StudioIdentity {
   agentId: string;
