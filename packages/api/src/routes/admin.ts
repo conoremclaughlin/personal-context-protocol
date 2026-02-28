@@ -699,6 +699,7 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
         userId: pcpUserId!,
         email: userEmail,
         workspaceId: activeWorkspaceId,
+        workspaceSource: requestedWorkspaceId ? 'header' : 'default',
       },
       () => next()
     );
