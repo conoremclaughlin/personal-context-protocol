@@ -559,6 +559,7 @@ async function updateRuntimeGenerationState(
       sessionId,
       phase,
       status: 'active',
+      workingDir: cwd,
     });
   } catch {
     // Non-fatal; hook execution should not fail due to transient session sync issues.
@@ -1463,6 +1464,7 @@ async function onSessionStartHandler(): Promise<void> {
         sessionId: pcpSessionId,
         phase: 'runtime:idle',
         status: 'active',
+        workingDir: cwd,
       };
       if (backendSessionId) updateArgs.backendSessionId = backendSessionId;
       await callPcpTool('update_session_phase', updateArgs);
