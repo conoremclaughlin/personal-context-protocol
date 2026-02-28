@@ -58,6 +58,27 @@ interface BackendLocalSessionSummary {
   gitBranch?: string;
 }
 
+interface BackendExecutionLogContext {
+  pcpConfig: PcpConfig | null;
+  agentId: string;
+  backend: string;
+  binary: string;
+  args: string[];
+  promptParts?: string[];
+  pcpSessionId?: string;
+  backendSessionId?: string;
+  studioId?: string;
+  runtimeLinkId?: string;
+  cwd: string;
+  mode: 'prompt' | 'interactive';
+  retryAttempt: number;
+  maxAttempts: number;
+}
+
+type LogActivityResult = {
+  activity?: { id?: string };
+};
+
 function getSessionBackendId(session: PcpSessionSummary): string | undefined {
   return session.backendSessionId || session.claudeSessionId || undefined;
 }
@@ -155,6 +176,50 @@ function truncateText(text: string | null | undefined, max = 90): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   if (compact.length <= max) return compact;
   return `${compact.slice(0, max - 1)}…`;
+}
+
+export function sanitizeBackendExecutionArgs(
+  args: string[],
+  backend: string,
+  promptParts: string[] = []
+): string[] {
+  const sanitized = [...args];
+
+  for (let i = 0; i < sanitized.length; i++) {
+    const arg = sanitized[i];
+    if (arg === '--append-system-prompt' && i + 1 < sanitized.length) {
+      sanitized[i + 1] = '<redacted-system-prompt>';
+      i += 1;
+      continue;
+    }
+
+    if (arg === '-p' && i + 1 < sanitized.length && !sanitized[i + 1].startsWith('-')) {
+      sanitized[i + 1] = '<redacted-prompt>';
+      i += 1;
+    }
+  }
+
+  if (sanitized.includes('-p') && sanitized.length > 0) {
+    const lastIndex = sanitized.length - 1;
+    if (!sanitized[lastIndex].startsWith('-')) {
+      sanitized[lastIndex] = '<redacted-prompt>';
+    }
+  }
+
+  // Codex one-shot prompts may be passed as positional args (no -p flag).
+  if (backend === 'codex' && promptParts.length > 0 && sanitized.length >= promptParts.length) {
+    const startIndex = sanitized.length - promptParts.length;
+    const trailingMatches = promptParts.every(
+      (part, index) => sanitized[startIndex + index] === part
+    );
+    if (trailingMatches) {
+      for (let i = startIndex; i < sanitized.length; i++) {
+        sanitized[i] = '<redacted-prompt-part>';
+      }
+    }
+  }
+
+  return sanitized;
 }
 
 export function filterPcpSessionsForContext(
@@ -492,6 +557,103 @@ async function callPcpTool<T = Record<string, unknown>>(tool: string, args: obje
   }
 
   return (await response.json()) as T;
+}
+
+function extractActivityIdFromLogResult(result: unknown): string | undefined {
+  if (!result || typeof result !== 'object') return undefined;
+  const maybe = result as LogActivityResult;
+  if (typeof maybe.activity?.id === 'string') return maybe.activity.id;
+  return undefined;
+}
+
+async function logBackendExecutionStart(
+  context: BackendExecutionLogContext
+): Promise<string | undefined> {
+  if (!context.pcpConfig?.email) return undefined;
+
+  try {
+    const argsSanitized = sanitizeBackendExecutionArgs(
+      context.args,
+      context.backend,
+      context.promptParts || []
+    );
+
+    const result = await callPcpTool<LogActivityResult>('log_activity', {
+      email: context.pcpConfig.email,
+      agentId: context.agentId,
+      type: 'tool_call',
+      subtype: `backend_cli:${context.backend}`,
+      status: 'running',
+      ...(context.pcpSessionId ? { sessionId: context.pcpSessionId } : {}),
+      ...(context.runtimeLinkId ? { correlationId: context.runtimeLinkId } : {}),
+      content: `Spawned backend CLI (${context.binary})`,
+      payload: {
+        kind: 'backend_cli_execution',
+        phase: 'start',
+        backend: context.backend,
+        binary: context.binary,
+        argsSanitized,
+        cwd: context.cwd,
+        studioId: context.studioId || null,
+        pcpSessionId: context.pcpSessionId || null,
+        backendSessionId: context.backendSessionId || null,
+        retryAttempt: context.retryAttempt,
+        maxAttempts: context.maxAttempts,
+      },
+    });
+
+    return extractActivityIdFromLogResult(result);
+  } catch {
+    return undefined;
+  }
+}
+
+async function logBackendExecutionResult(options: {
+  context: BackendExecutionLogContext;
+  parentActivityId?: string;
+  exitCode: number | null;
+  durationMs: number;
+  error?: string;
+  backendSessionId?: string;
+}): Promise<void> {
+  if (!options.context.pcpConfig?.email) return;
+
+  const status = options.exitCode === 0 && !options.error ? 'completed' : 'failed';
+
+  try {
+    await callPcpTool('log_activity', {
+      email: options.context.pcpConfig.email,
+      agentId: options.context.agentId,
+      type: 'tool_result',
+      subtype: `backend_cli:${options.context.backend}`,
+      status,
+      ...(options.context.pcpSessionId ? { sessionId: options.context.pcpSessionId } : {}),
+      ...(options.parentActivityId ? { parentId: options.parentActivityId } : {}),
+      ...(options.context.runtimeLinkId ? { correlationId: options.context.runtimeLinkId } : {}),
+      content:
+        status === 'completed'
+          ? `Backend CLI finished (${options.context.binary})`
+          : `Backend CLI failed (${options.context.binary})`,
+      payload: {
+        kind: 'backend_cli_execution',
+        phase: 'result',
+        backend: options.context.backend,
+        binary: options.context.binary,
+        cwd: options.context.cwd,
+        studioId: options.context.studioId || null,
+        pcpSessionId: options.context.pcpSessionId || null,
+        backendSessionId: options.backendSessionId || null,
+        retryAttempt: options.context.retryAttempt,
+        maxAttempts: options.context.maxAttempts,
+        retries: Math.max(options.context.retryAttempt - 1, 0),
+        exitCode: options.exitCode,
+        durationMs: options.durationMs,
+        error: options.error || null,
+      },
+    });
+  } catch {
+    // Best-effort telemetry only.
+  }
 }
 
 function extractBackendSessionIdFromEvent(event: Record<string, unknown>): string | undefined {
@@ -846,8 +1008,45 @@ export async function runClaude(
   }
 
   const pcpConfig = getPcpConfig();
+  const executionContext: BackendExecutionLogContext = {
+    pcpConfig,
+    agentId,
+    backend: options.backend,
+    binary: prepared.binary,
+    args: prepared.args,
+    promptParts,
+    pcpSessionId: sessionContext.pcpSessionId,
+    backendSessionId: sessionContext.backendSessionId,
+    studioId,
+    runtimeLinkId,
+    cwd: process.cwd(),
+    mode: 'prompt',
+    retryAttempt: 1,
+    maxAttempts: 1,
+  };
+  const executionStartedAt = Date.now();
+  const backendStartActivityId = await logBackendExecutionStart(executionContext);
   let capturedBackendSessionId = sessionContext.backendSessionId;
   let stdoutLineBuffer = '';
+  let cleanedUp = false;
+  let finalizedExecution = false;
+  const ensureCleanup = (): void => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    prepared.cleanup();
+  };
+  const finalizeExecution = async (exitCode: number | null, error?: string): Promise<void> => {
+    if (finalizedExecution) return;
+    finalizedExecution = true;
+    await logBackendExecutionResult({
+      context: executionContext,
+      parentActivityId: backendStartActivityId,
+      exitCode,
+      durationMs: Date.now() - executionStartedAt,
+      error,
+      backendSessionId: capturedBackendSessionId,
+    });
+  };
   const consumeOutputChunk = (chunkText: string): void => {
     stdoutLineBuffer += chunkText;
     const lines = stdoutLineBuffer.split('\n');
@@ -879,7 +1078,7 @@ export async function runClaude(
   });
 
   child.on('close', async (code) => {
-    prepared.cleanup();
+    ensureCleanup();
     if (stdoutLineBuffer.trim()) {
       const parsedSessionId = parseSessionIdFromJsonLine(stdoutLineBuffer.trim());
       if (parsedSessionId) capturedBackendSessionId = parsedSessionId;
@@ -895,8 +1094,15 @@ export async function runClaude(
       identityId,
       email: pcpConfig?.email,
     });
+    await finalizeExecution(code ?? null);
 
     if (code !== 0) process.exit(code || 1);
+  });
+
+  child.on('error', async (err) => {
+    ensureCleanup();
+    await finalizeExecution(null, err.message || 'spawn failed');
+    process.exit(1);
   });
 
   process.on('SIGINT', () => child.kill('SIGINT'));
@@ -964,6 +1170,44 @@ export async function runClaudeInteractive(
     console.log(chalk.dim(`Running: ${prepared.binary} ${prepared.args.join(' ')}`));
   }
 
+  const pcpConfig = getPcpConfig();
+  const executionContext: BackendExecutionLogContext = {
+    pcpConfig,
+    agentId,
+    backend: options.backend,
+    binary: prepared.binary,
+    args: prepared.args,
+    pcpSessionId: sessionContext.pcpSessionId,
+    backendSessionId: sessionContext.backendSessionId,
+    studioId,
+    runtimeLinkId,
+    cwd: process.cwd(),
+    mode: 'interactive',
+    retryAttempt: 1,
+    maxAttempts: 1,
+  };
+  const executionStartedAt = Date.now();
+  const backendStartActivityId = await logBackendExecutionStart(executionContext);
+  let cleanedUp = false;
+  let finalizedExecution = false;
+  const ensureCleanup = (): void => {
+    if (cleanedUp) return;
+    cleanedUp = true;
+    prepared.cleanup();
+  };
+  const finalizeExecution = async (exitCode: number | null, error?: string): Promise<void> => {
+    if (finalizedExecution) return;
+    finalizedExecution = true;
+    await logBackendExecutionResult({
+      context: executionContext,
+      parentActivityId: backendStartActivityId,
+      exitCode,
+      durationMs: Date.now() - executionStartedAt,
+      error,
+      backendSessionId: sessionContext.backendSessionId,
+    });
+  };
+
   const child = spawn(prepared.binary, prepared.args, {
     stdio: 'inherit',
     env: {
@@ -974,8 +1218,15 @@ export async function runClaudeInteractive(
     },
   });
 
-  child.on('close', (code) => {
-    prepared.cleanup();
+  child.on('close', async (code) => {
+    ensureCleanup();
+    await finalizeExecution(code ?? null);
     process.exit(code || 0);
+  });
+
+  child.on('error', async (err) => {
+    ensureCleanup();
+    await finalizeExecution(null, err.message || 'spawn failed');
+    process.exit(1);
   });
 }

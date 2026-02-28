@@ -3,6 +3,7 @@ import {
   filterPcpSessionsForContext,
   filterUntrackedLocalClaudeSessions,
   hasBackendSessionOverride,
+  sanitizeBackendExecutionArgs,
 } from './claude.js';
 
 describe('hasBackendSessionOverride', () => {
@@ -146,5 +147,53 @@ describe('filterUntrackedLocalClaudeSessions', () => {
     ]);
 
     expect(filtered.map((session) => session.sessionId)).toEqual(['claude-2']);
+  });
+});
+
+describe('sanitizeBackendExecutionArgs', () => {
+  it('redacts claude system prompt and one-shot prompt text', () => {
+    const sanitized = sanitizeBackendExecutionArgs(
+      [
+        '-p',
+        '--append-system-prompt',
+        'identity text',
+        '--mcp-config',
+        '/tmp/.mcp.json',
+        'fix this bug',
+      ],
+      'claude'
+    );
+    expect(sanitized).toEqual([
+      '-p',
+      '--append-system-prompt',
+      '<redacted-system-prompt>',
+      '--mcp-config',
+      '/tmp/.mcp.json',
+      '<redacted-prompt>',
+    ]);
+  });
+
+  it('redacts trailing codex prompt parts when present', () => {
+    const sanitized = sanitizeBackendExecutionArgs(
+      [
+        '--config',
+        'model_instructions_file=/tmp/identity.md',
+        '--model',
+        'o3',
+        'please',
+        'summarize',
+      ],
+      'codex',
+      ['please', 'summarize']
+    );
+
+    expect(sanitized).toEqual([
+      '--config',
+      'model_instructions_file=/tmp/identity.md',
+      '--model',
+      'o3',
+      '<redacted-prompt-part>',
+      '<redacted-prompt-part>',
+    ]);
   });
 });
