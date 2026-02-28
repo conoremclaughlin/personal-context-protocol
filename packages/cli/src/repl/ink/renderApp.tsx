@@ -104,16 +104,12 @@ export function renderInkChat(options: {
     }
   };
 
-  // On resize, clear the visible screen and let Ink re-render from scratch.
-  // Scrollback is preserved (user can scroll up). This is the only reliable
-  // way to handle terminal reflow — Ink's line tracker can't account for how
-  // old content wraps at the new width.
-  const onResize = () => {
-    process.stdout.write('\x1b[2J');
-  };
-  process.stdout.on('resize', onResize);
-
-  // Mount the Ink app (its internal resize handler registers AFTER ours)
+  // Ink v6 handles resize natively: on width decrease, it calls log.clear()
+  // to erase the tracked dynamic area and re-renders fresh. This works
+  // correctly as long as dock lines never exceed terminal width (which
+  // StatusBar and InfoBar now guarantee via truncation). No external resize
+  // handler needed — adding one (e.g. \x1b[2J) would clear <Static> messages
+  // that Ink won't rewrite.
   const { unmount } = render(
     <ChatApp
       ref={handleRef}
@@ -179,7 +175,6 @@ export function renderInkChat(options: {
     },
 
     cleanup: () => {
-      process.stdout.off('resize', onResize);
       unmount();
     },
 

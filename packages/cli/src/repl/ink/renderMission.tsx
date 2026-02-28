@@ -32,12 +32,8 @@ export function renderInkMission(options: { timezone?: string }): InkMission {
     }
   };
 
-  // Full screen clear on resize — see renderApp.tsx for rationale.
-  const onResize = () => {
-    process.stdout.write('\x1b[2J');
-  };
-  process.stdout.on('resize', onResize);
-
+  // No external resize handler needed — see renderApp.tsx for rationale.
+  // Ink v6 handles resize natively when dock lines don't exceed terminal width.
   const { unmount } = render(
     <MissionApp ref={handleRef} timezone={options.timezone} onExit={onExit} />
   );
@@ -54,7 +50,6 @@ export function renderInkMission(options: { timezone?: string }): InkMission {
     setAgents: (agents) => getHandle().setAgents(agents),
     setStatus: (status) => getHandle().setStatus(status),
     cleanup: () => {
-      process.stdout.off('resize', onResize);
       unmount();
     },
     waitForExit: () => exitPromise,
