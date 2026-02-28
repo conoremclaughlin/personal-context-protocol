@@ -124,9 +124,7 @@ function SharedContextCard({ userIdentity }: { userIdentity: UserIdentity }) {
   const userProfile = userIdentity.userProfile ?? userIdentity.userProfileMd;
   const sharedValues = userIdentity.sharedValues ?? userIdentity.sharedValuesMd;
   const process = userIdentity.process ?? userIdentity.processMd;
-  const hasAnyDocument = Boolean(
-    userProfile || sharedValues || process
-  );
+  const hasAnyDocument = Boolean(userProfile || sharedValues || process);
 
   if (!hasAnyDocument) return null;
 
@@ -207,7 +205,9 @@ function AgentSummaryCard({
       <div className="flex h-full flex-col md:flex-row">
         <div className="shrink-0 border-r border-gray-100 bg-gray-50/50 p-5 md:w-64">
           <div className="mb-4 flex items-start justify-between">
-            <div className={clsx('rounded-full p-2.5', isActive ? 'bg-green-100' : 'bg-purple-100')}>
+            <div
+              className={clsx('rounded-full p-2.5', isActive ? 'bg-green-100' : 'bg-purple-100')}
+            >
               {isActive ? (
                 <Activity className="h-5 w-5 text-green-600" />
               ) : (
@@ -216,7 +216,10 @@ function AgentSummaryCard({
             </div>
             <div className="flex gap-1">
               {identity.hasHeartbeat && (
-                <div title="Has operational guide" className="rounded-md bg-blue-50 p-1.5 text-blue-500">
+                <div
+                  title="Has operational guide"
+                  className="rounded-md bg-blue-50 p-1.5 text-blue-500"
+                >
                   <Zap className="h-3.5 w-3.5 fill-current" />
                 </div>
               )}
@@ -236,12 +239,18 @@ function AgentSummaryCard({
               </Badge>
             )}
             {isPaused && (
-              <Badge variant="outline" className="w-full justify-center border-amber-200 bg-amber-50 py-1 text-amber-700">
+              <Badge
+                variant="outline"
+                className="w-full justify-center border-amber-200 bg-amber-50 py-1 text-amber-700"
+              >
                 Paused
               </Badge>
             )}
             {!isActive && !isPaused && (
-              <Badge variant="secondary" className="w-full justify-center bg-gray-100 py-1 font-normal text-gray-500">
+              <Badge
+                variant="secondary"
+                className="w-full justify-center bg-gray-100 py-1 font-normal text-gray-500"
+              >
                 Idle
               </Badge>
             )}
@@ -256,7 +265,9 @@ function AgentSummaryCard({
                 {identity.hasSoul ? 'Constitution' : 'Overview'}
               </span>
             </div>
-            <p className="mb-4 line-clamp-3 text-sm leading-relaxed text-gray-700">{primaryContent}</p>
+            <p className="mb-4 line-clamp-3 text-sm leading-relaxed text-gray-700">
+              {primaryContent}
+            </p>
 
             {currentFocus && (
               <div className="rounded-md border border-yellow-100 bg-yellow-50/50 p-3">
@@ -327,10 +338,8 @@ function AgentSummaryCard({
 }
 
 export default function IndividualsPage() {
-  const { data: userIdentityData, isLoading: userIdentityLoading } = useApiQuery<UserIdentityResponse>(
-    ['user-identity'],
-    '/api/admin/user-identity'
-  );
+  const { data: userIdentityData, isLoading: userIdentityLoading } =
+    useApiQuery<UserIdentityResponse>(['user-identity'], '/api/admin/user-identity');
 
   const {
     data: individualsData,
@@ -393,7 +402,10 @@ export default function IndividualsPage() {
           {isLoading ? (
             <div className="space-y-4">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="flex h-48 animate-pulse rounded-lg border border-gray-200 bg-white">
+                <div
+                  key={i}
+                  className="flex h-48 animate-pulse rounded-lg border border-gray-200 bg-white"
+                >
                   <div className="w-64 border-r border-gray-100 bg-gray-50" />
                   <div className="flex-1 space-y-4 p-6">
                     <div className="h-4 w-3/4 rounded bg-gray-100" />
@@ -407,7 +419,10 @@ export default function IndividualsPage() {
               <CardContent className="py-12 text-center text-gray-500">
                 <p>No individuals found.</p>
                 <p className="mt-2 text-sm">
-                  Use the <code>save_identity</code> tool to create one.
+                  Run <code>sb awaken</code> to create one (recommended).
+                </p>
+                <p className="mt-1 text-sm">
+                  You can also use the <code>save_identity</code> tool directly.
                 </p>
               </CardContent>
             </Card>
