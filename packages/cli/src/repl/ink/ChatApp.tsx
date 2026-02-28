@@ -22,7 +22,7 @@ const WAITING_VERBS = [
   'Mulling it over',
 ];
 
-const SPINNER_FRAMES = ['✦', '✧', '✦', '✧'];
+const SPINNER_CHAR = '✦';
 
 export interface ChatMessage extends MessageLineProps {
   id: string;
@@ -80,33 +80,22 @@ export const ChatApp = React.forwardRef<ChatAppHandle, ChatAppProps>(function Ch
   const [ctrlCCount, setCtrlCCount] = useState(0);
   const [ctrlCTimer, setCtrlCTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 
-  // Animated waiting indicator state
-  const [spinnerFrame, setSpinnerFrame] = useState(0);
+  // Waiting indicator state — verb rotates every 3s, no fast spinner
+  // (fast animation causes scroll snapback because each re-render resets viewport)
   const [waitingVerb, setWaitingVerb] = useState('');
   const verbIndexRef = useRef(Math.floor(Math.random() * WAITING_VERBS.length));
 
   useEffect(() => {
     if (!waiting) return;
-    // Pick a random starting verb
     verbIndexRef.current = Math.floor(Math.random() * WAITING_VERBS.length);
     setWaitingVerb(WAITING_VERBS[verbIndexRef.current]!);
-    setSpinnerFrame(0);
 
-    // Spinner animation: fast (150ms)
-    const spinnerTimer = setInterval(() => {
-      setSpinnerFrame((f) => (f + 1) % SPINNER_FRAMES.length);
-    }, 150);
-
-    // Verb rotation: every 3 seconds
     const verbTimer = setInterval(() => {
       verbIndexRef.current = (verbIndexRef.current + 1) % WAITING_VERBS.length;
       setWaitingVerb(WAITING_VERBS[verbIndexRef.current]!);
     }, 3000);
 
-    return () => {
-      clearInterval(spinnerTimer);
-      clearInterval(verbTimer);
-    };
+    return () => clearInterval(verbTimer);
   }, [waiting]);
 
   // Expose handle for external state pushing
@@ -170,10 +159,10 @@ export const ChatApp = React.forwardRef<ChatAppHandle, ChatAppProps>(function Ch
         />
       ))}
 
-      {/* Animated waiting indicator */}
+      {/* Waiting indicator — static char, rotating verb every 3s */}
       {waiting && (
         <Box paddingX={1}>
-          <Text color="cyan">{SPINNER_FRAMES[spinnerFrame] + ' '}</Text>
+          <Text color="cyan">{SPINNER_CHAR + ' '}</Text>
           <Text dimColor>{waitingVerb}...</Text>
         </Box>
       )}
