@@ -104,12 +104,9 @@ export function renderInkChat(options: {
     }
   };
 
-  // Ink v6 handles resize natively: on width decrease, it calls log.clear()
-  // to erase the tracked dynamic area and re-renders fresh. This works
-  // correctly as long as dock lines never exceed terminal width (which
-  // StatusBar and InfoBar now guarantee via truncation). No external resize
-  // handler needed — adding one (e.g. \x1b[2J) would clear <Static> messages
-  // that Ink won't rewrite.
+  // incrementalRendering: line-by-line diffing instead of full erase+rewrite.
+  // Since all content is dynamic (no <Static>), this ensures keystrokes in the
+  // prompt only rewrite the prompt line — not every message above it.
   const { unmount } = render(
     <ChatApp
       ref={handleRef}
@@ -118,7 +115,8 @@ export function renderInkChat(options: {
       infoItems={options.infoItems}
       onUserInput={onUserInput}
       onExit={onExit}
-    />
+    />,
+    { incrementalRendering: true }
   );
 
   // Get the handle (available synchronously after render)

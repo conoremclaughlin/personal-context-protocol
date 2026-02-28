@@ -26,7 +26,8 @@ const ROLE_COLORS: Record<MessageRole, string> = {
  * Matches absolute paths and file:// URIs ending in common image extensions.
  * Path segments use non-greedy matching and stop at whitespace boundaries.
  */
-const IMAGE_PATH_RE = /(?:file:\/\/)?\/(?:[^\s/]+\/)*[^\s/]+\.(?:png|jpg|jpeg|gif|webp|svg|bmp|tiff|heic)\b/gi;
+const IMAGE_PATH_RE =
+  /(?:file:\/\/)?\/(?:[^\s/]+\/)*[^\s/]+\.(?:png|jpg|jpeg|gif|webp|svg|bmp|tiff|heic)\b/gi;
 
 export function collapseImagePaths(text: string): string {
   let counter = 0;
@@ -37,7 +38,7 @@ export function collapseImagePaths(text: string): string {
 }
 
 /** Single chat message with label, content, and trailing metadata. */
-export function MessageLine({
+export const MessageLine = React.memo(function MessageLine({
   role,
   content,
   label,
@@ -53,7 +54,9 @@ export function MessageLine({
     <Box flexDirection="column" paddingLeft={1} marginTop={1}>
       {/* Header: label + metadata on one line */}
       <Box>
-        <Text bold color={color}>{displayLabel}</Text>
+        <Text bold color={color}>
+          {displayLabel}
+        </Text>
         {meta ? (
           <>
             <Text>{'  '}</Text>
@@ -63,8 +66,10 @@ export function MessageLine({
       </Box>
       {/* Content: small indent from label, wraps naturally */}
       <Box paddingLeft={2}>
-        <Text color={color} wrap="wrap">{displayContent}</Text>
+        <Text color={color} wrap="wrap">
+          {displayContent}
+        </Text>
       </Box>
     </Box>
   );
-}
+});

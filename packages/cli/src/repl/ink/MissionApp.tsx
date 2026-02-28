@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Box, Static, Text, useApp, useStdout } from 'ink';
+import React, { useState, useEffect, useRef } from 'react';
+import { Box, Text, useApp, useStdout } from 'ink';
 import { Separator } from './Separator.js';
 import { formatNow } from '../tui-components.js';
 
@@ -126,45 +126,35 @@ export const MissionApp = React.forwardRef<MissionAppHandle, MissionAppProps>(fu
       : status;
   })();
 
-  // Force commitUpdate on the Static node when events change — see ChatApp.tsx
-  // for the full explanation of why this is needed (isStaticDirty bug in Ink).
-  const staticStyle = useMemo(
-    () => ({ flexDirection: 'column' as const }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [events.length]
-  );
-
   return (
     <Box flexDirection="column">
-      {/* Feed events scroll into scrollback */}
-      <Static items={events} style={staticStyle}>
-        {(event) => (
-          <Box key={event.id} paddingLeft={1} marginTop={event.type === 'system' ? 0 : 1}>
-            <Text color={TYPE_COLORS[event.type] || 'gray'}>{TYPE_ICONS[event.type] || '•'} </Text>
-            <Box flexDirection="column" flexShrink={1}>
-              <Box>
-                {event.agent && (
-                  <Text bold color={TYPE_COLORS[event.type] || 'gray'}>
-                    {event.agent}
-                  </Text>
-                )}
-                {event.agent && <Text>{'  '}</Text>}
-                <Text dimColor>{event.time}</Text>
-              </Box>
-              <Box paddingLeft={event.agent ? 2 : 0}>
-                <Text wrap="wrap">{event.content}</Text>
-              </Box>
-              {event.detail && (
-                <Box paddingLeft={event.agent ? 2 : 0}>
-                  <Text dimColor wrap="wrap">
-                    {event.detail}
-                  </Text>
-                </Box>
+      {/* Feed events — rendered as regular dynamic children */}
+      {events.map((event) => (
+        <Box key={event.id} paddingLeft={1} marginTop={event.type === 'system' ? 0 : 1}>
+          <Text color={TYPE_COLORS[event.type] || 'gray'}>{TYPE_ICONS[event.type] || '•'} </Text>
+          <Box flexDirection="column" flexShrink={1}>
+            <Box>
+              {event.agent && (
+                <Text bold color={TYPE_COLORS[event.type] || 'gray'}>
+                  {event.agent}
+                </Text>
               )}
+              {event.agent && <Text>{'  '}</Text>}
+              <Text dimColor>{event.time}</Text>
             </Box>
+            <Box paddingLeft={event.agent ? 2 : 0}>
+              <Text wrap="wrap">{event.content}</Text>
+            </Box>
+            {event.detail && (
+              <Box paddingLeft={event.agent ? 2 : 0}>
+                <Text dimColor wrap="wrap">
+                  {event.detail}
+                </Text>
+              </Box>
+            )}
           </Box>
-        )}
-      </Static>
+        </Box>
+      ))}
 
       {/* Fixed dock: SB summary + status */}
       <Separator />

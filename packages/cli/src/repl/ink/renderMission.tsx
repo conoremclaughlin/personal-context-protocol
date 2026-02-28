@@ -32,10 +32,10 @@ export function renderInkMission(options: { timezone?: string }): InkMission {
     }
   };
 
-  // No external resize handler needed — see renderApp.tsx for rationale.
-  // Ink v6 handles resize natively when dock lines don't exceed terminal width.
+  // incrementalRendering: line-by-line diffing instead of full erase+rewrite.
   const { unmount } = render(
-    <MissionApp ref={handleRef} timezone={options.timezone} onExit={onExit} />
+    <MissionApp ref={handleRef} timezone={options.timezone} onExit={onExit} />,
+    { incrementalRendering: true }
   );
 
   const getHandle = (): MissionAppHandle => {

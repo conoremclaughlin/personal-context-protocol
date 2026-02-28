@@ -150,12 +150,14 @@ export function PromptInput({
 
   return (
     <Box paddingX={1}>
-      <Text bold color="green">
-        {label}
+      <Text wrap="wrap">
+        <Text bold color="green">
+          {label}
+        </Text>
+        {before}
+        <Text inverse>{cursorChar}</Text>
+        {after}
       </Text>
-      <Text>{before}</Text>
-      <Text inverse>{cursorChar}</Text>
-      <Text>{after}</Text>
     </Box>
   );
 }

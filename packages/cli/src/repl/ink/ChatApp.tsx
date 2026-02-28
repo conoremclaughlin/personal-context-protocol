@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Box, Static, Text, useApp } from 'ink';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { Box, Text, useApp } from 'ink';
 import { StatusBar } from './StatusBar.js';
 import { InfoBar } from './InfoBar.js';
 import { PromptInput } from './PromptInput.js';
@@ -52,8 +52,14 @@ export interface ChatAppHandle {
 /**
  * Root Ink component for the SB Chat REPL.
  *
+ * All content is rendered dynamically (no <Static>). Ink erases and redraws
+ * the entire output on every state change, which means:
+ *   - No ghost dock duplication (single erase-rewrite pipeline)
+ *   - Resize just re-renders everything at the new width
+ *   - Terminal scrollback works naturally as content exceeds viewport
+ *
  * Layout:
- *   <Static> — chat messages (committed to scrollback, never re-render)
+ *   messages (all dynamic)
  *   ─────────── separator
  *   status bar                          timestamp
  *   ─────────── separator
@@ -149,38 +155,20 @@ export const ChatApp = React.forwardRef<ChatAppHandle, ChatAppProps>(function Ch
   const now = formatNow(timezone);
   const promptLabel = '> ';
 
-  // IMPORTANT: Ink's reconciler only sets isStaticDirty (which triggers
-  // onImmediateRender for <Static> content) when the static box node
-  // receives a commitUpdate — NOT when children are added/removed.
-  // Without this, new static items go through the throttled onRender path,
-  // which can fire AFTER useLayoutEffect removes the children, causing
-  // messages to be lost or the dock to ghost-duplicate.
-  //
-  // By changing the style prop when messages.length changes, we force
-  // commitUpdate on the ink-box internal_static node → isStaticDirty = true
-  // → onImmediateRender fires synchronously before children are cleared.
-  const staticStyle = useMemo(
-    () => ({ flexDirection: 'column' as const }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [messages.length]
-  );
-
   return (
     <Box flexDirection="column">
-      {/* Messages scroll into scrollback — <Static> renders once and commits */}
-      <Static items={messages} style={staticStyle}>
-        {(msg) => (
-          <MessageLine
-            key={msg.id}
-            id={msg.id}
-            role={msg.role}
-            content={msg.content}
-            label={msg.label}
-            time={msg.time}
-            trailingMeta={msg.trailingMeta}
-          />
-        )}
-      </Static>
+      {/* Messages — rendered as regular dynamic children */}
+      {messages.map((msg) => (
+        <MessageLine
+          key={msg.id}
+          id={msg.id}
+          role={msg.role}
+          content={msg.content}
+          label={msg.label}
+          time={msg.time}
+          trailingMeta={msg.trailingMeta}
+        />
+      ))}
 
       {/* Animated waiting indicator */}
       {waiting && (
@@ -190,7 +178,7 @@ export const ChatApp = React.forwardRef<ChatAppHandle, ChatAppProps>(function Ch
         </Box>
       )}
 
-      {/* Fixed dock: status | prompt | info */}
+      {/* Dock: status | prompt | info */}
       <Separator />
       <StatusBar summary={statusSummary} time={now} />
       <Separator />
