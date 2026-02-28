@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { filterPcpSessionsForContext, hasBackendSessionOverride } from './claude.js';
+import {
+  filterPcpSessionsForContext,
+  filterUntrackedLocalClaudeSessions,
+  hasBackendSessionOverride,
+} from './claude.js';
 
 describe('hasBackendSessionOverride', () => {
   it('detects explicit Codex resume subcommand in positional prompt parts', () => {
@@ -91,5 +95,33 @@ describe('filterPcpSessionsForContext', () => {
     );
 
     expect(filtered.map((session) => session.id)).toEqual(['codex-1']);
+  });
+});
+
+describe('filterUntrackedLocalClaudeSessions', () => {
+  it('excludes local claude sessions already represented by PCP sessions', () => {
+    const local = [
+      {
+        sessionId: 'claude-1',
+        projectPath: '/tmp/project',
+        modified: '2026-02-28T00:00:00.000Z',
+      },
+      {
+        sessionId: 'claude-2',
+        projectPath: '/tmp/project',
+        modified: '2026-02-28T00:00:00.000Z',
+      },
+    ];
+
+    const filtered = filterUntrackedLocalClaudeSessions(local, [
+      {
+        id: 'pcp-1',
+        startedAt: '2026-02-28T00:00:00.000Z',
+        backend: 'claude',
+        backendSessionId: 'claude-1',
+      },
+    ]);
+
+    expect(filtered.map((session) => session.sessionId)).toEqual(['claude-2']);
   });
 });

@@ -57,6 +57,23 @@ interface ClaudeLocalSessionSummary {
   gitBranch?: string;
 }
 
+function getSessionBackendId(session: PcpSessionSummary): string | undefined {
+  return session.backendSessionId || session.claudeSessionId || undefined;
+}
+
+export function filterUntrackedLocalClaudeSessions(
+  localSessions: ClaudeLocalSessionSummary[],
+  activePcpSessions: PcpSessionSummary[]
+): ClaudeLocalSessionSummary[] {
+  const trackedSessionIds = new Set(
+    activePcpSessions
+      .map((session) => getSessionBackendId(session))
+      .filter((sessionId): sessionId is string => Boolean(sessionId))
+  );
+
+  return localSessions.filter((session) => !trackedSessionIds.has(session.sessionId));
+}
+
 function isPromptCancelError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
   const maybe = err as { name?: string; message?: string };
@@ -421,6 +438,11 @@ async function ensurePcpSessionContext(
     printPcpUnavailableWarning(pcpUnavailableReason || 'unknown error', cwd);
   }
 
+  const untrackedLocalClaudeSessions =
+    backend === 'claude'
+      ? filterUntrackedLocalClaudeSessions(localClaudeSessions, activeSessions)
+      : [];
+
   let chosen: PcpSessionSummary | undefined;
   let selectedLocalBackendSessionId: string | undefined;
 
@@ -453,19 +475,21 @@ async function ensurePcpSessionContext(
 
     for (const session of activeSessions) {
       const value = `__pcp__:${session.id}`;
+      const linkedBackendSessionId =
+        backend === 'claude' ? getSessionBackendId(session) : undefined;
       choices.push({
-        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}`,
+        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}${linkedBackendSessionId ? ` · tracks Claude ${linkedBackendSessionId.slice(0, 8)}` : ''}`,
         value,
       });
       sessionChoiceByValue.set(value, session.id);
     }
 
     if (backend === 'claude') {
-      for (const localSession of localClaudeSessions) {
+      for (const localSession of untrackedLocalClaudeSessions) {
         const value = `__claude__:${localSession.sessionId}`;
         const preview = localSession.firstPrompt ? ` — ${localSession.firstPrompt}` : '';
         choices.push({
-          name: `Resume Claude ${localSession.sessionId.slice(0, 8)} (${new Date(localSession.modified).toLocaleString()})${preview}`,
+          name: `Resume Claude local ${localSession.sessionId.slice(0, 8)} (${new Date(localSession.modified).toLocaleString()})${preview}`,
           value,
         });
         sessionChoiceByValue.set(value, localSession.sessionId);
