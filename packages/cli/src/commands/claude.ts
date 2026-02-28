@@ -675,24 +675,81 @@ async function callPcpTool<T = Record<string, unknown>>(tool: string, args: obje
   const baseUrls = getPcpToolCallBaseUrls();
   let lastError: Error | undefined;
   const tried: string[] = [];
+  let jsonRpcId = Date.now();
 
   for (const baseUrl of baseUrls) {
-    const endpoint = `${baseUrl}/api/mcp/call`;
-    tried.push(endpoint);
+    const mcpEndpoint = `${baseUrl}/mcp`;
+    const legacyEndpoint = `${baseUrl}/api/mcp/call`;
+    tried.push(mcpEndpoint);
+    tried.push(legacyEndpoint);
+
     try {
-      const response = await fetch(endpoint, {
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, text/event-stream',
+      };
+      const token = await getValidAccessToken(baseUrl);
+      if (token) headers.Authorization = `Bearer ${token}`;
+
+      const response = await fetch(mcpEndpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tool, args }),
+        headers,
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'tools/call',
+          params: { name: tool, arguments: args },
+          id: jsonRpcId++,
+        }),
       });
 
       if (response.ok) {
-        return (await response.json()) as T;
+        const contentType = response.headers.get('content-type') || '';
+        let payload: Record<string, unknown>;
+
+        if (contentType.includes('text/event-stream')) {
+          const text = await response.text();
+          const dataLines = text
+            .split('\n')
+            .filter((line) => line.startsWith('data: '))
+            .map((line) => line.slice(6));
+          const lastData = dataLines[dataLines.length - 1];
+          if (!lastData) throw new Error('PCP SSE response contained no data lines');
+          payload = JSON.parse(lastData) as Record<string, unknown>;
+        } else {
+          payload = (await response.json()) as Record<string, unknown>;
+        }
+
+        if (payload.error) {
+          const err = payload.error as { message?: string; code?: number };
+          throw new Error(`PCP tool error (${err.code}): ${err.message}`);
+        }
+
+        const result = payload.result as { content?: Array<{ text?: string }> } | undefined;
+        const mcpText = result?.content?.[0]?.text;
+        if (typeof mcpText === 'string') {
+          try {
+            return JSON.parse(mcpText) as T;
+          } catch {
+            return { text: mcpText } as unknown as T;
+          }
+        }
+
+        return (result as unknown as T) || (payload as unknown as T);
       }
 
-      // Common misconfiguration case: hitting API/auth origin instead of web proxy.
-      if (response.status === 404) {
-        lastError = new Error(`404 ${await response.text()}`);
+      // Legacy fallback endpoint (/api/mcp/call) for older server deployments.
+      if (response.status === 404 || response.status === 405) {
+        const legacyResponse = await fetch(legacyEndpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tool, args }),
+        });
+        if (legacyResponse.ok) {
+          return (await legacyResponse.json()) as T;
+        }
+        lastError = new Error(
+          `legacy fallback failed: ${legacyResponse.status} ${await legacyResponse.text()}`
+        );
         continue;
       }
 
