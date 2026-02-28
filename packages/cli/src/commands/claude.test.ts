@@ -4,6 +4,7 @@ import {
   filterPcpSessionsForContext,
   filterUntrackedLocalClaudeSessions,
   hasBackendSessionOverride,
+  resolveCapturedBackendSessionIdFromRuntime,
   resolveBackendSessionIdForResume,
   sanitizeBackendExecutionArgs,
   shouldAutoResumeRuntimeSession,
@@ -257,6 +258,18 @@ describe('resolveBackendSessionIdForResume', () => {
     ).toEqual({ backendSessionId: 'local-a' });
   });
 });
+
+describe('resolveCapturedBackendSessionIdFromRuntime', () => {
+  it('returns fallback when no pcp session id is present', () => {
+    expect(
+      resolveCapturedBackendSessionIdFromRuntime({
+        backend: 'claude',
+        fallbackBackendSessionId: 'fallback-id',
+      })
+    ).toBe('fallback-id');
+  });
+});
+
 describe('extractClaudeHistorySessionsForProject', () => {
   it('parses local claude sessions from history.jsonl for the current project path', () => {
     const jsonl = [

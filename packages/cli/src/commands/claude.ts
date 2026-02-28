@@ -16,6 +16,7 @@ import { getValidAccessToken } from '../auth/tokens.js';
 import { callPcpTool, getPcpServerUrl } from '../lib/pcp-mcp.js';
 import {
   getCurrentRuntimeSession,
+  listRuntimeSessions,
   setCurrentRuntimeSession,
   upsertRuntimeSession,
 } from '../session/runtime.js';
@@ -300,6 +301,62 @@ export function resolveBackendSessionIdForResume(options: {
   }
 
   return { backendSessionId: candidate };
+}
+
+export function resolveCapturedBackendSessionIdFromRuntime(options: {
+  cwd?: string;
+  backend: string;
+  pcpSessionId?: string;
+  runtimeLinkId?: string;
+  agentId?: string;
+  studioId?: string;
+  fallbackBackendSessionId?: string;
+}): string | undefined {
+  const {
+    cwd = process.cwd(),
+    backend,
+    pcpSessionId,
+    runtimeLinkId,
+    agentId,
+    studioId,
+    fallbackBackendSessionId,
+  } = options;
+
+  const resolveFromRecord = (
+    record?: { backendSessionId?: string; backendSessionIds?: string[] } | null
+  ): string | undefined => {
+    if (!record) return undefined;
+    if (record.backendSessionId) return record.backendSessionId;
+    const last = record.backendSessionIds?.at(-1);
+    return typeof last === 'string' && last.trim() ? last : undefined;
+  };
+
+  if (!pcpSessionId) return fallbackBackendSessionId;
+
+  const scopedRecords = listRuntimeSessions(cwd, backend).filter(
+    (record) =>
+      record.pcpSessionId === pcpSessionId &&
+      (!agentId || record.agentId === agentId) &&
+      (!studioId || record.studioId === studioId)
+  );
+
+  if (runtimeLinkId) {
+    const byRuntimeLink = scopedRecords.find((record) => record.runtimeLinkId === runtimeLinkId);
+    const linked = resolveFromRecord(byRuntimeLink);
+    if (linked) return linked;
+  }
+
+  const current = getCurrentRuntimeSession(cwd, backend);
+  if (
+    current?.pcpSessionId === pcpSessionId &&
+    (!agentId || current.agentId === agentId) &&
+    (!studioId || current.studioId === studioId)
+  ) {
+    const currentSessionId = resolveFromRecord(current);
+    if (currentSessionId) return currentSessionId;
+  }
+
+  return resolveFromRecord(scopedRecords[0]) || fallbackBackendSessionId;
 }
 
 export function getClaudeLocalSessionsForProject(
@@ -1287,6 +1344,7 @@ export async function runClaudeInteractive(
   };
   const executionStartedAt = Date.now();
   const backendStartActivityId = await logBackendExecutionStart(executionContext);
+  let capturedBackendSessionId = sessionContext.backendSessionId;
   let cleanedUp = false;
   let finalizedExecution = false;
   const ensureCleanup = (): void => {
@@ -1303,7 +1361,7 @@ export async function runClaudeInteractive(
       exitCode,
       durationMs: Date.now() - executionStartedAt,
       error,
-      backendSessionId: sessionContext.backendSessionId,
+      backendSessionId: capturedBackendSessionId,
     });
   };
 
@@ -1319,6 +1377,24 @@ export async function runClaudeInteractive(
 
   child.on('close', async (code) => {
     ensureCleanup();
+    capturedBackendSessionId = resolveCapturedBackendSessionIdFromRuntime({
+      backend: options.backend,
+      pcpSessionId: sessionContext.pcpSessionId,
+      runtimeLinkId,
+      agentId,
+      studioId,
+      fallbackBackendSessionId: capturedBackendSessionId,
+    });
+    await persistBackendSessionLink({
+      pcpSessionId: sessionContext.pcpSessionId,
+      backendSessionId: capturedBackendSessionId,
+      backend: options.backend,
+      agentId,
+      runtimeLinkId,
+      studioId,
+      identityId,
+      email: pcpConfig?.email,
+    });
     await finalizeExecution(code ?? null);
     process.exit(code || 0);
   });
