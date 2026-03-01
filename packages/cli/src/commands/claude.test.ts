@@ -251,6 +251,22 @@ describe('resolveBackendSessionIdForResume', () => {
     });
   });
 
+  it('does not classify session as stale when it exists in global backend index', () => {
+    expect(
+      resolveBackendSessionIdForResume({
+        backend: 'claude',
+        chosen: {
+          id: 'pcp-1',
+          startedAt: '2026-02-28T00:00:00.000Z',
+          backend: 'claude',
+          backendSessionId: 'known-global-id',
+        },
+        localBackendSessionIds: new Set(['local-a', 'local-b']),
+        knownBackendSessionIds: new Set(['known-global-id', 'local-a']),
+      })
+    ).toEqual({ backendSessionId: 'known-global-id' });
+  });
+
   it('keeps tracked backend id when it matches local project sessions', () => {
     expect(
       resolveBackendSessionIdForResume({

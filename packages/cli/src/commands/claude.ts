@@ -282,12 +282,19 @@ export function resolveBackendSessionIdForResume(options: {
   chosen?: PcpSessionSummary;
   selectedLocalBackendSessionId?: string;
   localBackendSessionIds: Set<string>;
+  knownBackendSessionIds?: Set<string>;
 }): {
   backendSessionId?: string;
   staleTrackedBackendSessionId?: string;
   fallbackMode?: 'resume_pcp_session_id';
 } {
-  const { backend, chosen, selectedLocalBackendSessionId, localBackendSessionIds } = options;
+  const {
+    backend,
+    chosen,
+    selectedLocalBackendSessionId,
+    localBackendSessionIds,
+    knownBackendSessionIds,
+  } = options;
 
   if (selectedLocalBackendSessionId) {
     return { backendSessionId: selectedLocalBackendSessionId };
@@ -301,6 +308,13 @@ export function resolveBackendSessionIdForResume(options: {
   if (!candidate) return {};
 
   if (localBackendSessionIds.size > 0 && !localBackendSessionIds.has(candidate)) {
+    // Local project indexes can be incomplete (history truncation, worktree sharing,
+    // path drift). If we can still find the session in the broader backend-local index,
+    // prefer resume and avoid false stale classification.
+    if (knownBackendSessionIds?.has(candidate)) {
+      return { backendSessionId: candidate };
+    }
+
     if (backend === 'claude' && chosen.id) {
       return {
         backendSessionId: chosen.id,
@@ -475,6 +489,50 @@ export function getClaudeLocalSessionsForProject(
   return Array.from(dedupedBySessionId.values())
     .sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime())
     .slice(0, limit);
+}
+
+export function getKnownClaudeSessionIds(limitPerProject = 500): Set<string> {
+  const sessionIds = new Set<string>();
+  const claudeProjectsDir = join(homedir(), '.claude', 'projects');
+
+  if (existsSync(claudeProjectsDir)) {
+    for (const entry of readdirSync(claudeProjectsDir, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const indexPath = join(claudeProjectsDir, entry.name, 'sessions-index.json');
+      if (!existsSync(indexPath)) continue;
+
+      try {
+        const parsed = JSON.parse(readFileSync(indexPath, 'utf-8')) as {
+          entries?: Array<{ sessionId?: string }>;
+        };
+        for (const item of (parsed.entries || []).slice(0, limitPerProject)) {
+          if (item.sessionId?.trim()) sessionIds.add(item.sessionId.trim());
+        }
+      } catch {
+        // Ignore malformed local index files and continue.
+      }
+    }
+  }
+
+  const historyPath = join(homedir(), '.claude', 'history.jsonl');
+  if (existsSync(historyPath)) {
+    try {
+      for (const line of readFileSync(historyPath, 'utf-8').split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const parsed = JSON.parse(trimmed) as { sessionId?: string };
+          if (parsed.sessionId?.trim()) sessionIds.add(parsed.sessionId.trim());
+        } catch {
+          // Ignore malformed history lines.
+        }
+      }
+    } catch {
+      // Ignore unreadable history file.
+    }
+  }
+
+  return sessionIds;
 }
 
 export function extractClaudeHistorySessionsForProject(
@@ -931,6 +989,8 @@ async function ensurePcpSessionContext(
   const { studioId, identityId } = getIdentityContextFromIdentityJson(cwd);
   const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, 20);
   const localBackendSessionIds = new Set(localBackendSessions.map((session) => session.sessionId));
+  const knownBackendSessionIds =
+    backend === 'claude' ? getKnownClaudeSessionIds() : localBackendSessionIds;
   const sessionChoiceByValue = new Map<string, string>();
 
   // Fast path: runtime already knows current session for this backend.
@@ -1084,6 +1144,7 @@ async function ensurePcpSessionContext(
       chosen,
       selectedLocalBackendSessionId,
       localBackendSessionIds,
+      knownBackendSessionIds,
     });
   const backendSessionSeedId = resolveBackendSessionSeedId({
     backend,
