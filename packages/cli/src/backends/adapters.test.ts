@@ -32,6 +32,22 @@ describe('backend adapters session resume wiring', () => {
     expect(prepared.args).not.toContain('pcp-session-123');
   });
 
+  it('passes claude backendSessionSeedId through --session-id', () => {
+    const adapter = new ClaudeAdapter();
+    const prepared = adapter.prepare({
+      agentId: 'wren',
+      model: undefined,
+      promptParts: [],
+      passthroughArgs: [],
+      pcpSessionId: 'pcp-session-123',
+      backendSessionSeedId: 'pcp-session-123',
+    });
+
+    const sessionIdFlagIndex = prepared.args.indexOf('--session-id');
+    expect(sessionIdFlagIndex).toBeGreaterThanOrEqual(0);
+    expect(prepared.args[sessionIdFlagIndex + 1]).toBe('pcp-session-123');
+  });
+
   it('passes backendSessionId through codex resume subcommand', () => {
     const adapter = new CodexAdapter();
     const prepared = adapter.prepare({

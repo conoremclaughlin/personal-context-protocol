@@ -891,7 +891,7 @@ async function ensurePcpSessionContext(
   passthroughArgs: string[],
   verbose: boolean,
   promptParts: string[] = []
-): Promise<{ pcpSessionId?: string; backendSessionId?: string }> {
+): Promise<{ pcpSessionId?: string; backendSessionId?: string; backendSessionSeedId?: string }> {
   if (hasBackendSessionOverride(backend, passthroughArgs, promptParts)) return {};
 
   const config = getPcpConfig();
@@ -950,6 +950,7 @@ async function ensurePcpSessionContext(
 
   let chosen: PcpSessionSummary | undefined;
   let selectedLocalBackendSessionId: string | undefined;
+  let createdNewPcpSession = false;
 
   const startNewPcpSession = async (): Promise<PcpSessionSummary | undefined> => {
     if (!pcpAvailable || !email) return undefined;
@@ -1013,6 +1014,7 @@ async function ensurePcpSessionContext(
       });
       if (selection === '__new__') {
         chosen = await startNewPcpSession();
+        createdNewPcpSession = Boolean(chosen?.id);
       } else if (selection.startsWith('__pcp__:')) {
         const sessionId = sessionChoiceByValue.get(selection);
         chosen = activeSessions.find((session) => session.id === sessionId);
@@ -1020,6 +1022,7 @@ async function ensurePcpSessionContext(
         selectedLocalBackendSessionId = sessionChoiceByValue.get(selection);
         if (selectedLocalBackendSessionId && pcpAvailable) {
           chosen = await startNewPcpSession();
+          createdNewPcpSession = Boolean(chosen?.id);
         }
       }
     } catch (err) {
@@ -1033,6 +1036,7 @@ async function ensurePcpSessionContext(
 
   if (!chosen && !selectedLocalBackendSessionId && pcpAvailable) {
     chosen = await startNewPcpSession();
+    createdNewPcpSession = Boolean(chosen?.id);
   }
 
   if (!chosen?.id && !selectedLocalBackendSessionId) return {};
@@ -1049,6 +1053,8 @@ async function ensurePcpSessionContext(
     selectedLocalBackendSessionId,
     localBackendSessionIds,
   });
+  const backendSessionSeedId =
+    backend === 'claude' && !backendSessionId && createdNewPcpSession ? chosen.id : undefined;
 
   if (staleTrackedBackendSessionId && process.stdin.isTTY) {
     const backendLabel = backend[0].toUpperCase() + backend.slice(1);
@@ -1099,6 +1105,7 @@ async function ensurePcpSessionContext(
   return {
     pcpSessionId: chosen.id,
     backendSessionId,
+    ...(backendSessionSeedId ? { backendSessionSeedId } : {}),
   };
 }
 

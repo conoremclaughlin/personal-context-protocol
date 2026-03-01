@@ -35,6 +35,8 @@ export class ClaudeAdapter implements BackendAdapter {
     // Session routing
     if (config.backendSessionId) {
       args.push('--resume', config.backendSessionId);
+    } else if (config.backendSessionSeedId) {
+      args.push('--session-id', config.backendSessionSeedId);
     }
 
     // MCP config (if present in CWD)

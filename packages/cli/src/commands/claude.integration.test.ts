@@ -27,6 +27,28 @@ async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
   throw new Error(`Timed out waiting for file: ${path}`);
 }
 
+async function waitForRuntimeBackendSessionId(
+  runtimePath: string,
+  timeoutMs = 5_000
+): Promise<string | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(runtimePath)) {
+      try {
+        const parsed = JSON.parse(readFileSync(runtimePath, 'utf-8')) as {
+          sessions?: Array<{ backendSessionId?: string }>;
+        };
+        const id = parsed.sessions?.[0]?.backendSessionId;
+        if (id) return id;
+      } catch {
+        // keep polling
+      }
+    }
+    await delay(50);
+  }
+  return undefined;
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
 
@@ -38,7 +60,7 @@ afterEach(() => {
 });
 
 describe('claude command integration', () => {
-  it('links a captured backend session id and does not inject --session-id from PCP id', async () => {
+  it('seeds --session-id for first run and persists captured backend session id', async () => {
     const root = mkdtempSync(join(tmpdir(), 'sb-claude-int-'));
     cleanupPaths.push(root);
 
@@ -143,13 +165,21 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CLAUDE_SESSION_ID || '
       await waitForFile(runtimePath);
 
       const backendArgs = JSON.parse(readFileSync(fakeClaudeArgsPath, 'utf-8')) as string[];
+      const startSessionCall = pcpToolCalls.find((call) => call.name === 'start_session');
+      const seededPcpSessionId = String(startSessionCall?.args.sessionId || '');
+      expect(seededPcpSessionId).not.toBe('');
       expect(backendArgs).toContain('-p');
-      expect(backendArgs).not.toContain('--session-id');
+      const sessionIdFlagIndex = backendArgs.indexOf('--session-id');
+      expect(sessionIdFlagIndex).toBeGreaterThanOrEqual(0);
+      expect(backendArgs[sessionIdFlagIndex + 1]).toBe(seededPcpSessionId);
 
       const runtimeState = JSON.parse(readFileSync(runtimePath, 'utf-8')) as {
         sessions: Array<{ backendSessionId?: string }>;
       };
-      expect(runtimeState.sessions[0]?.backendSessionId).toBe('claude-session-int-1');
+      const persistedBackendSessionId =
+        runtimeState.sessions[0]?.backendSessionId ||
+        (await waitForRuntimeBackendSessionId(runtimePath, 5_000));
+      expect(persistedBackendSessionId).toBe('claude-session-int-1');
 
       const phaseUpdatesWithBackendId = pcpToolCalls
         .filter((call) => call.name === 'update_session_phase')
