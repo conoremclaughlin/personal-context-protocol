@@ -974,6 +974,59 @@ function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
   console.log(chalk.dim('    sb status'));
 }
 
+function hasPcpHookCommand(value: unknown): boolean {
+  if (typeof value === 'string') {
+    return value.includes('sb hooks ') || value.includes('commands/hooks.js');
+  }
+  if (Array.isArray(value)) {
+    return value.some((entry) => hasPcpHookCommand(entry));
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value).some((entry) => hasPcpHookCommand(entry));
+  }
+  return false;
+}
+
+function getHookHealthForBackend(
+  backend: string,
+  cwd = process.cwd()
+): { installed: boolean; configPath: string } {
+  if (backend === 'codex') {
+    const configPath = join(cwd, '.codex', 'config.toml');
+    if (!existsSync(configPath)) return { installed: false, configPath: '.codex/config.toml' };
+    const content = readFileSync(configPath, 'utf-8');
+    const installed =
+      /session_start\s*=\s*".*sb hooks on-session-start"/.test(content) &&
+      /session_end\s*=\s*".*sb hooks on-stop"/.test(content) &&
+      /user_prompt\s*=\s*".*sb hooks on-prompt"/.test(content);
+    return { installed, configPath: '.codex/config.toml' };
+  }
+
+  if (backend === 'gemini') {
+    const configPath = join(cwd, '.gemini', 'settings.json');
+    if (!existsSync(configPath)) return { installed: false, configPath: '.gemini/settings.json' };
+    try {
+      const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+      return { installed: hasPcpHookCommand(parsed.hooks), configPath: '.gemini/settings.json' };
+    } catch {
+      return { installed: false, configPath: '.gemini/settings.json' };
+    }
+  }
+
+  const configPath = join(cwd, '.claude', 'settings.local.json');
+  if (!existsSync(configPath))
+    return { installed: false, configPath: '.claude/settings.local.json' };
+  try {
+    const parsed = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    return {
+      installed: hasPcpHookCommand(parsed.hooks),
+      configPath: '.claude/settings.local.json',
+    };
+  } catch {
+    return { installed: false, configPath: '.claude/settings.local.json' };
+  }
+}
+
 export function hasBackendSessionOverride(
   backend: string,
   passthroughArgs: string[],
@@ -1253,6 +1306,18 @@ async function ensurePcpSessionContext(
 
   if (!pcpAvailable) {
     printPcpUnavailableWarning(pcpUnavailableReason || 'unknown error', cwd);
+  }
+
+  if (process.stdin.isTTY || options.listCandidates) {
+    const hooks = getHookHealthForBackend(backend, cwd);
+    if (!hooks.installed) {
+      console.log(
+        chalk.yellow(
+          `\n⚠ PCP hooks not installed for ${backend} (${hooks.configPath}). Session mapping may be unreliable.`
+        )
+      );
+      console.log(chalk.dim(`  Run: sb hooks install -b ${backend}`));
+    }
   }
 
   const untrackedLocalBackendSessions = filterUntrackedLocalBackendSessions(
