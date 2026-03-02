@@ -12,6 +12,7 @@ import {
   resolveBackendSessionSeedId,
   resolveClaudeStaleBackendSessionRecovery,
   sanitizeBackendExecutionArgs,
+  shouldRetryClaudeAfterFailedLaunch,
   shouldRetryWithFreshBackendSession,
   shouldAutoResumeRuntimeSession,
 } from './claude.js';
@@ -267,6 +268,32 @@ describe('shouldRetryWithFreshBackendSession', () => {
   });
 });
 
+describe('shouldRetryClaudeAfterFailedLaunch', () => {
+  it('retries once on nonzero claude exit when session routing was attempted', () => {
+    expect(
+      shouldRetryClaudeAfterFailedLaunch({
+        backend: 'claude',
+        exitCode: 1,
+        attempt: 1,
+        maxAttempts: 2,
+        attemptedBackendSessionId: 'abc123',
+      })
+    ).toBe(true);
+  });
+
+  it('does not retry for user-interrupt exits', () => {
+    expect(
+      shouldRetryClaudeAfterFailedLaunch({
+        backend: 'claude',
+        exitCode: 130,
+        attempt: 1,
+        maxAttempts: 2,
+        attemptedBackendSessionId: 'abc123',
+      })
+    ).toBe(false);
+  });
+});
+
 describe('resolveBackendSessionIdForResume', () => {
   it('keeps selected local backend session id when provided', () => {
     expect(
@@ -301,7 +328,23 @@ describe('resolveBackendSessionIdForResume', () => {
     });
   });
 
-  it('does not classify session as stale when it exists in global backend index', () => {
+  it('for non-claude backends, keeps tracked id when it exists in global backend index', () => {
+    expect(
+      resolveBackendSessionIdForResume({
+        backend: 'codex',
+        chosen: {
+          id: 'pcp-1',
+          startedAt: '2026-02-28T00:00:00.000Z',
+          backend: 'codex',
+          backendSessionId: 'known-global-id',
+        },
+        localBackendSessionIds: new Set(['local-a', 'local-b']),
+        knownBackendSessionIds: new Set(['known-global-id', 'local-a']),
+      })
+    ).toEqual({ backendSessionId: 'known-global-id' });
+  });
+
+  it('for claude, treats global-only matches as stale if not present in local project sessions', () => {
     expect(
       resolveBackendSessionIdForResume({
         backend: 'claude',
@@ -314,7 +357,7 @@ describe('resolveBackendSessionIdForResume', () => {
         localBackendSessionIds: new Set(['local-a', 'local-b']),
         knownBackendSessionIds: new Set(['known-global-id', 'local-a']),
       })
-    ).toEqual({ backendSessionId: 'known-global-id' });
+    ).toEqual({ staleTrackedBackendSessionId: 'known-global-id' });
   });
 
   it('keeps tracked backend id when it matches local project sessions', () => {

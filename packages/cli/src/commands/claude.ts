@@ -313,10 +313,9 @@ export function resolveBackendSessionIdForResume(options: {
   if (!candidate) return {};
 
   if (localBackendSessionIds.size > 0 && !localBackendSessionIds.has(candidate)) {
-    // Local project indexes can be incomplete (history truncation, worktree sharing,
-    // path drift). If we can still find the session in the broader backend-local index,
-    // prefer resume and avoid false stale classification.
-    if (knownBackendSessionIds?.has(candidate)) {
+    // For Claude, session IDs are path-scoped by project. If an ID is not present in
+    // current-project local sessions, treat it as stale even if it exists elsewhere.
+    if (backend !== 'claude' && knownBackendSessionIds?.has(candidate)) {
       return { backendSessionId: candidate };
     }
 
@@ -980,6 +979,34 @@ export function shouldRetryWithFreshBackendSession(options: {
   return (
     lowered.includes('no conversation found with session id') ||
     (lowered.includes('session id') && lowered.includes('already in use'))
+  );
+}
+
+export function shouldRetryClaudeAfterFailedLaunch(options: {
+  backend: string;
+  exitCode: number | null;
+  attempt: number;
+  maxAttempts: number;
+  attemptedBackendSessionId?: string;
+  attemptedBackendSessionSeedId?: string;
+}): boolean {
+  const {
+    backend,
+    exitCode,
+    attempt,
+    maxAttempts,
+    attemptedBackendSessionId,
+    attemptedBackendSessionSeedId,
+  } = options;
+
+  return (
+    attempt < maxAttempts &&
+    backend === 'claude' &&
+    exitCode !== null &&
+    exitCode !== 0 &&
+    exitCode !== 130 &&
+    exitCode !== 143 &&
+    Boolean(attemptedBackendSessionId || attemptedBackendSessionSeedId)
   );
 }
 
@@ -1780,6 +1807,14 @@ export async function runClaudeInteractive(
 
   while (true) {
     const { code, stderrText } = await runAttempt();
+    const isRecoverableNonzeroExit = shouldRetryClaudeAfterFailedLaunch({
+      backend: options.backend,
+      exitCode: code,
+      attempt,
+      maxAttempts,
+      attemptedBackendSessionId: attemptBackendSessionId,
+      attemptedBackendSessionSeedId: attemptBackendSessionSeedId,
+    });
     const shouldRetryResumeFailure =
       attempt < maxAttempts &&
       shouldRetryWithFreshBackendSession({
@@ -1793,7 +1828,8 @@ export async function runClaudeInteractive(
       Boolean(attemptBackendSessionSeedId) &&
       stderrText.toLowerCase().includes('session id') &&
       stderrText.toLowerCase().includes('already in use');
-    const shouldRetry = shouldRetryResumeFailure || shouldRetrySeedConflict;
+    const shouldRetry =
+      shouldRetryResumeFailure || shouldRetrySeedConflict || isRecoverableNonzeroExit;
 
     if (shouldRetry) {
       const latestLocalBackendSessionIds = new Set(
