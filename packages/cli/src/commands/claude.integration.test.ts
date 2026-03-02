@@ -390,4 +390,151 @@ writeFileSync(process.env.FAKE_CLAUDE_ARGS_PATH, JSON.stringify(process.argv.sli
       });
     }
   });
+
+  it('recovers stale runtime auto-resume sessions before spawning claude', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-stale-'));
+    cleanupPaths.push(root);
+
+    const homeDir = join(root, 'home');
+    const repoDir = join(root, 'repo');
+    const binDir = join(root, 'bin');
+    mkdirSync(homeDir, { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(homeDir, '.pcp'), { recursive: true });
+    mkdirSync(join(repoDir, '.pcp', 'runtime'), { recursive: true });
+
+    writeFileSync(
+      join(homeDir, '.pcp', 'config.json'),
+      JSON.stringify({ email: 'integration@example.com' }, null, 2)
+    );
+
+    const pcpSessionId = '33333333-3333-4333-8333-333333333333';
+    writeFileSync(
+      join(repoDir, '.pcp', 'runtime', 'sessions.json'),
+      JSON.stringify(
+        {
+          version: 1,
+          current: {
+            pcpSessionId,
+            backend: 'claude',
+            updatedAt: new Date().toISOString(),
+          },
+          sessions: [
+            {
+              pcpSessionId,
+              backend: 'claude',
+              agentId: 'wren',
+              backendSessionId: 'stale-backend-id',
+              updatedAt: new Date().toISOString(),
+            },
+          ],
+        },
+        null,
+        2
+      )
+    );
+
+    const projectDirNames = new Set([
+      repoDir.replace(/[\\/]/g, '-'),
+      realpathSync(repoDir).replace(/[\\/]/g, '-'),
+    ]);
+    for (const name of projectDirNames) {
+      const projectDir = join(homeDir, '.claude', 'projects', name);
+      mkdirSync(projectDir, { recursive: true });
+      // Non-empty local set that does NOT include stale-backend-id triggers stale detection.
+      writeFileSync(join(projectDir, '44444444-4444-4444-8444-444444444444.jsonl'), '');
+    }
+
+    const fakeClaudeArgsPath = join(root, 'fake-claude-args-runtime-stale.json');
+    const fakeClaudePath = join(binDir, 'claude');
+    writeFileSync(
+      fakeClaudePath,
+      `#!/usr/bin/env node
+const { writeFileSync } = require('fs');
+writeFileSync(process.env.FAKE_CLAUDE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
+`
+    );
+    chmodSync(fakeClaudePath, 0o755);
+
+    const pcpToolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: { body?: unknown }) => {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          id?: number;
+          params?: { name?: string; arguments?: Record<string, unknown> };
+        };
+        const toolName = body.params?.name || '';
+        const toolArgs = body.params?.arguments || {};
+        pcpToolCalls.push({ name: toolName, args: toolArgs });
+
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id ?? 1,
+            result: {
+              content: [{ type: 'text', text: JSON.stringify({ success: true }) }],
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }
+        );
+      })
+    );
+
+    const oldHome = process.env.HOME;
+    const oldPath = process.env.PATH;
+    const oldPcpUrl = process.env.PCP_SERVER_URL;
+    const oldArgsPath = process.env.FAKE_CLAUDE_ARGS_PATH;
+    const oldCwd = process.cwd();
+    const oldIsTTY = process.stdin.isTTY;
+
+    process.env.HOME = homeDir;
+    process.env.PATH = `${binDir}:${oldPath || ''}`;
+    process.env.PCP_SERVER_URL = 'http://pcp.test.local';
+    process.env.FAKE_CLAUDE_ARGS_PATH = fakeClaudeArgsPath;
+    process.chdir(repoDir);
+    Object.defineProperty(process.stdin, 'isTTY', { value: false, configurable: true });
+
+    try {
+      const options: SbOptions = {
+        agent: 'wren',
+        model: undefined,
+        session: true,
+        verbose: false,
+        backend: 'claude',
+      };
+
+      await runClaude('runtime stale fast path test', ['runtime', 'stale'], options, []);
+      const args = await waitForBackendArgs(fakeClaudeArgsPath, (candidate) =>
+        candidate.includes('runtime stale fast path test')
+      );
+
+      expect(args).toContain('--session-id');
+      expect(args).toContain(pcpSessionId);
+      expect(args).not.toContain('--resume');
+    } finally {
+      process.chdir(oldCwd);
+
+      if (oldHome === undefined) delete process.env.HOME;
+      else process.env.HOME = oldHome;
+
+      if (oldPath === undefined) delete process.env.PATH;
+      else process.env.PATH = oldPath;
+
+      if (oldPcpUrl === undefined) delete process.env.PCP_SERVER_URL;
+      else process.env.PCP_SERVER_URL = oldPcpUrl;
+
+      if (oldArgsPath === undefined) delete process.env.FAKE_CLAUDE_ARGS_PATH;
+      else process.env.FAKE_CLAUDE_ARGS_PATH = oldArgsPath;
+
+      Object.defineProperty(process.stdin, 'isTTY', {
+        value: oldIsTTY,
+        configurable: true,
+      });
+    }
+  });
 });

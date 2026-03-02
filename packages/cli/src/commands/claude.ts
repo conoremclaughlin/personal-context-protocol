@@ -1043,6 +1043,65 @@ async function ensurePcpSessionContext(
   // Fast path: runtime already knows current session for this backend.
   const existing = getCurrentRuntimeSession(cwd, backend);
   if (existing?.pcpSessionId && shouldAutoResumeRuntimeSession(existing, process.stdin.isTTY)) {
+    if (backend === 'claude' && existing.backendSessionId) {
+      const existingResume = resolveBackendSessionIdForResume({
+        backend,
+        chosen: {
+          id: existing.pcpSessionId,
+          startedAt: existing.startedAt || new Date().toISOString(),
+          backend,
+          backendSessionId: existing.backendSessionId,
+          workingDir: cwd,
+        },
+        localBackendSessionIds,
+        knownBackendSessionIds,
+      });
+
+      if (existingResume.staleTrackedBackendSessionId) {
+        const recovery = resolveClaudeStaleBackendSessionRecovery({
+          pcpSessionId: existing.pcpSessionId,
+          localBackendSessionIds,
+        });
+
+        const recoveredBackendSessionId =
+          recovery.backendSessionId || existingResume.backendSessionId;
+        const recoveredBackendSessionSeedId = recovery.backendSessionSeedId;
+
+        upsertRuntimeSession(cwd, {
+          pcpSessionId: existing.pcpSessionId,
+          backend,
+          agentId,
+          ...(identityId ? { identityId } : {}),
+          ...(studioId ? { studioId } : {}),
+          ...(recoveredBackendSessionId ? { backendSessionId: recoveredBackendSessionId } : {}),
+          updatedAt: new Date().toISOString(),
+        });
+
+        if (email && recoveredBackendSessionId) {
+          try {
+            await callPcpTool('update_session_phase', {
+              email,
+              agentId,
+              sessionId: existing.pcpSessionId,
+              backendSessionId: recoveredBackendSessionId,
+              status: 'active',
+              workingDir: cwd,
+            });
+          } catch {
+            // Best-effort only.
+          }
+        }
+
+        return {
+          pcpSessionId: existing.pcpSessionId,
+          ...(recoveredBackendSessionId ? { backendSessionId: recoveredBackendSessionId } : {}),
+          ...(recoveredBackendSessionSeedId
+            ? { backendSessionSeedId: recoveredBackendSessionSeedId }
+            : {}),
+        };
+      }
+    }
+
     return {
       pcpSessionId: existing.pcpSessionId,
       backendSessionId: existing.backendSessionId,
