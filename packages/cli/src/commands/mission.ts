@@ -290,12 +290,22 @@ function compactPreview(value?: string, max = 110): string {
   return `${normalized.slice(0, Math.max(1, max - 1))}…`;
 }
 
+function repoNameFromPath(dir?: string): string | null {
+  if (!dir) return null;
+  // Extract the last path component as the repo name
+  const name = dir.replace(/\/+$/, '').split('/').pop();
+  return name || null;
+}
+
 function studioLabelForSession(session?: Session): string {
   if (!session) return '-';
   const studioId = session.studioId || session.studio?.id;
   const worktree = session.studio?.worktreeFolder;
   if (worktree) return formatWorktreeLabel(worktree);
   if (studioId) return studioId.slice(0, 8);
+  // Fallback: extract repo name from workingDir
+  const repo = repoNameFromPath(session.workingDir);
+  if (repo) return repo;
   return '-';
 }
 
@@ -726,6 +736,14 @@ function activityToFeedEvent(
     else if (source) parts.push(`via ${source}`);
     if (completeThread) parts.push(completeThread);
     content = parts.length > 0 ? `completed (${parts.join(', ')})` : 'sub-process completed';
+  } else if (activity.type === 'error') {
+    // Show full error reason — mission control exists for this visibility
+    const ap = activity.payload;
+    const backend = typeof ap?.backend === 'string' ? ap.backend : null;
+    const errorDetail =
+      typeof ap?.error === 'string' ? ap.error : activity.content || 'unknown error';
+    const label = backend ? `failed (${backend})` : 'error';
+    content = `${label}: ${errorDetail}`;
   } else {
     const subtype = activity.subtype ? `:${activity.subtype}` : '';
     content = `${activity.type || 'activity'}${subtype}: ${compactPreview(activity.content, maxPreview)}`;
