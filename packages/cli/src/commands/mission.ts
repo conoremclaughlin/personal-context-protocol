@@ -36,7 +36,7 @@ interface MissionSnapshot {
   generatedAt: string;
 }
 
-interface MissionActivity {
+export interface MissionActivity {
   id: string;
   type?: string;
   subtype?: string;
@@ -49,7 +49,7 @@ interface MissionActivity {
   payload?: Record<string, unknown>;
 }
 
-interface InboxMessage {
+export interface InboxMessage {
   id: string;
   subject?: string;
   content?: string;
@@ -74,7 +74,9 @@ interface MissionFeedRow {
 
 // ── Inbox extraction ──
 
-function extractInboxMessages(result: Record<string, unknown> | null | undefined): InboxMessage[] {
+export function extractInboxMessages(
+  result: Record<string, unknown> | null | undefined
+): InboxMessage[] {
   if (!result) return [];
   const candidate =
     (Array.isArray(result.messages) ? result.messages : undefined) ||
@@ -108,7 +110,7 @@ function extractInboxMessages(result: Record<string, unknown> | null | undefined
     .filter((msg): msg is InboxMessage => Boolean(msg));
 }
 
-function inboxMessageToFeedEvent(msg: InboxMessage, timezone?: string): FeedEvent {
+export function inboxMessageToFeedEvent(msg: InboxMessage, timezone?: string): FeedEvent {
   const maxPreview = Math.min(120, (process.stdout.columns || 80) - 25);
   const sender = msg.senderAgentId || 'user';
   const recipient = msg.recipientAgentId || 'unknown';
@@ -290,14 +292,14 @@ function compactPreview(value?: string, max = 110): string {
   return `${normalized.slice(0, Math.max(1, max - 1))}…`;
 }
 
-function repoNameFromPath(dir?: string): string | null {
+export function repoNameFromPath(dir?: string): string | null {
   if (!dir) return null;
   // Extract the last path component as the repo name
   const name = dir.replace(/\/+$/, '').split('/').pop();
   return name || null;
 }
 
-function studioLabelForSession(session?: Session): string {
+export function studioLabelForSession(session?: Session): string {
   if (!session) return '-';
   const studioId = session.studioId || session.studio?.id;
   const worktree = session.studio?.worktreeFolder;
@@ -704,7 +706,7 @@ function parseSystemOrigin(
   return undefined;
 }
 
-function activityToFeedEvent(
+export function activityToFeedEvent(
   activity: MissionActivity,
   timezone?: string,
   sessionsById?: Map<string, Session>
