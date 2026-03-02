@@ -2457,10 +2457,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
           );
           try {
             await pcp.callTool('send_to_inbox', {
-              agentId: agentId,
+              recipientAgentId: agentId,
+              senderAgentId: agentId,
               content: `🔐 Tool approval needed: **${tool}**\n\nReason: ${reason}\n\nReply with a permission_grant to approve or deny.\nRequest ID: ${request.id}`,
               messageType: 'notification',
               metadata: { approvalRequestId: request.id, tool },
+              ...(runtime.threadKey ? { threadKey: runtime.threadKey } : {}),
+              trigger: false,
             });
           } catch {
             printLine(
