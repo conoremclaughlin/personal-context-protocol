@@ -218,7 +218,7 @@ import {
   handleCloseStudio,
   handleAdoptStudio,
   studioToolDefinitions,
-} from './workspace-handlers';
+} from './studio-handlers';
 
 import {
   handleCreateWorkspace,
@@ -231,7 +231,7 @@ import {
   getWorkspaceSchema,
   updateWorkspaceSchema,
   addWorkspaceMemberSchema,
-} from './workspace-container-handlers';
+} from './workspace-handlers';
 
 import { handleCreateKindleToken, createKindleTokenSchema } from './kindle-handlers';
 
