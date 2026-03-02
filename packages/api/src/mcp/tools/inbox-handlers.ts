@@ -82,7 +82,9 @@ const getInboxSchema = userIdentifierBaseSchema.extend({
     .default('unread')
     .describe('Filter by status'),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).optional().describe('Filter by priority'),
-  messageType: z.enum(['message', 'task_request', 'session_resume', 'notification', 'permission_grant']).optional(),
+  messageType: z
+    .enum(['message', 'task_request', 'session_resume', 'notification', 'permission_grant'])
+    .optional(),
   limit: z.number().min(1).max(100).optional().default(20).describe('Max messages'),
 });
 
@@ -543,7 +545,7 @@ export const inboxToolDefinitions = [
   {
     name: 'send_to_inbox',
     description:
-      "Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.\n\nMessage types:\n- message: General communication\n- task_request: Request another agent to do work\n- session_resume: Request agent to resume a specific session\n- notification: FYI, no response needed\n- permission_grant: Grant or revoke tool permissions for recipient (include permissionGrant in metadata)\n\nTrigger defaults:\n- task_request / session_resume / notification / permission_grant: wake recipient by default\n- message: no automatic wake by default\n- override with `trigger` boolean\n\nUser can be identified by ONE of: userId, email, phone, or platform + platformId",
+      "Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.\n\nMessage types:\n- message: General communication\n- task_request: Request another agent to do work\n- session_resume: Request agent to resume a specific session\n- notification: FYI, no response needed\n- permission_grant: Grant or revoke tool permissions for recipient (include permissionGrant in metadata)\n\nReply conventions:\n- When replying to a task_request, send a task_request back on the SAME threadKey to signal completion\n- Use notification only for FYI messages that require no action from the recipient\n- Always include a threadKey (format: <type>:<id>, e.g. pr:127, spec:v0.1)\n\nTrigger defaults:\n- task_request / session_resume / notification / permission_grant: wake recipient by default\n- message: no automatic wake by default\n- override with `trigger` boolean\n\nUser can be identified by ONE of: userId, email, phone, or platform + platformId",
     schema: sendToInboxSchema,
     handler: handleSendToInbox,
   },
