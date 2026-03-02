@@ -278,10 +278,13 @@ export class MCPServer {
           }
         : {};
       const callerProfileHeader = req.header('x-pcp-caller-profile')?.trim().toLowerCase();
+<<<<<<< HEAD
       // Trust boundary note:
       // `x-pcp-caller-profile` is only consumed on the MCP transport entrypoint.
       // Supported MCP clients in our stack do not expose arbitrary header injection to model prompts,
       // so this remains a runtime/server-controlled signal rather than an LLM-controlled parameter.
+=======
+>>>>>>> c6e41c0 (feat: hide internal session lifecycle MCP tools from SB catalog)
       const callerProfile: 'agent' | 'runtime' =
         callerProfileHeader === 'runtime' ? 'runtime' : 'agent';
       Object.assign(ctx, { callerProfile });
