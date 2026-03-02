@@ -6,7 +6,7 @@ import {
   matchesAnyPolicyPattern,
   normalizePolicyToken,
   type ToolGroupMap,
-} from '@personal-context/shared';
+} from './tool-policy-core-compat.js';
 
 export type ToolMode = 'backend' | 'off' | 'privileged';
 export type SkillTrustMode = 'all' | 'trusted-only';
