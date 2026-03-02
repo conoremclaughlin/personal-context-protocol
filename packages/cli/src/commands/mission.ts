@@ -600,15 +600,7 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
       .callTool('get_activity', {
         email: config.email,
         limit: Number.parseInt(options.feedLimit || '40', 10),
-        types: [
-          'message_out',
-          'state_change',
-          'tool_call',
-          'tool_result',
-          'agent_spawn',
-          'agent_complete',
-          'error',
-        ],
+        types: ['message_out', 'state_change', 'agent_spawn', 'agent_complete', 'error'],
       })
       .catch(() => null)) as Record<string, unknown> | null;
     const activityFeed = summarizeMissionFeedRows(extractActivities(activityResult), sessions);
@@ -669,15 +661,20 @@ function mapActivityToFeedType(activity: MissionActivity): FeedEventType {
       return 'activity';
     case 'state_change':
       return 'session';
-    case 'tool_call':
-    case 'tool_result':
-      return 'activity';
     case 'agent_spawn':
     case 'agent_complete':
       return 'session';
     default:
       return 'activity';
   }
+}
+
+/** Extract backend name from subtype like "backend_cli:claude-code" → "claude-code" */
+export function backendFromSubtype(subtype?: string): string | null {
+  if (!subtype) return null;
+  const prefix = 'backend_cli:';
+  if (subtype.startsWith(prefix)) return subtype.slice(prefix.length);
+  return null;
 }
 
 /**
@@ -735,7 +732,8 @@ export function activityToFeedEvent(
     content = compactPreview(activity.content, maxPreview);
   } else if (activity.type === 'agent_spawn') {
     const ap = activity.payload;
-    const backend = typeof ap?.backend === 'string' ? ap.backend : null;
+    const backend =
+      (typeof ap?.backend === 'string' ? ap.backend : null) || backendFromSubtype(activity.subtype);
     const triggeredBy = typeof ap?.triggeredBy === 'string' ? ap.triggeredBy : null;
     const source = typeof ap?.triggerSource === 'string' ? ap.triggerSource : null;
     const spawnThread = typeof ap?.threadKey === 'string' ? ap.threadKey : null;
@@ -747,7 +745,8 @@ export function activityToFeedEvent(
     content = parts.length > 0 ? `spawned (${parts.join(', ')})` : 'spawned sub-process';
   } else if (activity.type === 'agent_complete') {
     const ap = activity.payload;
-    const backend = typeof ap?.backend === 'string' ? ap.backend : null;
+    const backend =
+      (typeof ap?.backend === 'string' ? ap.backend : null) || backendFromSubtype(activity.subtype);
     const durationMs = typeof ap?.durationMs === 'number' ? ap.durationMs : null;
     const durationLabel = durationMs != null ? `${Math.round(durationMs / 1000)}s` : null;
     const triggeredBy = typeof ap?.triggeredBy === 'string' ? ap.triggeredBy : null;
@@ -763,7 +762,8 @@ export function activityToFeedEvent(
   } else if (activity.type === 'error') {
     // Show full error reason — mission control exists for this visibility
     const ap = activity.payload;
-    const backend = typeof ap?.backend === 'string' ? ap.backend : null;
+    const backend =
+      (typeof ap?.backend === 'string' ? ap.backend : null) || backendFromSubtype(activity.subtype);
     const errorDetail =
       typeof ap?.error === 'string' ? ap.error : activity.content || 'unknown error';
     const label = backend ? `failed (${backend})` : 'error';
@@ -861,15 +861,7 @@ async function runInkMission(options: MissionOptions): Promise<void> {
           .callTool('get_activity', {
             email: config.email,
             limit: feedLimit,
-            types: [
-              'message_out',
-              'state_change',
-              'tool_call',
-              'tool_result',
-              'agent_spawn',
-              'agent_complete',
-              'error',
-            ],
+            types: ['message_out', 'state_change', 'agent_spawn', 'agent_complete', 'error'],
           })
           .catch(() => null)) as Record<string, unknown> | null
       );

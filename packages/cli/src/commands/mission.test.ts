@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   activityToFeedEvent,
+  backendFromSubtype,
   extractInboxMessages,
   extractUnreadCount,
   formatWorktreeLabel,
@@ -586,5 +587,80 @@ describe('inboxMessageToFeedEvent', () => {
     };
     const event = inboxMessageToFeedEvent(msg);
     expect(event.content).toContain('from user');
+  });
+});
+
+// ── backendFromSubtype ──
+
+describe('backendFromSubtype', () => {
+  it('extracts backend from backend_cli: prefix', () => {
+    expect(backendFromSubtype('backend_cli:claude-code')).toBe('claude-code');
+    expect(backendFromSubtype('backend_cli:codex')).toBe('codex');
+    expect(backendFromSubtype('backend_cli:gemini')).toBe('gemini');
+  });
+
+  it('returns null for non-matching subtypes', () => {
+    expect(backendFromSubtype('start_session')).toBeNull();
+    expect(backendFromSubtype('remember')).toBeNull();
+    expect(backendFromSubtype(undefined)).toBeNull();
+  });
+});
+
+// ── subtype fallback for spawn/complete ──
+
+describe('activityToFeedEvent subtype fallback', () => {
+  const activity = (overrides: Partial<MissionActivity>): MissionActivity => ({
+    id: 'test-fb',
+    createdAt: '2026-03-02T20:00:00.000Z',
+    ...overrides,
+  });
+
+  it('falls back to subtype for backend when payload is empty (agent_spawn)', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'agent_spawn',
+        agentId: 'myra',
+        subtype: 'backend_cli:claude-code',
+        // no payload
+      })
+    );
+    expect(event.content).toBe('spawned (claude-code)');
+  });
+
+  it('falls back to subtype for backend when payload is empty (agent_complete)', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'agent_complete',
+        agentId: 'lumen',
+        subtype: 'backend_cli:codex',
+        // no payload
+      })
+    );
+    expect(event.content).toBe('completed (codex)');
+  });
+
+  it('falls back to subtype for backend when payload is empty (error)', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'error',
+        agentId: 'wren',
+        subtype: 'backend_cli:claude',
+        content: 'Something broke',
+        // no payload
+      })
+    );
+    expect(event.content).toBe('failed (claude): Something broke');
+  });
+
+  it('prefers payload.backend over subtype', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'agent_spawn',
+        agentId: 'myra',
+        subtype: 'backend_cli:codex',
+        payload: { backend: 'claude-code', triggerSource: 'heartbeat' },
+      })
+    );
+    expect(event.content).toBe('spawned (claude-code, via heartbeat)');
   });
 });
