@@ -344,10 +344,8 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
   // 6. Initialize heartbeat service for scheduled reminders
   // Useful for secondary/local dev servers where we want API/MCP without
   // participating in global reminder delivery.
-  const {
-    enabled: heartbeatServiceEnabled,
-    flags: heartbeatServiceFlags,
-  } = getHeartbeatProcessingConfig();
+  const { enabled: heartbeatServiceEnabled, flags: heartbeatServiceFlags } =
+    getHeartbeatProcessingConfig();
   const enableLocalCron =
     process.env.ENABLE_LOCAL_CRON !== undefined
       ? process.env.ENABLE_LOCAL_CRON === 'true'
@@ -460,7 +458,7 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
     );
   } else {
     logger.warn(
-      'Heartbeat service disabled via env (ENABLE_HEARTBEAT_SERVICE/ENABLE_HEARTBEATS/ENABLE_REMINDERS=false). Scheduled reminders will not be processed on this server.'
+      'Heartbeat service disabled via env (ENABLE_HEARTBEATS or ENABLE_REMINDERS set to a false-like value). Scheduled reminders will not be processed on this server.'
     );
   }
 

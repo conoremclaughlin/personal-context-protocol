@@ -699,6 +699,7 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
         userId: pcpUserId!,
         email: userEmail,
         workspaceId: activeWorkspaceId,
+        workspaceSource: requestedWorkspaceId ? 'header' : 'default',
       },
       () => next()
     );
@@ -1383,7 +1384,7 @@ router.post('/heartbeat', async (req: Request, res: Response) => {
     if (!heartbeatEnabled && !forceRun) {
       res.status(503).json({
         error:
-          'Heartbeat processing is disabled on this server. Set ENABLE_HEARTBEAT_SERVICE=true or call with ?force=true for a manual run.',
+          'Heartbeat processing is disabled on this server. Set ENABLE_HEARTBEATS=true or call with ?force=true for a manual run.',
       });
       return;
     }
@@ -2005,8 +2006,9 @@ router.get('/reminders', async (req: Request, res: Response) => {
 
     const { data, error } = await supabase
       .from('scheduled_reminders')
-      .select('*, users(email, first_name), agent_identities(agent_id, name)')
+      .select('*, users(email, first_name), agent_identities!inner(agent_id, name, workspace_id)')
       .eq('user_id', authReq.pcpUserId)
+      .eq('agent_identities.workspace_id', authReq.pcpWorkspaceId)
       .order('next_run_at', { ascending: true })
       .limit(100);
 
@@ -2042,12 +2044,12 @@ router.get('/reminders', async (req: Request, res: Response) => {
 });
 
 // =============================================================================
-// User Identity (USER.md, VALUES.md)
+// Shared Documents (User, Values, Process)
 // =============================================================================
 
 /**
  * GET /api/admin/user-identity
- * Get user identity (USER.md, VALUES.md)
+ * Get shared documents (user profile, shared values, process)
  */
 router.get('/user-identity', async (req: Request, res: Response) => {
   try {
@@ -2072,12 +2074,34 @@ router.get('/user-identity', async (req: Request, res: Response) => {
       return;
     }
 
+    const { data: workspaceDocs, error: workspaceError } = await supabase
+      .from('workspaces')
+      .select('shared_values, process')
+      .eq('id', authReq.pcpWorkspaceId)
+      .eq('user_id', authReq.pcpUserId)
+      .single();
+
+    if (workspaceError && workspaceError.code !== 'PGRST116') {
+      logger.error('Failed to get workspace shared docs:', workspaceError);
+      res.status(500).json(errorJson('Failed to get user identity', workspaceError));
+      return;
+    }
+
+    const userProfile = data.user_profile_md;
+    const sharedValues = (workspaceDocs?.shared_values as string | null) ?? data.shared_values_md;
+    const process = (workspaceDocs?.process as string | null) ?? data.process_md;
+
     res.json({
       userIdentity: {
         id: data.id,
         userId: data.user_id,
-        userProfileMd: data.user_profile_md,
-        sharedValuesMd: data.shared_values_md,
+        userProfile,
+        sharedValues,
+        process,
+        // Deprecated aliases kept for compatibility
+        userProfileMd: userProfile,
+        sharedValuesMd: sharedValues,
+        processMd: process,
         version: data.version,
         createdAt: data.created_at,
         updatedAt: data.updated_at,
@@ -2130,8 +2154,13 @@ router.get('/user-identity/history', async (req: Request, res: Response) => {
       history: (data || []).map((h) => ({
         id: h.id,
         version: h.version,
+        userProfile: h.user_profile_md,
+        sharedValues: h.shared_values_md,
+        process: h.process_md,
+        // Deprecated aliases kept for compatibility
         userProfileMd: h.user_profile_md,
         sharedValuesMd: h.shared_values_md,
+        processMd: h.process_md,
         changeType: h.change_type,
         createdAt: h.created_at,
         archivedAt: h.archived_at,
@@ -2291,13 +2320,31 @@ router.get('/individuals/:agentId/memories/timeline', async (req: Request, res: 
 
     const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
     const timeline: TimelineEntry[] = [];
+    const { data: identity } = await supabase
+      .from('agent_identities')
+      .select('id')
+      .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
+      .eq('agent_id', agentId)
+      .maybeSingle();
+
+    if (!identity) {
+      res.json({
+        agentId,
+        timeline: [],
+        total: 0,
+        limit,
+        offset,
+      });
+      return;
+    }
 
     // 1. Get current memories (created events)
     const { data: memories, error: memoriesError } = await supabase
       .from('memories')
       .select('*')
       .eq('user_id', authReq.pcpUserId)
-      .eq('agent_id', agentId)
+      .eq('identity_id', identity.id)
       .order('created_at', { ascending: false });
 
     if (memoriesError) {
@@ -2334,12 +2381,22 @@ router.get('/individuals/:agentId/memories/timeline', async (req: Request, res: 
       const agentMemoryIds = new Set(memories?.map((m) => m.id) || []);
 
       for (const h of history) {
+        const metadata = h.metadata as Record<string, unknown> | null;
         // Include if it's a deleted memory that belonged to this agent
         // or if it's an update to an existing agent memory
         const isAgentMemory = agentMemoryIds.has(h.memory_id);
-        const hasAgentMetadata = (h.metadata as Record<string, unknown>)?.agentId === agentId;
+        const metadataIdentityId =
+          (metadata?.identityId as string | undefined) ||
+          (metadata?.identity_id as string | undefined);
+        const metadataWorkspaceId =
+          (metadata?.workspaceId as string | undefined) ||
+          (metadata?.workspace_id as string | undefined);
+        const metadataAgentId = metadata?.agentId as string | undefined;
+        const hasScopedMetadata =
+          metadataIdentityId === identity.id ||
+          (metadataAgentId === agentId && metadataWorkspaceId === authReq.pcpWorkspaceId);
 
-        if (isAgentMemory || hasAgentMetadata) {
+        if (isAgentMemory || hasScopedMetadata) {
           timeline.push({
             id: `memory-${h.change_type}-${h.id}`,
             type: h.change_type === 'delete' ? 'memory_deleted' : 'memory_updated',
@@ -2362,6 +2419,8 @@ router.get('/individuals/:agentId/memories/timeline', async (req: Request, res: 
       .from('sessions')
       .select('id')
       .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
+      .eq('identity_id', identity.id)
       .eq('agent_id', agentId);
 
     if (sessionsError) {
@@ -2420,9 +2479,30 @@ router.get(
   '/individuals/:agentId/memories/:memoryId/history',
   async (req: Request, res: Response) => {
     try {
-      const { memoryId } = req.params;
+      const { agentId, memoryId } = req.params;
       const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
       const authReq = req as AdminAuthRequest;
+
+      const { data: identity } = await supabase
+        .from('agent_identities')
+        .select('id')
+        .eq('user_id', authReq.pcpUserId)
+        .eq('workspace_id', authReq.pcpWorkspaceId)
+        .eq('agent_id', agentId)
+        .maybeSingle();
+
+      if (!identity) {
+        res.status(404).json({ error: 'Identity not found in active workspace' });
+        return;
+      }
+
+      const { data: scopedMemory } = await supabase
+        .from('memories')
+        .select('id')
+        .eq('id', memoryId)
+        .eq('user_id', authReq.pcpUserId)
+        .eq('identity_id', identity.id)
+        .maybeSingle();
 
       // Get memory history
       const { data, error } = await supabase
@@ -2438,9 +2518,25 @@ router.get(
         return;
       }
 
+      const scopedHistory = (data || []).filter((h) => {
+        if (scopedMemory) return true;
+        const metadata = h.metadata as Record<string, unknown> | null;
+        const metadataIdentityId =
+          (metadata?.identityId as string | undefined) ||
+          (metadata?.identity_id as string | undefined);
+        const metadataWorkspaceId =
+          (metadata?.workspaceId as string | undefined) ||
+          (metadata?.workspace_id as string | undefined);
+        const metadataAgentId = metadata?.agentId as string | undefined;
+        return (
+          metadataIdentityId === identity.id ||
+          (metadataAgentId === agentId && metadataWorkspaceId === authReq.pcpWorkspaceId)
+        );
+      });
+
       res.json({
         memoryId,
-        history: (data || []).map((h) => ({
+        history: scopedHistory.map((h) => ({
           id: h.id,
           version: h.version,
           content: h.content,
@@ -2483,6 +2579,41 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
       env.SUPABASE_SECRET_KEY
     );
 
+    const { data: identityRows, error: identityError } = await supabase
+      .from('agent_identities')
+      .select('id')
+      .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
+      .eq('agent_id', agentId);
+
+    if (identityError) {
+      logger.error('Failed to resolve inbox identities for workspace scope:', identityError);
+      res.status(500).json(errorJson('Failed to fetch inbox', identityError));
+      return;
+    }
+
+    const scopedIdentityIds = (identityRows || []).map((row) => row.id);
+    if (scopedIdentityIds.length === 0) {
+      res.json({
+        agentId,
+        stats: {
+          totalMessages: 0,
+          unreadCount: 0,
+          threadCount: 0,
+          flatCount: 0,
+        },
+        threads: [],
+        flatMessages: [],
+        pagination: {
+          limit,
+          offset,
+          totalThreads: 0,
+          hasMore: false,
+        },
+      });
+      return;
+    }
+
     // Fetch messages where this agent is either the sender or recipient
     // to provide a complete inbox view (like email: sent + received)
     const receivedQuery = supabase
@@ -2490,6 +2621,7 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
       .select('*')
       .eq('recipient_user_id', authReq.pcpUserId)
       .eq('recipient_agent_id', agentId)
+      .in('recipient_identity_id', scopedIdentityIds)
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -2498,6 +2630,7 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
       .select('*')
       .eq('recipient_user_id', authReq.pcpUserId)
       .eq('sender_agent_id', agentId)
+      .in('sender_identity_id', scopedIdentityIds)
       .order('created_at', { ascending: false })
       .limit(500);
 
@@ -2555,6 +2688,12 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
       const threadResult = await threadQuery;
       if (!threadResult.error && threadResult.data) {
         for (const m of threadResult.data) {
+          const hasScopedIdentity =
+            (m.recipient_identity_id && scopedIdentityIds.includes(m.recipient_identity_id)) ||
+            (m.sender_identity_id && scopedIdentityIds.includes(m.sender_identity_id));
+          if (!hasScopedIdentity) {
+            continue;
+          }
           if (!seenIds.has(m.id)) {
             seenIds.add(m.id);
             allMessages.push(m);
@@ -3487,6 +3626,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
       .from('sessions')
       .select('*')
       .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
       .order('updated_at', { ascending: false })
       .limit(100);
 
@@ -3515,6 +3655,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
         .from('agent_identities')
         .select('agent_id, name, role')
         .eq('user_id', authReq.pcpUserId)
+        .eq('workspace_id', authReq.pcpWorkspaceId)
         .in('agent_id', uniqueAgentIds);
 
       for (const identity of identities || []) {
@@ -3704,6 +3845,130 @@ router.get('/sessions', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/admin/studios
+ * List studios grouped by agent, with latest session status per agent.
+ */
+router.get('/studios', async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AdminAuthRequest;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // 1. Fetch all agent identities for this user
+    const { data: identities } = await supabase
+      .from('agent_identities')
+      .select('id, agent_id, name, role, backend')
+      .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
+      .order('name', { ascending: true });
+
+    // 2. Fetch all non-cleaned studios for this user
+    const identityIds = (identities || []).map((i) => i.id).filter(Boolean);
+    let studios: Array<{
+      id: string;
+      agent_id: string | null;
+      branch: string;
+      base_branch: string | null;
+      purpose: string | null;
+      work_type: string | null;
+      worktree_path: string;
+      slug: string | null;
+      status: string;
+      updated_at: string | null;
+      created_at: string | null;
+    }> | null = [];
+
+    if (identityIds.length > 0) {
+      const { data: scopedStudios } = await supabase
+        .from('studios')
+        .select(
+          'id, agent_id, branch, base_branch, purpose, work_type, worktree_path, slug, status, updated_at, created_at'
+        )
+        .eq('user_id', authReq.pcpUserId)
+        .in('identity_id', identityIds)
+        .neq('status', 'cleaned')
+        .order('updated_at', { ascending: false });
+
+      studios = scopedStudios;
+    }
+
+    // 3. Fetch latest active session per agent (for status/phase)
+    const agentIds = (identities || []).map((i) => i.agent_id).filter(Boolean);
+    const latestSessionByAgent = new Map<
+      string,
+      { currentPhase: string | null; status: string | null; updatedAt: string }
+    >();
+
+    if (agentIds.length > 0) {
+      const { data: sessions } = await supabase
+        .from('sessions')
+        .select('agent_id, current_phase, status, updated_at')
+        .eq('user_id', authReq.pcpUserId)
+        .eq('workspace_id', authReq.pcpWorkspaceId)
+        .in('agent_id', agentIds)
+        .is('ended_at', null)
+        .order('updated_at', { ascending: false });
+
+      for (const session of sessions || []) {
+        if (!latestSessionByAgent.has(session.agent_id)) {
+          latestSessionByAgent.set(session.agent_id, {
+            currentPhase: session.current_phase,
+            status: session.status,
+            updatedAt: session.updated_at,
+          });
+        }
+      }
+    }
+
+    // 4. Group studios by agent
+    const studiosByAgent = new Map<string, typeof studios>();
+    for (const studio of studios || []) {
+      const key = studio.agent_id || '__unassigned__';
+      if (!studiosByAgent.has(key)) studiosByAgent.set(key, []);
+      studiosByAgent.get(key)!.push(studio);
+    }
+
+    // 5. Build response grouped by agent
+    const agents = (identities || []).map((identity) => {
+      const agentStudios = studiosByAgent.get(identity.agent_id) || [];
+      const latestSession = latestSessionByAgent.get(identity.agent_id);
+
+      return {
+        agentId: identity.agent_id,
+        agentName: identity.name,
+        agentRole: identity.role,
+        backend: identity.backend,
+        identityId: identity.id,
+        latestSession: latestSession
+          ? {
+              currentPhase: latestSession.currentPhase,
+              status: latestSession.status,
+              updatedAt: latestSession.updatedAt,
+            }
+          : null,
+        studios: agentStudios.map((s) => ({
+          id: s.id,
+          branch: s.branch,
+          baseBranch: s.base_branch,
+          purpose: s.purpose,
+          workType: s.work_type,
+          worktreePath: s.worktree_path,
+          slug: s.slug,
+          status: s.status,
+          updatedAt: s.updated_at,
+        })),
+      };
+    });
+
+    res.json({ agents });
+  } catch (error) {
+    logger.error('Failed to list studios:', error);
+    res.status(500).json(errorJson('Failed to list studios', error));
+  }
+});
+
+/**
  * GET /api/admin/sessions/:id/logs
  * Get merged session logs (activity stream + session_logs + optional local transcript fallback)
  */
@@ -3733,6 +3998,7 @@ router.get('/sessions/:id/logs', async (req: Request, res: Response) => {
       )
       .eq('id', sessionId)
       .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
       .single();
 
     if (sessionError || !session) {

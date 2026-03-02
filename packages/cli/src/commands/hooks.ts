@@ -559,6 +559,7 @@ async function updateRuntimeGenerationState(
       sessionId,
       phase,
       status: 'active',
+      workingDir: cwd,
     });
   } catch {
     // Non-fatal; hook execution should not fail due to transient session sync issues.
@@ -613,9 +614,23 @@ function renderTemplate(template: string, vars: Record<string, string>): string 
 // Shared Block Builders
 // ============================================================================
 
-function buildIdentityBlock(identity: unknown): string {
-  if (!identity) return '';
-  return `### Identity\n\`\`\`json\n${JSON.stringify(identity, null, 2)}\n\`\`\``;
+export function buildIdentityBlock(bootstrapResult: Record<string, unknown>): string {
+  const files = bootstrapResult?.identityFiles as Record<string, string> | undefined;
+  if (!files) return '';
+
+  const sections: string[] = [];
+
+  // Render identity files in a meaningful order
+  const fileOrder = ['self', 'soul', 'values', 'process', 'user', 'heartbeat'];
+  for (const key of fileOrder) {
+    const content = files[key];
+    if (content && typeof content === 'string') {
+      sections.push(content.trim());
+    }
+  }
+
+  if (sections.length === 0) return '';
+  return sections.join('\n\n---\n\n');
 }
 
 function buildInboxBlock(messages: Array<Record<string, unknown>> | undefined): string {
@@ -1235,6 +1250,7 @@ async function postCompactHandler(): Promise<void> {
   const agentId = resolveAgentId() || 'unknown';
 
   let identityBlock = '';
+  let memoriesBlock = '';
   let inboxBlock = '';
   let skillsBlock = '';
 
@@ -1244,7 +1260,10 @@ async function postCompactHandler(): Promise<void> {
       email: config?.email,
       agentId,
     });
-    identityBlock = buildIdentityBlock(bootstrap.identity);
+    identityBlock = buildIdentityBlock(bootstrap);
+    memoriesBlock = buildMemoriesBlock(
+      bootstrap.recentMemories as Array<Record<string, unknown>> | undefined
+    );
   } catch {
     identityBlock =
       '*FAILED: Could not reach PCP server for `bootstrap`. You should call the `bootstrap` MCP tool manually to reload your identity context.*';
@@ -1277,6 +1296,7 @@ async function postCompactHandler(): Promise<void> {
   const output = renderTemplate(template, {
     AGENT_ID: agentId,
     IDENTITY_BLOCK: identityBlock,
+    MEMORIES_BLOCK: memoriesBlock,
     SKILLS_BLOCK: skillsBlock,
     INBOX_BLOCK: inboxBlock,
   });
@@ -1318,7 +1338,7 @@ async function onSessionStartHandler(): Promise<void> {
     if (studioId) bootstrapArgs.studioId = studioId;
 
     const bootstrap = await callPcpTool('bootstrap', bootstrapArgs);
-    identityBlock = buildIdentityBlock(bootstrap.identity);
+    identityBlock = buildIdentityBlock(bootstrap);
     memoriesBlock = buildMemoriesBlock(
       bootstrap.recentMemories as Array<Record<string, unknown>> | undefined
     );
@@ -1444,6 +1464,7 @@ async function onSessionStartHandler(): Promise<void> {
         sessionId: pcpSessionId,
         phase: 'runtime:idle',
         status: 'active',
+        workingDir: cwd,
       };
       if (backendSessionId) updateArgs.backendSessionId = backendSessionId;
       await callPcpTool('update_session_phase', updateArgs);

@@ -8,11 +8,10 @@ describe('getHeartbeatProcessingConfig', () => {
   });
 
   it.each([
-    { ENABLE_HEARTBEAT_SERVICE: 'false' },
-    { ENABLE_HEARTBEAT_SERVICE: 'FALSE' },
-    { ENABLE_HEARTBEAT_SERVICE: ' false ' },
-    { ENABLE_HEARTBEAT_SERVICE: '0' },
-    { ENABLE_HEARTBEATS: 'off' },
+    { ENABLE_HEARTBEATS: 'false' },
+    { ENABLE_HEARTBEATS: 'FALSE' },
+    { ENABLE_HEARTBEATS: ' false ' },
+    { ENABLE_HEARTBEATS: '0' },
     { ENABLE_REMINDERS: 'no' },
   ])('disables heartbeat processing for false-like flag values: %o', (envVars) => {
     const result = getHeartbeatProcessingConfig(envVars);
@@ -21,8 +20,7 @@ describe('getHeartbeatProcessingConfig', () => {
 
   it('stays enabled for true-like values', () => {
     const result = getHeartbeatProcessingConfig({
-      ENABLE_HEARTBEAT_SERVICE: 'true',
-      ENABLE_HEARTBEATS: '1',
+      ENABLE_HEARTBEATS: 'true',
       ENABLE_REMINDERS: 'yes',
     });
     expect(result.enabled).toBe(true);

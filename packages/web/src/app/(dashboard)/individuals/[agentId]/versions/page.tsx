@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Loader2, Sparkles, FileText, Zap } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
+import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 import clsx from 'clsx';
 
 // Dynamic import for TipTap diff viewer (client-only, heavy deps)
@@ -244,7 +245,7 @@ export default function VersionExplorerPage() {
 
                   {/* Show all changed files like a git diff */}
                   <div className="space-y-6">
-                    {/* IDENTITY.md */}
+                    {/* Identity profile */}
                     <div
                       className={clsx(
                         'rounded-lg border',
@@ -255,7 +256,7 @@ export default function VersionExplorerPage() {
                     >
                       <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
                         <FileText className="h-4 w-4 text-gray-600" />
-                        <span className="font-mono text-sm font-medium">IDENTITY.md</span>
+                        <span className="text-sm font-medium">Identity profile</span>
                         {identityChanged ? (
                           <Badge variant="outline" className="ml-auto text-xs bg-amber-100">
                             Changed
@@ -278,7 +279,7 @@ export default function VersionExplorerPage() {
                       </div>
                     </div>
 
-                    {/* SOUL.md */}
+                    {/* Constitution */}
                     <div
                       className={clsx(
                         'rounded-lg border',
@@ -289,7 +290,7 @@ export default function VersionExplorerPage() {
                     >
                       <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
                         <Sparkles className="h-4 w-4 text-amber-500" />
-                        <span className="font-mono text-sm font-medium">SOUL.md</span>
+                        <span className="text-sm font-medium">Constitution</span>
                         {soulChanged ? (
                           <Badge variant="outline" className="ml-auto text-xs bg-amber-100">
                             Changed
@@ -303,8 +304,8 @@ export default function VersionExplorerPage() {
                       <div className="p-4">
                         {soulChanged ? (
                           <MarkdownVersionDiff
-                            currentMarkdown={selectedVersion?.soul || ''}
-                            previousMarkdown={comparisonVersion?.soul || ''}
+                            currentMarkdown={normalizeDocMarkdown(selectedVersion?.soul)}
+                            previousMarkdown={normalizeDocMarkdown(comparisonVersion?.soul)}
                           />
                         ) : (
                           <p className="text-sm text-gray-500 italic">No changes in this file</p>
@@ -312,7 +313,7 @@ export default function VersionExplorerPage() {
                       </div>
                     </div>
 
-                    {/* HEARTBEAT.md */}
+                    {/* Operating guide */}
                     <div
                       className={clsx(
                         'rounded-lg border',
@@ -323,7 +324,7 @@ export default function VersionExplorerPage() {
                     >
                       <div className="flex items-center gap-2 px-4 py-2 border-b bg-white/50 rounded-t-lg">
                         <Zap className="h-4 w-4 text-blue-500" />
-                        <span className="font-mono text-sm font-medium">HEARTBEAT.md</span>
+                        <span className="text-sm font-medium">Operating guide</span>
                         {heartbeatChanged ? (
                           <Badge variant="outline" className="ml-auto text-xs bg-amber-100">
                             Changed
@@ -337,8 +338,8 @@ export default function VersionExplorerPage() {
                       <div className="p-4">
                         {heartbeatChanged ? (
                           <MarkdownVersionDiff
-                            currentMarkdown={selectedVersion?.heartbeat || ''}
-                            previousMarkdown={comparisonVersion?.heartbeat || ''}
+                            currentMarkdown={normalizeDocMarkdown(selectedVersion?.heartbeat)}
+                            previousMarkdown={normalizeDocMarkdown(comparisonVersion?.heartbeat)}
                           />
                         ) : (
                           <p className="text-sm text-gray-500 italic">No changes in this file</p>

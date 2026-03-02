@@ -4,6 +4,8 @@ Agent: {{AGENT_ID}}
 
 {{IDENTITY_BLOCK}}
 
+{{MEMORIES_BLOCK}}
+
 {{SKILLS_BLOCK}}
 
 {{INBOX_BLOCK}}

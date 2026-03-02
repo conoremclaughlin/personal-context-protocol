@@ -434,6 +434,88 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       // Should return 200 even when identity doesn't exist (PGRST116)
       expect(res._status).toBe(200);
     });
+
+    it('should include alias and legacy shared doc fields when identity exists', async () => {
+      const handler = findRouteHandler('get', '/user-identity');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'user_identity') {
+          return createQueryChain([
+            {
+              id: 'identity-1',
+              user_id: TEST_USER_ID,
+              user_profile_md: '# USER',
+              shared_values_md: '# VALUES',
+              process_md: '# PROCESS',
+              version: 4,
+              created_at: '2026-02-01T00:00:00.000Z',
+              updated_at: '2026-02-25T00:00:00.000Z',
+            },
+          ]);
+        }
+        if (table === 'workspaces') {
+          return createQueryChain([
+            { shared_values: '# VALUES (workspace)', process: '# PROCESS (workspace)' },
+          ]);
+        }
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq();
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      const payload = (res._json as any).userIdentity;
+      expect(payload.userProfile).toBe('# USER');
+      expect(payload.sharedValues).toBe('# VALUES (workspace)');
+      expect(payload.process).toBe('# PROCESS (workspace)');
+      expect(payload.userProfileMd).toBe('# USER');
+      expect(payload.sharedValuesMd).toBe('# VALUES (workspace)');
+      expect(payload.processMd).toBe('# PROCESS (workspace)');
+    });
+  });
+
+  describe('GET /user-identity/history', () => {
+    it('should include alias and legacy fields in history entries', async () => {
+      const handler = findRouteHandler('get', '/user-identity/history');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'user_identity') {
+          return createQueryChain([{ id: 'identity-1' }]);
+        }
+        if (table === 'user_identity_history') {
+          return createQueryChain([
+            {
+              id: 'hist-1',
+              version: 3,
+              user_profile_md: '# USER',
+              shared_values_md: '# VALUES',
+              process_md: '# PROCESS',
+              change_type: 'update',
+              created_at: '2026-02-20T00:00:00.000Z',
+              archived_at: '2026-02-25T00:00:00.000Z',
+            },
+          ]);
+        }
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq();
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      const entry = (res._json as any).history[0];
+      expect(entry.userProfile).toBe('# USER');
+      expect(entry.sharedValues).toBe('# VALUES');
+      expect(entry.process).toBe('# PROCESS');
+      expect(entry.userProfileMd).toBe('# USER');
+      expect(entry.sharedValuesMd).toBe('# VALUES');
+      expect(entry.processMd).toBe('# PROCESS');
+    });
   });
 
   // =========================================================================

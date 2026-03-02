@@ -13,7 +13,6 @@ import {
   Link2,
   FileText,
   Puzzle,
-  MessageSquare,
   Plus,
   UserPlus,
   Building2,
@@ -42,7 +41,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: Home },
-  { name: 'Chat', href: '/chat', icon: MessageSquare },
   { name: 'Sessions', href: '/sessions', icon: Activity },
   { name: 'Trusted Users', href: '/trusted-users', icon: Users },
   { name: 'Groups', href: '/groups', icon: UsersRound },
@@ -106,6 +104,7 @@ export function Sidebar() {
   const [inviteEmail, setInviteEmail] = useState('');
   const [inviteRole, setInviteRole] = useState<'owner' | 'admin' | 'member' | 'viewer'>('member');
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [workspaceSuccess, setWorkspaceSuccess] = useState<string | null>(null);
   const [isMounted, setIsMounted] = useState(false);
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
@@ -167,11 +166,13 @@ export function Sidebar() {
       setNewWorkspaceName('');
       setNewWorkspaceDescription('');
       setWorkspaceError(null);
+      setWorkspaceSuccess(`Created workspace "${data.workspace.name}".`);
       queryClient.invalidateQueries({ queryKey: ['workspaces'] });
       queryClient.invalidateQueries({ queryKey: ['workspace-members', createdWorkspaceId] });
       router.refresh();
     },
     onError: (error) => {
+      setWorkspaceSuccess(null);
       setWorkspaceError(error.message || 'Failed to create workspace');
     },
   });
@@ -189,9 +190,11 @@ export function Sidebar() {
       onSuccess: (_, variables) => {
         setInviteEmail('');
         setWorkspaceError(null);
+        setWorkspaceSuccess('Collaborator invited successfully.');
         queryClient.invalidateQueries({ queryKey: ['workspace-members', variables.workspaceId] });
       },
       onError: (error) => {
+        setWorkspaceSuccess(null);
         setWorkspaceError(error.message || 'Failed to invite collaborator');
       },
     }
@@ -251,10 +254,12 @@ export function Sidebar() {
   const handleCreateWorkspace = () => {
     const trimmedWorkspaceName = newWorkspaceName.trim();
     if (!trimmedWorkspaceName) {
+      setWorkspaceSuccess(null);
       setWorkspaceError('Workspace name is required');
       return;
     }
 
+    setWorkspaceSuccess(null);
     setWorkspaceError(null);
     createWorkspaceMutation.mutate({
       name: trimmedWorkspaceName,
@@ -266,15 +271,18 @@ export function Sidebar() {
   const handleInviteWorkspaceMember = () => {
     const trimmedInviteEmail = inviteEmail.trim();
     if (!trimmedInviteEmail || !trimmedInviteEmail.includes('@')) {
+      setWorkspaceSuccess(null);
       setWorkspaceError('Valid collaborator email is required');
       return;
     }
 
     if (!inviteTargetWorkspaceId) {
+      setWorkspaceSuccess(null);
       setWorkspaceError('Select a workspace before inviting');
       return;
     }
 
+    setWorkspaceSuccess(null);
     setWorkspaceError(null);
     inviteWorkspaceMemberMutation.mutate({
       workspaceId: inviteTargetWorkspaceId,
@@ -526,6 +534,11 @@ export function Sidebar() {
             {workspaceError && (
               <p className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
                 {workspaceError}
+              </p>
+            )}
+            {workspaceSuccess && (
+              <p className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                {workspaceSuccess}
               </p>
             )}
           </DialogContent>

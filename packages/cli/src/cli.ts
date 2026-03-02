@@ -54,6 +54,8 @@ const SB_FLAGS: Record<string, { hasValue: boolean; key: string }> = {
   '-v': { hasValue: false, key: 'verbose' },
   '--verbose': { hasValue: false, key: 'verbose' },
   '--no-session': { hasValue: false, key: 'noSession' },
+  '--session-candidates': { hasValue: false, key: 'sessionCandidates' },
+  '--session-choice': { hasValue: true, key: 'sessionChoice' },
 };
 
 interface ParsedArgs {
@@ -63,6 +65,8 @@ interface ParsedArgs {
     model: string | undefined; // undefined = use backend's default
     session: boolean;
     verbose: boolean;
+    sessionCandidates: boolean;
+    sessionChoice: string | undefined;
   };
   passthroughArgs: string[];
   promptParts: string[];
@@ -95,6 +99,8 @@ export function extractArgs(argv: string[]): ParsedArgs {
     model: undefined, // undefined = use backend's default
     session: true,
     verbose: false,
+    sessionCandidates: false,
+    sessionChoice: undefined,
   };
   const passthroughArgs: string[] = [];
   const promptParts: string[] = [];
@@ -111,9 +117,11 @@ export function extractArgs(argv: string[]): ParsedArgs {
         if (flag.key === 'agent') sbOptions.agent = val;
         if (flag.key === 'backend') sbOptions.backend = val;
         if (flag.key === 'model') sbOptions.model = val;
+        if (flag.key === 'sessionChoice') sbOptions.sessionChoice = val;
       } else if (!flag.hasValue) {
         if (flag.key === 'noSession') sbOptions.session = false;
         else if (flag.key === 'verbose') sbOptions.verbose = true;
+        else if (flag.key === 'sessionCandidates') sbOptions.sessionCandidates = true;
       }
     } else if (arg === '--') {
       // Explicit passthrough boundary — everything after goes to claude
@@ -157,6 +165,11 @@ program
   .option('-b, --backend <name>', 'AI backend (claude, codex, gemini)', 'claude')
   .option('-m, --model <model>', 'Model to use (defaults to backend-specific)')
   .option('--no-session', 'Disable session tracking')
+  .option(
+    '--session-candidates',
+    'List session candidates and exit (or combine with --session-choice)'
+  )
+  .option('--session-choice <choice>', 'Force session selection (new | pcp:<id> | local:<id>)')
   .option('-v, --verbose', 'Verbose output')
   .argument('[prompt...]', 'Prompt to send (omit for interactive)')
   .action(async () => {
