@@ -5,7 +5,7 @@ import {
   matchesAnyPolicyPattern,
   matchesPolicyPattern,
   normalizePolicyToken,
-} from './tool-policy-core-compat.js';
+} from '@personal-context/shared';
 
 describe('shared tool policy core', () => {
   it('normalizes tokens', () => {
