@@ -7,6 +7,7 @@ import {
   filterPcpSessionsForContext,
   filterUntrackedLocalClaudeSessions,
   hasBackendSessionOverride,
+  parseClaudeSessionIdFromOutputLine,
   resolveCapturedBackendSessionIdFromRuntime,
   resolveBackendSessionIdForResume,
   resolveBackendSessionSeedId,
@@ -16,6 +17,7 @@ import {
   shouldRetryWithFreshBackendSession,
   shouldAutoResumeRuntimeSession,
 } from './claude.js';
+import { upsertRuntimeSession } from '../session/runtime.js';
 
 describe('hasBackendSessionOverride', () => {
   it('detects explicit Codex resume subcommand in positional prompt parts', () => {
@@ -234,6 +236,24 @@ describe('shouldAutoResumeRuntimeSession', () => {
     expect(shouldAutoResumeRuntimeSession({ pcpSessionId: 'pcp-1' }, true)).toBe(false);
     expect(shouldAutoResumeRuntimeSession(undefined, false)).toBe(false);
     expect(shouldAutoResumeRuntimeSession({ backendSessionId: 'b-1' }, false)).toBe(false);
+  });
+});
+
+describe('parseClaudeSessionIdFromOutputLine', () => {
+  it('parses backend session id from explicit resume command line', () => {
+    expect(
+      parseClaudeSessionIdFromOutputLine(
+        'Resume this session with: claude --resume c72051cc-5abd-4403-84cb-a0852ae86a30'
+      )
+    ).toBe('c72051cc-5abd-4403-84cb-a0852ae86a30');
+  });
+
+  it('ignores generic json lines that contain session_id fields', () => {
+    expect(
+      parseClaudeSessionIdFromOutputLine(
+        '{"type":"event","session_id":"f56adc85-f3c3-4721-a1fe-5e673dd1e705"}'
+      )
+    ).toBeUndefined();
   });
 });
 
@@ -518,6 +538,33 @@ describe('resolveCapturedBackendSessionIdFromRuntime', () => {
       } else {
         process.env.HOME = oldHome;
       }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers fallback even when runtime cache has a different backend session id', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-prefer-fallback-'));
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempRepo, { recursive: true });
+
+    try {
+      upsertRuntimeSession(tempRepo, {
+        pcpSessionId: 'pcp-session-1',
+        backend: 'claude',
+        agentId: 'wren',
+        backendSessionId: 'runtime-mismatched-id',
+      });
+
+      const resolved = resolveCapturedBackendSessionIdFromRuntime({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-1',
+        agentId: 'wren',
+        fallbackBackendSessionId: 'resume-explicit-id',
+      });
+
+      expect(resolved).toBe('resume-explicit-id');
+    } finally {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });

@@ -405,6 +405,12 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
 
   if (!pcpSessionId) return fallbackBackendSessionId;
 
+  // If caller already has a concrete backend session id for this run attempt
+  // (e.g. explicit successful --resume target), trust it over runtime heuristics.
+  if (fallbackBackendSessionId?.trim()) {
+    return fallbackBackendSessionId.trim();
+  }
+
   const scopedRecords = listRuntimeSessions(cwd, backend).filter(
     (record) =>
       record.pcpSessionId === pcpSessionId &&
@@ -426,12 +432,6 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
   ) {
     const currentSessionId = resolveFromRecord(current);
     if (currentSessionId) return currentSessionId;
-  }
-
-  // If caller already has a concrete backend session id for this run attempt
-  // (e.g. successful --resume), prefer it over heuristic local discovery.
-  if (fallbackBackendSessionId?.trim()) {
-    return fallbackBackendSessionId.trim();
   }
 
   const scopedResolved = resolveFromRecord(scopedRecords[0]);
@@ -928,50 +928,11 @@ async function logBackendExecutionResult(options: {
   }
 }
 
-function extractBackendSessionIdFromEvent(event: Record<string, unknown>): string | undefined {
-  const queue: unknown[] = [event];
-  const sessionKeys = new Set([
-    'session_id',
-    'sessionId',
-    'conversation_id',
-    'conversationId',
-    'thread_id',
-    'threadId',
-  ]);
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current || typeof current !== 'object') continue;
-    const obj = current as Record<string, unknown>;
-
-    for (const [key, value] of Object.entries(obj)) {
-      if (typeof value === 'string' && sessionKeys.has(key) && value.trim()) {
-        return value.trim();
-      }
-      if (value && typeof value === 'object') queue.push(value);
-    }
-  }
-
-  return undefined;
-}
-
 function isUuidSessionId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
-function parseSessionIdFromJsonLine(line: string): string | undefined {
-  try {
-    const parsed = JSON.parse(line) as Record<string, unknown>;
-    return extractBackendSessionIdFromEvent(parsed);
-  } catch {
-    return undefined;
-  }
-}
-
-function parseClaudeSessionIdFromOutputLine(line: string): string | undefined {
-  const fromJson = parseSessionIdFromJsonLine(line);
-  if (fromJson && isUuidSessionId(fromJson)) return fromJson;
-
+export function parseClaudeSessionIdFromOutputLine(line: string): string | undefined {
   const resumeMatch = line.match(
     /\bclaude\s+--resume\s+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b/i
   );

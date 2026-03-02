@@ -114,7 +114,9 @@ describe('claude command integration', () => {
       `#!/usr/bin/env node
 const { writeFileSync } = require('fs');
 writeFileSync(process.env.FAKE_CLAUDE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
-console.log(JSON.stringify({ session_id: process.env.FAKE_CLAUDE_SESSION_ID || 'claude-int-default' }));
+const id = process.env.FAKE_CLAUDE_SESSION_ID || 'claude-int-default';
+console.log('Resume this session with:');
+console.log('claude --resume ' + id);
 `
     );
     chmodSync(fakeClaudePath, 0o755);
