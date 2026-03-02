@@ -427,6 +427,15 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     if (currentSessionId) return currentSessionId;
   }
 
+  // If caller already has a concrete backend session id for this run attempt
+  // (e.g. successful --resume), prefer it over heuristic local discovery.
+  if (fallbackBackendSessionId?.trim()) {
+    return fallbackBackendSessionId.trim();
+  }
+
+  const scopedResolved = resolveFromRecord(scopedRecords[0]);
+  if (scopedResolved) return scopedResolved;
+
   if (knownLocalSessionIds && knownLocalSessionIds.size > 0) {
     const postRunLocalSessions = getBackendLocalSessionsForProject(backend, cwd, 50);
     const newLocalSession = postRunLocalSessions.find(
@@ -435,7 +444,7 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     if (newLocalSession?.sessionId) return newLocalSession.sessionId;
   }
 
-  return resolveFromRecord(scopedRecords[0]) || fallbackBackendSessionId;
+  return undefined;
 }
 
 export function getClaudeLocalSessionsForProject(
@@ -1776,7 +1785,7 @@ export async function runClaudeInteractive(
           agentId,
           studioId,
           knownLocalSessionIds,
-          fallbackBackendSessionId: finalCapturedBackendSessionId,
+          fallbackBackendSessionId: attemptBackendSessionId || finalCapturedBackendSessionId,
         });
 
         await logBackendExecutionResult({
@@ -1874,6 +1883,33 @@ export async function runClaudeInteractive(
       } else {
         attemptBackendSessionId = staleRecovery.backendSessionId;
         attemptBackendSessionSeedId = staleRecovery.backendSessionSeedId;
+      }
+
+      if (sessionContext.pcpSessionId && attemptBackendSessionId) {
+        upsertRuntimeSession(process.cwd(), {
+          pcpSessionId: sessionContext.pcpSessionId,
+          backend: options.backend,
+          agentId,
+          ...(identityId ? { identityId } : {}),
+          ...(studioId ? { studioId } : {}),
+          ...(runtimeLinkId ? { runtimeLinkId } : {}),
+          backendSessionId: attemptBackendSessionId,
+          updatedAt: new Date().toISOString(),
+        });
+        if (pcpConfig?.email) {
+          try {
+            await callPcpTool('update_session_phase', {
+              email: pcpConfig.email,
+              agentId,
+              sessionId: sessionContext.pcpSessionId,
+              backendSessionId: attemptBackendSessionId,
+              status: 'active',
+              workingDir: process.cwd(),
+            });
+          } catch {
+            // Best-effort only.
+          }
+        }
       }
       continue;
     }

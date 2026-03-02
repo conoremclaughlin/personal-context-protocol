@@ -482,6 +482,45 @@ describe('resolveCapturedBackendSessionIdFromRuntime', () => {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it('prefers explicit fallback backend session id over local discovery', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-fallback-'));
+    const tempHome = join(tempRoot, 'home');
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(tempRepo, { recursive: true });
+
+    const projectDirName = tempRepo.replace(/[\\/]/g, '-');
+    const projectKeyDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectKeyDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const oldSessionId = '11111111-1111-4111-8111-111111111111';
+      const newSessionId = '22222222-2222-4222-8222-222222222222';
+      writeFileSync(join(projectKeyDir, `${oldSessionId}.jsonl`), '');
+      writeFileSync(join(projectKeyDir, `${newSessionId}.jsonl`), '');
+
+      const resolved = resolveCapturedBackendSessionIdFromRuntime({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-1',
+        knownLocalSessionIds: new Set([oldSessionId]),
+        fallbackBackendSessionId: 'fallback-resume-id',
+      });
+
+      expect(resolved).toBe('fallback-resume-id');
+    } finally {
+      if (oldHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = oldHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('extractClaudeHistorySessionsForProject', () => {
