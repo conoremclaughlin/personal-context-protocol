@@ -138,6 +138,12 @@ function getBackendByName(name: string): HookCapabilities {
   }
 }
 
+function getDefaultBackends(): HookCapabilities[] {
+  // Install/status defaults should be explicit and comprehensive to avoid
+  // per-backend footguns in multi-SB repos.
+  return [CLAUDE_CODE, CODEX, GEMINI];
+}
+
 // ============================================================================
 // Git Worktree Discovery
 // ============================================================================
@@ -148,6 +154,7 @@ function listWorktreePaths(cwd: string): string[] {
       cwd,
       encoding: 'utf-8',
       timeout: 5000,
+      stdio: ['ignore', 'pipe', 'ignore'],
     });
     return output
       .split('\n')
@@ -1097,16 +1104,28 @@ async function installCommand(options: {
   all?: boolean;
 }): Promise<void> {
   const cwd = process.cwd();
+  const backends = options.backend ? [getBackendByName(options.backend)] : getDefaultBackends();
 
   if (options.all) {
     const worktrees = listWorktreePaths(cwd);
-    console.log(chalk.bold(`\nInstalling PCP hooks across ${worktrees.length} worktree(s):\n`));
+    console.log(
+      chalk.bold(
+        `\nInstalling PCP hooks across ${worktrees.length} worktree(s) for ${backends
+          .map((backend) => backend.name)
+          .join(', ')}:\n`
+      )
+    );
 
     let hasConflict = false;
     for (const wt of worktrees) {
-      const { result, backend } = installHooks(wt, options);
-      printInstallResult(wt, result, backend);
-      if (result === 'conflict') hasConflict = true;
+      for (const backend of backends) {
+        const { result } = installHooks(wt, {
+          backend: backend.name,
+          force: options.force,
+        });
+        printInstallResult(wt, result, backend);
+        if (result === 'conflict') hasConflict = true;
+      }
     }
 
     console.log('');
@@ -1118,33 +1137,44 @@ async function installCommand(options: {
     return;
   }
 
-  const { result, backend } = installHooks(cwd, options);
+  console.log(chalk.dim(`Backends: ${backends.map((backend) => backend.name).join(', ')}`));
 
-  console.log(chalk.dim(`Backend: ${backend.name}`));
+  let hasConflict = false;
+  for (const backend of backends) {
+    const { result } = installHooks(cwd, {
+      backend: backend.name,
+      force: options.force,
+    });
 
-  if (result === 'already-installed') {
-    console.log(chalk.green('\nPCP hooks already installed and up to date.'));
+    if (result === 'already-installed') {
+      console.log(chalk.green(`\nPCP hooks already installed and up to date (${backend.name}).`));
+      console.log(chalk.dim(`Config: ${backend.configPath}`));
+      continue;
+    }
+
+    if (result === 'conflict') {
+      hasConflict = true;
+      console.error(
+        chalk.yellow(
+          `\nExisting non-PCP hooks detected (${backend.name}). Use --force to overwrite.`
+        )
+      );
+      continue;
+    }
+
+    console.log(chalk.green(`\nPCP hooks installed (${backend.name}):`));
+    const events = backend.events;
+    if (events.preCompact) console.log(chalk.dim(`  ${events.preCompact} → sb hooks pre-compact`));
+    if (events.postCompact)
+      console.log(chalk.dim(`  ${events.postCompact} (compact) → sb hooks post-compact`));
+    if (events.sessionStart)
+      console.log(chalk.dim(`  ${events.sessionStart} (startup) → sb hooks on-session-start`));
+    if (events.onPrompt) console.log(chalk.dim(`  ${events.onPrompt} → sb hooks on-prompt`));
+    if (events.onStop) console.log(chalk.dim(`  ${events.onStop} → sb hooks on-stop`));
     console.log(chalk.dim(`Config: ${backend.configPath}`));
-    return;
   }
 
-  if (result === 'conflict') {
-    console.error(chalk.yellow('Existing non-PCP hooks detected. Use --force to overwrite.'));
-    process.exit(1);
-  }
-
-  console.log(chalk.green('\nPCP hooks installed:'));
-
-  const events = backend.events;
-  if (events.preCompact) console.log(chalk.dim(`  ${events.preCompact} → sb hooks pre-compact`));
-  if (events.postCompact)
-    console.log(chalk.dim(`  ${events.postCompact} (compact) → sb hooks post-compact`));
-  if (events.sessionStart)
-    console.log(chalk.dim(`  ${events.sessionStart} (startup) → sb hooks on-session-start`));
-  if (events.onPrompt) console.log(chalk.dim(`  ${events.onPrompt} → sb hooks on-prompt`));
-  if (events.onStop) console.log(chalk.dim(`  ${events.onStop} → sb hooks on-stop`));
-
-  console.log(chalk.dim(`\nConfig: ${backend.configPath}`));
+  if (hasConflict) process.exit(1);
 }
 
 function uninstallFromDir(targetDir: string, backendName?: string): boolean {
@@ -1214,90 +1244,94 @@ async function uninstallCommand(options: { backend?: string; all?: boolean }): P
 
 async function statusCommand(options: { backend?: string }): Promise<void> {
   const cwd = process.cwd();
-  const backend = options.backend ? getBackendByName(options.backend) : detectBackend(cwd);
-  const configPath = join(cwd, backend.configPath);
+  const backends = options.backend ? [getBackendByName(options.backend)] : getDefaultBackends();
 
-  console.log(chalk.bold(`\nHook Status (${backend.name}):\n`));
-  console.log(chalk.dim(`  Config: ${backend.configPath}`));
+  for (const backend of backends) {
+    const configPath = join(cwd, backend.configPath);
+    console.log(chalk.bold(`\nHook Status (${backend.name}):\n`));
+    console.log(chalk.dim(`  Config: ${backend.configPath}`));
 
-  if (!existsSync(configPath)) {
-    console.log(chalk.yellow('\n  No config file found. Hooks not installed.'));
-    console.log(chalk.dim('  Run: sb hooks install'));
-    return;
-  }
+    if (!existsSync(configPath)) {
+      console.log(chalk.yellow('\n  No config file found. Hooks not installed.'));
+      console.log(chalk.dim(`  Run: sb hooks install -b ${backend.name}`));
+      console.log('');
+      continue;
+    }
 
-  let hasHooks = false;
+    let hasHooks = false;
 
-  switch (backend.name) {
-    case 'claude-code':
-    case 'gemini': {
-      try {
-        const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
-        const hooks = config.hooks as Record<string, unknown> | undefined;
-        if (hooks && Object.keys(hooks).length > 0) {
-          hasHooks = true;
-          console.log(chalk.green('\n  Hooks installed:'));
-          for (const [event, entries] of Object.entries(hooks)) {
-            if (!Array.isArray(entries)) continue;
-            for (const entry of entries) {
-              const entryObj = entry as Record<string, unknown>;
-              const hookList = entryObj.hooks as Array<Record<string, unknown>> | undefined;
-              const matcher = entryObj.matcher as string | undefined;
-              const command = entryObj.command as string | undefined;
+    switch (backend.name) {
+      case 'claude-code':
+      case 'gemini': {
+        try {
+          const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+          const hooks = config.hooks as Record<string, unknown> | undefined;
+          if (hooks && Object.keys(hooks).length > 0) {
+            hasHooks = true;
+            console.log(chalk.green('\n  Hooks installed:'));
+            for (const [event, entries] of Object.entries(hooks)) {
+              if (!Array.isArray(entries)) continue;
+              for (const entry of entries) {
+                const entryObj = entry as Record<string, unknown>;
+                const hookList = entryObj.hooks as Array<Record<string, unknown>> | undefined;
+                const matcher = entryObj.matcher as string | undefined;
+                const command = entryObj.command as string | undefined;
 
-              if (hookList) {
-                for (const h of hookList) {
-                  const cmd = h.command as string;
-                  const matcherSuffix = matcher ? ` (${matcher})` : '';
-                  const icon = isPcpHookCommand(cmd) ? chalk.green('●') : chalk.dim('○');
-                  console.log(`    ${icon} ${event}${matcherSuffix} → ${cmd}`);
+                if (hookList) {
+                  for (const h of hookList) {
+                    const cmd = h.command as string;
+                    const matcherSuffix = matcher ? ` (${matcher})` : '';
+                    const icon = isPcpHookCommand(cmd) ? chalk.green('●') : chalk.dim('○');
+                    console.log(`    ${icon} ${event}${matcherSuffix} → ${cmd}`);
+                  }
+                } else if (command) {
+                  // Gemini/simpler format
+                  const icon = isPcpHookCommand(command) ? chalk.green('●') : chalk.dim('○');
+                  console.log(`    ${icon} ${event} → ${command}`);
                 }
-              } else if (command) {
-                // Gemini/simpler format
-                const icon = isPcpHookCommand(command) ? chalk.green('●') : chalk.dim('○');
-                console.log(`    ${icon} ${event} → ${command}`);
               }
             }
           }
+        } catch {
+          console.log(chalk.red('\n  Failed to parse config file.'));
         }
-      } catch {
-        console.log(chalk.red('\n  Failed to parse config file.'));
+        break;
       }
-      break;
-    }
-    case 'codex': {
-      const content = readFileSync(configPath, 'utf-8');
-      if (hasCodexPcpHooks(content)) {
-        hasHooks = true;
-        console.log(chalk.green('\n  PCP hooks installed (TOML)'));
-        if (content.includes('session_start'))
-          console.log(chalk.dim('    ● session_start → sb hooks on-session-start'));
-        if (content.includes('session_end'))
-          console.log(chalk.dim('    ● session_end → sb hooks on-stop'));
+      case 'codex': {
+        const content = readFileSync(configPath, 'utf-8');
+        if (hasCodexPcpHooks(content)) {
+          hasHooks = true;
+          console.log(chalk.green('\n  PCP hooks installed (TOML)'));
+          if (content.includes('session_start'))
+            console.log(chalk.dim('    ● session_start → sb hooks on-session-start'));
+          if (content.includes('session_end'))
+            console.log(chalk.dim('    ● session_end → sb hooks on-stop'));
+          if (content.includes('user_prompt'))
+            console.log(chalk.dim('    ● user_prompt → sb hooks on-prompt'));
+        }
+        break;
       }
-      break;
     }
+
+    if (!hasHooks) {
+      console.log(chalk.yellow('\n  No hooks installed.'));
+      console.log(chalk.dim(`  Run: sb hooks install -b ${backend.name}`));
+    }
+
+    // Show capabilities
+    console.log(chalk.dim('\n  Capabilities:'));
+    console.log(
+      chalk.dim(
+        `    Compaction: ${backend.supportsCompaction ? chalk.green('yes') : chalk.yellow('no')}`
+      )
+    );
+    console.log(
+      chalk.dim(
+        `    Prompt hook: ${backend.supportsPromptHook ? chalk.green('yes') : chalk.yellow('no')}`
+      )
+    );
+    console.log('');
   }
-
-  if (!hasHooks) {
-    console.log(chalk.yellow('\n  No hooks installed.'));
-    console.log(chalk.dim('  Run: sb hooks install'));
-  }
-
-  // Show capabilities
-  console.log(chalk.dim('\n  Capabilities:'));
-  console.log(
-    chalk.dim(
-      `    Compaction: ${backend.supportsCompaction ? chalk.green('yes') : chalk.yellow('no')}`
-    )
-  );
-  console.log(
-    chalk.dim(
-      `    Prompt hook: ${backend.supportsPromptHook ? chalk.green('yes') : chalk.yellow('no')}`
-    )
-  );
-
-  console.log('');
 }
 
 // ============================================================================
