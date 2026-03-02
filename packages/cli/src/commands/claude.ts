@@ -930,6 +930,22 @@ function parseSessionIdFromJsonLine(line: string): string | undefined {
   }
 }
 
+export function shouldRetryWithFreshBackendSession(options: {
+  backend: string;
+  attemptedBackendSessionId?: string;
+  stderrText?: string;
+}): boolean {
+  const { backend, attemptedBackendSessionId, stderrText = '' } = options;
+  if (backend !== 'claude') return false;
+  if (!attemptedBackendSessionId) return false;
+
+  const lowered = stderrText.toLowerCase();
+  return (
+    lowered.includes('no conversation found with session id') ||
+    (lowered.includes('session id') && lowered.includes('already in use'))
+  );
+}
+
 async function persistBackendSessionLink(options: {
   pcpSessionId?: string;
   backendSessionId?: string;
@@ -1445,38 +1461,8 @@ export async function runClaudeInteractive(
     }
   }
 
-  const prepared = adapter.prepare({
-    agentId,
-    model: options.model,
-    promptParts: [],
-    passthroughArgs,
-    ...sessionContext,
-  });
-
   const authEnv = await resolvePcpAuthEnv(options.verbose);
-
-  if (options.verbose) {
-    console.log(chalk.dim(`Running: ${prepared.binary} ${prepared.args.join(' ')}`));
-  }
-
   const pcpConfig = getPcpConfig();
-  const executionContext: BackendExecutionLogContext = {
-    pcpConfig,
-    agentId,
-    backend: options.backend,
-    binary: prepared.binary,
-    args: prepared.args,
-    pcpSessionId: sessionContext.pcpSessionId,
-    backendSessionId: sessionContext.backendSessionId,
-    studioId,
-    runtimeLinkId,
-    cwd: process.cwd(),
-    mode: 'interactive',
-    retryAttempt: 1,
-    maxAttempts: 1,
-  };
-  const executionStartedAt = Date.now();
-  const backendStartActivityId = await logBackendExecutionStart(executionContext);
   const knownLocalSessionIds = options.session
     ? new Set(
         getBackendLocalSessionsForProject(options.backend, process.cwd(), 50).map(
@@ -1484,51 +1470,129 @@ export async function runClaudeInteractive(
         )
       )
     : undefined;
-  let capturedBackendSessionId = sessionContext.backendSessionId;
-  let cleanedUp = false;
-  let finalizedExecution = false;
-  const ensureCleanup = (): void => {
-    if (cleanedUp) return;
-    cleanedUp = true;
-    prepared.cleanup();
-  };
-  const finalizeExecution = async (exitCode: number | null, error?: string): Promise<void> => {
-    if (finalizedExecution) return;
-    finalizedExecution = true;
-    await logBackendExecutionResult({
-      context: executionContext,
-      parentActivityId: backendStartActivityId,
-      exitCode,
-      durationMs: Date.now() - executionStartedAt,
-      error,
-      backendSessionId: capturedBackendSessionId,
-    });
-  };
+  const maxAttempts = sessionContext.backendSessionId ? 2 : 1;
+  let attempt = 1;
+  let attemptBackendSessionId = sessionContext.backendSessionId;
+  let attemptBackendSessionSeedId = sessionContext.backendSessionSeedId;
+  let finalCapturedBackendSessionId = sessionContext.backendSessionId;
 
-  const child = spawn(prepared.binary, prepared.args, {
-    stdio: 'inherit',
-    env: {
-      ...process.env,
-      ...authEnv,
-      ...prepared.env,
-      ...(runtimeLinkId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
-    },
-  });
-
-  child.on('close', async (code) => {
-    ensureCleanup();
-    capturedBackendSessionId = resolveCapturedBackendSessionIdFromRuntime({
-      backend: options.backend,
-      pcpSessionId: sessionContext.pcpSessionId,
-      runtimeLinkId,
+  const runAttempt = async (): Promise<{ code: number | null; stderrText: string }> => {
+    const prepared = adapter.prepare({
       agentId,
-      studioId,
-      knownLocalSessionIds,
-      fallbackBackendSessionId: capturedBackendSessionId,
+      model: options.model,
+      promptParts: [],
+      passthroughArgs,
+      ...sessionContext,
+      ...(attemptBackendSessionId ? { backendSessionId: attemptBackendSessionId } : {}),
+      ...(attemptBackendSessionSeedId ? { backendSessionSeedId: attemptBackendSessionSeedId } : {}),
     });
+
+    if (options.verbose) {
+      console.log(chalk.dim(`Running: ${prepared.binary} ${prepared.args.join(' ')}`));
+    }
+
+    const executionContext: BackendExecutionLogContext = {
+      pcpConfig,
+      agentId,
+      backend: options.backend,
+      binary: prepared.binary,
+      args: prepared.args,
+      pcpSessionId: sessionContext.pcpSessionId,
+      backendSessionId: attemptBackendSessionId,
+      studioId,
+      runtimeLinkId,
+      cwd: process.cwd(),
+      mode: 'interactive',
+      retryAttempt: attempt,
+      maxAttempts,
+    };
+    const executionStartedAt = Date.now();
+    const backendStartActivityId = await logBackendExecutionStart(executionContext);
+
+    return await new Promise<{ code: number | null; stderrText: string }>((resolve) => {
+      let stderrText = '';
+
+      const child = spawn(prepared.binary, prepared.args, {
+        stdio: ['inherit', 'inherit', 'pipe'],
+        env: {
+          ...process.env,
+          ...authEnv,
+          ...prepared.env,
+          ...(runtimeLinkId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
+        },
+      });
+
+      child.stderr?.on('data', (chunk) => {
+        const text = chunk.toString();
+        stderrText += text;
+        process.stderr.write(chunk);
+      });
+
+      child.on('close', async (code) => {
+        prepared.cleanup();
+        finalCapturedBackendSessionId = resolveCapturedBackendSessionIdFromRuntime({
+          backend: options.backend,
+          pcpSessionId: sessionContext.pcpSessionId,
+          runtimeLinkId,
+          agentId,
+          studioId,
+          knownLocalSessionIds,
+          fallbackBackendSessionId: finalCapturedBackendSessionId,
+        });
+
+        await logBackendExecutionResult({
+          context: executionContext,
+          parentActivityId: backendStartActivityId,
+          exitCode: code ?? null,
+          durationMs: Date.now() - executionStartedAt,
+          backendSessionId: finalCapturedBackendSessionId,
+        });
+        resolve({ code: code ?? null, stderrText });
+      });
+
+      child.on('error', async (err) => {
+        prepared.cleanup();
+        const errorText = err.message || 'spawn failed';
+        await logBackendExecutionResult({
+          context: executionContext,
+          parentActivityId: backendStartActivityId,
+          exitCode: null,
+          durationMs: Date.now() - executionStartedAt,
+          error: errorText,
+          backendSessionId: finalCapturedBackendSessionId,
+        });
+        resolve({ code: 1, stderrText: `${stderrText}\n${errorText}`.trim() });
+      });
+    });
+  };
+
+  while (true) {
+    const { code, stderrText } = await runAttempt();
+    const shouldRetry =
+      attempt < maxAttempts &&
+      shouldRetryWithFreshBackendSession({
+        backend: options.backend,
+        attemptedBackendSessionId: attemptBackendSessionId,
+        stderrText,
+      });
+
+    if (shouldRetry) {
+      if (attemptBackendSessionId) {
+        console.log(
+          chalk.yellow(
+            `\nLinked Claude session ${attemptBackendSessionId.slice(0, 8)} failed to resume; retrying once with a fresh backend session.`
+          )
+        );
+      }
+      attempt += 1;
+      attemptBackendSessionId = undefined;
+      attemptBackendSessionSeedId = undefined;
+      continue;
+    }
+
     await persistBackendSessionLink({
       pcpSessionId: sessionContext.pcpSessionId,
-      backendSessionId: capturedBackendSessionId,
+      backendSessionId: finalCapturedBackendSessionId,
       backend: options.backend,
       agentId,
       runtimeLinkId,
@@ -1536,13 +1600,7 @@ export async function runClaudeInteractive(
       identityId,
       email: pcpConfig?.email,
     });
-    await finalizeExecution(code ?? null);
-    process.exit(code || 0);
-  });
 
-  child.on('error', async (err) => {
-    ensureCleanup();
-    await finalizeExecution(null, err.message || 'spawn failed');
-    process.exit(1);
-  });
+    process.exit(code || 0);
+  }
 }

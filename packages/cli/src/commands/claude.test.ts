@@ -11,6 +11,7 @@ import {
   resolveBackendSessionIdForResume,
   resolveBackendSessionSeedId,
   sanitizeBackendExecutionArgs,
+  shouldRetryWithFreshBackendSession,
   shouldAutoResumeRuntimeSession,
 } from './claude.js';
 
@@ -212,6 +213,37 @@ describe('shouldAutoResumeRuntimeSession', () => {
     expect(shouldAutoResumeRuntimeSession({ pcpSessionId: 'pcp-1' }, true)).toBe(false);
     expect(shouldAutoResumeRuntimeSession(undefined, false)).toBe(false);
     expect(shouldAutoResumeRuntimeSession({ backendSessionId: 'b-1' }, false)).toBe(false);
+  });
+});
+
+describe('shouldRetryWithFreshBackendSession', () => {
+  it('retries claude when resume fails with no conversation found', () => {
+    expect(
+      shouldRetryWithFreshBackendSession({
+        backend: 'claude',
+        attemptedBackendSessionId: 'abc123',
+        stderrText: 'No conversation found with session ID: abc123',
+      })
+    ).toBe(true);
+  });
+
+  it('retries claude when session id is already in use', () => {
+    expect(
+      shouldRetryWithFreshBackendSession({
+        backend: 'claude',
+        attemptedBackendSessionId: 'abc123',
+        stderrText: 'Error: Session ID abc123 is already in use.',
+      })
+    ).toBe(true);
+  });
+
+  it('does not retry when no backend session id was attempted', () => {
+    expect(
+      shouldRetryWithFreshBackendSession({
+        backend: 'claude',
+        stderrText: 'No conversation found with session ID: abc123',
+      })
+    ).toBe(false);
   });
 });
 
