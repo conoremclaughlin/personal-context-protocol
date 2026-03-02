@@ -656,10 +656,18 @@ async function updateRuntimeGenerationState(
   }
 }
 
-function extractBackendSessionId(
+export function extractBackendSessionId(
   stdin: Record<string, unknown>,
   sessionBackend?: string
 ): string | undefined {
+  // Claude hook payload session_id values are not stable conversation IDs.
+  // They can rotate on each run and poison backendSessionId mapping.
+  // For Claude, backendSessionId should be captured by sb launch path from
+  // explicit "claude --resume <id>" output, not hook stdin fields.
+  if (sessionBackend === 'claude') {
+    return undefined;
+  }
+
   const candidates: unknown[] = [
     stdin.session_id,
     stdin.sessionId,

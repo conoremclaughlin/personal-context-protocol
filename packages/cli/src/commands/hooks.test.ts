@@ -9,7 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { installHooks, callPcpTool, buildIdentityBlock } from './hooks.js';
+import { installHooks, callPcpTool, buildIdentityBlock, extractBackendSessionId } from './hooks.js';
 
 const TEST_DIR = join(tmpdir(), 'pcp-hooks-test-' + Date.now());
 
@@ -23,6 +23,30 @@ afterEach(() => {
   } catch {
     // Ignore cleanup errors
   }
+});
+
+describe('extractBackendSessionId', () => {
+  it('ignores claude hook session ids to prevent mapping drift', () => {
+    expect(
+      extractBackendSessionId(
+        {
+          session_id: 'c294616e-30db-4707-9f5c-6970c1a57499',
+        },
+        'claude'
+      )
+    ).toBeUndefined();
+  });
+
+  it('keeps non-claude session ids from hook payloads', () => {
+    expect(
+      extractBackendSessionId(
+        {
+          session_id: '019c44fd-68f6-7332-9eda-2dc7c8afcedf',
+        },
+        'codex'
+      )
+    ).toBe('019c44fd-68f6-7332-9eda-2dc7c8afcedf');
+  });
 });
 
 // ============================================================================
