@@ -13,6 +13,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { getDataComposer, type DataComposer } from '../../data/composer';
+import { ensureEchoIntegrationFixture } from '../../test/integration-fixtures';
 
 describe('Session Phase Integration', () => {
   let dataComposer: DataComposer;
@@ -23,22 +24,8 @@ describe('Session Phase Integration', () => {
 
   beforeAll(async () => {
     dataComposer = await getDataComposer();
-
-    // Find a test user (use the user who owns the echo agent from migration 008)
-    const { data: echoIdentity, error } = await dataComposer
-      .getClient()
-      .from('agent_identities')
-      .select('user_id')
-      .eq('agent_id', 'echo')
-      .single();
-
-    if (error || !echoIdentity) {
-      throw new Error(
-        'Echo test agent identity not found. Apply migration 008_add_echo_test_agent.sql first.'
-      );
-    }
-
-    testUserId = echoIdentity.user_id;
+    const fixture = await ensureEchoIntegrationFixture(dataComposer);
+    testUserId = fixture.userId;
   });
 
   afterAll(async () => {

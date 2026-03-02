@@ -21,6 +21,7 @@ import {
   exchangeRefreshToken,
 } from './pcp-tokens';
 import { env } from '../config/env';
+import { ensureEchoIntegrationFixture } from '../test/integration-fixtures';
 
 describe('PCP Tokens Integration', () => {
   let dataComposer: DataComposer;
@@ -30,27 +31,14 @@ describe('PCP Tokens Integration', () => {
 
   beforeAll(async () => {
     dataComposer = await getDataComposer();
-    const supabase = dataComposer.getClient();
-
-    // Find a test user (use the echo agent's owner from seed data)
-    const { data: echoIdentity, error } = await supabase
-      .from('agent_identities')
-      .select('user_id, users(email)')
-      .eq('agent_id', 'echo')
-      .single();
-
-    if (error || !echoIdentity) {
-      throw new Error(
-        'Echo test agent identity not found. Apply migration 008_add_echo_test_agent.sql first.'
-      );
-    }
-
-    testUserId = echoIdentity.user_id;
-    testUserEmail =
-      (echoIdentity.users as unknown as { email: string | null })?.email || 'test@integration.com';
+    const fixture = await ensureEchoIntegrationFixture(dataComposer);
+    testUserId = fixture.userId;
+    testUserEmail = fixture.email;
   });
 
   afterAll(async () => {
+    if (!dataComposer) return;
+
     // Clean up all tokens created during tests
     if (createdTokenIds.length > 0) {
       const supabase = dataComposer.getClient();

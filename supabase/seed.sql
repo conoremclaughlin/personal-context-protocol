@@ -6,6 +6,33 @@ VALUES
   ('550e8400-e29b-41d4-a716-446655440000', 'test@example.com', 'testuser', 'Test', 'User', 123456789, '{"theme": "dark", "notifications": true}')
 ON CONFLICT (id) DO NOTHING;
 
+-- Insert canonical integration-test agent identity fixture
+INSERT INTO agent_identities (
+  user_id,
+  agent_id,
+  name,
+  role,
+  description,
+  "values",
+  relationships,
+  capabilities,
+  metadata,
+  backend
+)
+VALUES (
+  '550e8400-e29b-41d4-a716-446655440000',
+  'echo',
+  'Echo',
+  'Integration test fixture agent',
+  'Fixture identity used by integration tests',
+  '[]'::jsonb,
+  '{}'::jsonb,
+  '[]'::jsonb,
+  '{"fixture": true}'::jsonb,
+  'claude'
+)
+ON CONFLICT DO NOTHING;
+
 -- Insert sample links
 INSERT INTO links (user_id, url, title, description, tags, source)
 VALUES

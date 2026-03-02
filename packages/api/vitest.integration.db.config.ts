@@ -8,13 +8,11 @@ export default defineConfig({
     exclude: [
       'node_modules',
       'dist',
-      // Runtime/CLI E2E tests are split into vitest.integration.runtime.config.ts
+      // Runtime/CLI E2E tests run in vitest.integration.runtime.config.ts
       'src/services/sessions/codex-runner.integration.test.ts',
     ],
-    // Integration DB tests can involve network + retries against local containers
     testTimeout: 120000,
     hookTimeout: 30000,
-    // Load env vars + DB integration pre-flight checks
     setupFiles: ['./src/test/setup.ts', './src/test/integration-setup.ts'],
   },
 });

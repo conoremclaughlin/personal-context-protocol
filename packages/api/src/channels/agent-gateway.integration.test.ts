@@ -2,7 +2,7 @@
  * Agent Gateway Integration Tests
  *
  * Tests the stateless trigger handler with real database lookups.
- * Uses the echo test agent identity (seeded by migration 008).
+ * Uses the canonical `echo` integration fixture identity.
  *
  * These tests verify:
  * 1. Agent validation via agent_identities table lookup
@@ -15,6 +15,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { getDataComposer, type DataComposer } from '../data/composer';
 import { AgentGateway, type AgentTriggerPayload } from './agent-gateway';
+import { ensureEchoIntegrationFixture } from '../test/integration-fixtures';
 
 describe('AgentGateway Integration (database-driven)', () => {
   let dataComposer: DataComposer;
@@ -26,22 +27,8 @@ describe('AgentGateway Integration (database-driven)', () => {
     // Initialize real database connection
     dataComposer = await getDataComposer();
     gateway = new AgentGateway();
-
-    // Resolve test user (owner of echo agent identity)
-    const { data: echoIdentity, error } = await dataComposer
-      .getClient()
-      .from('agent_identities')
-      .select('user_id')
-      .eq('agent_id', 'echo')
-      .single();
-
-    if (error || !echoIdentity) {
-      throw new Error(
-        'Echo test agent identity not found. Apply migration 008_add_echo_test_agent.sql first.'
-      );
-    }
-
-    testUserId = echoIdentity.user_id;
+    const fixture = await ensureEchoIntegrationFixture(dataComposer);
+    testUserId = fixture.userId;
 
     // Create a test inbox message for userId derivation tests
     const { data: inboxMsg, error: inboxError } = await dataComposer

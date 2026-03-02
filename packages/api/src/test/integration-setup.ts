@@ -2,28 +2,12 @@
  * Integration Test Pre-flight Checks
  *
  * Runs before integration tests to verify:
- * - Claude CLI is installed and available
- * - Environment variables are loaded
+ * - required environment variables are present
+ * - by default, SUPABASE_URL points at localhost
  * - Not running against production
  */
 
-import { execSync } from 'child_process';
-import { config } from 'dotenv';
-import { resolve } from 'path';
-
-// Load .env.local from project root (4 levels up from src/test/)
-config({ path: resolve(__dirname, '../../../../.env.local') });
-
-// Verify Claude CLI is available
-try {
-  execSync('claude --version', { stdio: 'pipe' });
-} catch {
-  throw new Error(
-    'Integration tests require the Claude CLI to be installed.\n' +
-      'Install it from https://docs.anthropic.com/en/docs/claude-code\n' +
-      'Then run: yarn test:integration'
-  );
-}
+const LOCALHOST_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
 
 // Reject production environment
 if (process.env.NODE_ENV === 'production') {
@@ -35,6 +19,26 @@ const hasSupabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_S
 if (!process.env.SUPABASE_URL || !hasSupabaseKey) {
   throw new Error(
     'Integration tests require SUPABASE_URL and SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_KEY).\n' +
-      'Ensure .env.local is configured correctly.'
+      'Set these explicitly (recommended) or via scripts/test-integration-db-local.sh.'
   );
+}
+
+// Safety guard: default to local-only integration DB targets unless explicitly overridden.
+if (process.env.PCP_ALLOW_REMOTE_INTEGRATION_DB !== '1') {
+  let hostname: string;
+  try {
+    hostname = new URL(process.env.SUPABASE_URL).hostname;
+  } catch {
+    throw new Error(`SUPABASE_URL is not a valid URL: ${process.env.SUPABASE_URL}`);
+  }
+
+  if (!LOCALHOST_HOSTS.has(hostname)) {
+    throw new Error(
+      [
+        `Refusing to run integration tests against non-local SUPABASE_URL host: ${hostname}`,
+        'Use a local Supabase stack (scripts/test-integration-db-local.sh), or set',
+        'PCP_ALLOW_REMOTE_INTEGRATION_DB=1 if you intentionally want a remote target.',
+      ].join('\n')
+    );
+  }
 }
