@@ -27,8 +27,8 @@ load_env_file() {
   fi
 }
 
-load_env_file "${ROOT_DIR}/.env.local"
 load_env_file "${ROOT_DIR}/.env"
+load_env_file "${ROOT_DIR}/.env.local"
 # shellcheck disable=SC1090
 source "${PRESERVED_ENV_FILE}"
 
@@ -105,4 +105,3 @@ fi
 WEB_PID=$!
 
 wait "${API_PID}" "${WEB_PID}"
-
