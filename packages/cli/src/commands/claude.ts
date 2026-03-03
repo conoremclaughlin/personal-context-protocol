@@ -456,19 +456,38 @@ export function filterPcpSessionsForContext(
     return backendMatched;
   }
 
-  const pathScoped = backendMatched.filter((session) => {
+  const pathScoped: PcpSessionSummary[] = [];
+  const ambiguous: PcpSessionSummary[] = [];
+
+  for (const session of backendMatched) {
     const localMatchedId = session.backendSessionId || session.claudeSessionId;
-    if (localMatchedId && localBackendSessionIds.has(localMatchedId)) return true;
+    if (localMatchedId && localBackendSessionIds.has(localMatchedId)) {
+      pathScoped.push(session);
+      continue;
+    }
 
     const normalizedWorkingDir = normalizePath(session.workingDir);
-    return !!normalizedWorkingDir && normalizedWorkingDir === normalizedCwd;
-  });
+    if (normalizedWorkingDir && normalizedWorkingDir === normalizedCwd) {
+      pathScoped.push(session);
+      continue;
+    }
 
-  if (backend === 'claude') {
-    return pathScoped;
+    // Keep path-ambiguous non-Claude sessions visible in the picker so brand-new
+    // PCP sessions (before hooks/close persist workingDir/backendSessionId) are
+    // not accidentally hidden behind older mapped sessions.
+    if (backend !== 'claude' && !normalizedWorkingDir && !localMatchedId) {
+      ambiguous.push(session);
+    }
   }
 
-  return pathScoped.length > 0 ? pathScoped : backendMatched;
+  if (backend === 'claude') return pathScoped;
+  if (pathScoped.length === 0) return backendMatched;
+
+  const deduped = new Map<string, PcpSessionSummary>();
+  for (const session of [...pathScoped, ...ambiguous]) {
+    deduped.set(session.id, session);
+  }
+  return Array.from(deduped.values());
 }
 
 export function resolveBackendSessionIdForResume(options: {
@@ -1439,10 +1458,33 @@ async function ensurePcpSessionContext(
   const knownBackendSessionIds =
     backend === 'claude' ? getKnownClaudeSessionIds() : localBackendSessionIds;
   const sessionChoiceByValue = new Map<string, string>();
+  const explicitSelection = Boolean(options.selectionOverride || options.listCandidates);
+  const existing = getCurrentRuntimeSession(cwd, backend);
+  sbDebugLog('claude', 'ensure_context_start', {
+    backend,
+    agentId,
+    isTty: process.stdin.isTTY,
+    explicitSelection,
+    selectionOverride: options.selectionOverride || null,
+    localCount: localBackendSessions.length,
+    knownCount: knownBackendSessionIds.size,
+    existingPcpSessionId: existing?.pcpSessionId || null,
+    existingBackendSessionId: existing?.backendSessionId || null,
+  });
 
   // Fast path: runtime already knows current session for this backend.
-  const existing = getCurrentRuntimeSession(cwd, backend);
-  if (existing?.pcpSessionId && shouldAutoResumeRuntimeSession(existing, process.stdin.isTTY)) {
+  if (
+    !explicitSelection &&
+    existing?.pcpSessionId &&
+    shouldAutoResumeRuntimeSession(existing, process.stdin.isTTY)
+  ) {
+    sbDebugLog('claude', 'ensure_context_fast_path_resume', {
+      backend,
+      agentId,
+      pcpSessionId: existing.pcpSessionId,
+      backendSessionId: existing.backendSessionId || null,
+      isTty: process.stdin.isTTY,
+    });
     return {
       pcpSessionId: existing.pcpSessionId,
       backendSessionId: existing.backendSessionId,
@@ -1471,6 +1513,19 @@ async function ensurePcpSessionContext(
         cwd,
         localBackendSessionIds
       );
+      sbDebugLog('claude', 'active_sessions_loaded', {
+        backend,
+        agentId,
+        listedCount: (listed.sessions || []).length,
+        filteredCount: activeSessions.length,
+        filtered: activeSessions.map((session) => ({
+          id: session.id,
+          backend: session.backend || null,
+          backendSessionId: session.backendSessionId || session.claudeSessionId || null,
+          workingDir: session.workingDir || null,
+          phase: session.currentPhase || null,
+        })),
+      });
     } catch (err) {
       pcpAvailable = false;
       pcpUnavailableReason = err instanceof Error ? err.message : 'request failed';
@@ -1726,15 +1781,27 @@ async function ensurePcpSessionContext(
       localBackendSessionIds,
       knownBackendSessionIds,
     });
+  const preserveTrackedBackendSessionId = !createdNewPcpSession || backend === 'claude';
+  const resolvedTrackedBackendSessionId = preserveTrackedBackendSessionId
+    ? backendSessionId
+    : undefined;
+  if (createdNewPcpSession && backend !== 'claude' && backendSessionId) {
+    sbDebugLog('claude', 'new_session_ignoring_prelinked_backend_session', {
+      backend,
+      agentId,
+      pcpSessionId: chosen.id,
+      ignoredBackendSessionId: backendSessionId,
+    });
+  }
   const adoptedLocalBackendSessionId = resolveAdoptableLocalBackendSessionId({
     backend,
-    backendSessionId,
+    backendSessionId: resolvedTrackedBackendSessionId,
     selectedLocalBackendSessionId,
     createdNewPcpSession,
     chosen,
     localSessions: untrackedLocalBackendSessions,
   });
-  const effectiveBackendSessionId = backendSessionId || adoptedLocalBackendSessionId;
+  const effectiveBackendSessionId = resolvedTrackedBackendSessionId || adoptedLocalBackendSessionId;
   const backendSessionSeedId = resolveBackendSessionSeedId({
     backend,
     chosenSessionId: chosen.id,
@@ -1796,6 +1863,17 @@ async function ensurePcpSessionContext(
       // Best-effort only.
     }
   }
+
+  sbDebugLog('claude', 'ensure_context_result', {
+    backend,
+    agentId,
+    pcpSessionId: chosen.id,
+    backendSessionId: effectiveBackendSessionId || null,
+    backendSessionSeedId: backendSessionSeedId || null,
+    createdNewPcpSession,
+    selectedLocalBackendSessionId: selectedLocalBackendSessionId || null,
+    threadKey: chosen.threadKey || null,
+  });
 
   return {
     pcpSessionId: chosen.id,

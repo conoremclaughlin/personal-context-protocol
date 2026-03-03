@@ -3,6 +3,25 @@ import { sbDebugLog } from './sb-debug.js';
 
 let jsonRpcId = 1;
 
+function pickDebugArgValues(args: Record<string, unknown>): Record<string, unknown> {
+  const keys = [
+    'sessionId',
+    'backendSessionId',
+    'agentId',
+    'backend',
+    'studioId',
+    'workspaceId',
+    'threadKey',
+    'forceNew',
+  ] as const;
+
+  const picked: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (args[key] !== undefined) picked[key] = args[key];
+  }
+  return picked;
+}
+
 export function getPcpServerUrl(): string {
   return process.env.PCP_SERVER_URL || 'http://localhost:3001';
 }
@@ -33,6 +52,7 @@ export async function callPcpTool<T = Record<string, unknown>>(
     serverUrl,
     timeoutMs: options?.timeoutMs || null,
     argKeys: Object.keys(args || {}),
+    argValues: pickDebugArgValues(args || {}),
   });
 
   let response: Response;
