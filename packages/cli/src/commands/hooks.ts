@@ -444,12 +444,28 @@ async function reconcileBackendSignal(
   config: PcpConfig | null,
   agentId: string,
   stdin: Record<string, unknown>,
-  options?: { initialPcpSessionId?: string; initialThreadKey?: string; startedAt?: string }
+  options?: {
+    initialPcpSessionId?: string;
+    initialThreadKey?: string;
+    startedAt?: string;
+    hookBackend?: string;
+  }
 ): Promise<{ pcpSessionId?: string; threadKey?: string; backendSessionId?: string }> {
-  const detectedBackend = detectBackend(cwd);
+  const detectedBackend = options?.hookBackend
+    ? getBackendByName(options.hookBackend)
+    : detectBackend(cwd);
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
   const backendSessionId = extractBackendSessionId(stdin, sessionBackend);
   const runtimeLinkId = getRuntimeLinkId();
+  sbDebugLog('hooks', 'reconcile_start', {
+    sessionBackend,
+    agentId,
+    initialPcpSessionId: options?.initialPcpSessionId || null,
+    initialThreadKey: options?.initialThreadKey || null,
+    extractedBackendSessionId: backendSessionId || null,
+    runtimeLinkId: runtimeLinkId || null,
+    stdinKeys: Object.keys(stdin),
+  });
   if (runtimeLinkId) {
     writeRuntimeFile(cwd, 'runtime-link-id', runtimeLinkId);
   }
@@ -467,6 +483,12 @@ async function reconcileBackendSignal(
     if (linked?.pcpSessionId) {
       pcpSessionId = linked.pcpSessionId;
       if (linked.threadKey) threadKey = linked.threadKey;
+      sbDebugLog('hooks', 'reconcile_match_runtime_link', {
+        sessionBackend,
+        runtimeLinkId,
+        matchedPcpSessionId: linked.pcpSessionId,
+        matchedThreadKey: linked.threadKey || null,
+      });
     }
   }
 
@@ -481,6 +503,12 @@ async function reconcileBackendSignal(
     if (linkedByBackendSessionId?.pcpSessionId) {
       pcpSessionId = linkedByBackendSessionId.pcpSessionId;
       if (linkedByBackendSessionId.threadKey) threadKey = linkedByBackendSessionId.threadKey;
+      sbDebugLog('hooks', 'reconcile_match_local_backend_link', {
+        sessionBackend,
+        backendSessionId,
+        matchedPcpSessionId: linkedByBackendSessionId.pcpSessionId,
+        matchedThreadKey: linkedByBackendSessionId.threadKey || null,
+      });
     }
   }
 
@@ -512,6 +540,12 @@ async function reconcileBackendSignal(
     if (matched.pcpSessionId) {
       pcpSessionId = matched.pcpSessionId;
       threadKey = matched.threadKey || threadKey;
+      sbDebugLog('hooks', 'reconcile_match_server_backend_link', {
+        sessionBackend,
+        backendSessionId,
+        matchedPcpSessionId: matched.pcpSessionId,
+        matchedThreadKey: matched.threadKey || null,
+      });
     }
   }
 
@@ -520,6 +554,14 @@ async function reconcileBackendSignal(
   }
 
   if (!pcpSessionId) {
+    sbDebugLog('hooks', 'reconcile_result', {
+      sessionBackend,
+      pcpSessionId: null,
+      threadKey: threadKey || null,
+      backendSessionId: backendSessionId || null,
+      studioId: studioId || null,
+      identityId: identityId || null,
+    });
     return {
       ...(backendSessionId ? { backendSessionId } : {}),
       ...(threadKey ? { threadKey } : {}),
@@ -543,6 +585,14 @@ async function reconcileBackendSignal(
     agentId,
     ...(identityId ? { identityId } : {}),
     ...(studioId ? { studioId } : {}),
+  });
+  sbDebugLog('hooks', 'reconcile_result', {
+    sessionBackend,
+    pcpSessionId,
+    threadKey: threadKey || null,
+    backendSessionId: backendSessionId || null,
+    studioId: studioId || null,
+    identityId: identityId || null,
   });
 
   return {
@@ -773,6 +823,37 @@ const CODEX_HOOKS_END_MARKER = '# pcp-managed:hooks:end';
 // Back-compat with earlier Codex hook marker format.
 const CODEX_LEGACY_HOOKS_START_MARKER = '# pcp-managed';
 const CODEX_LEGACY_HOOKS_END_MARKER = '# end pcp-managed';
+const PCP_HOOK_SIGNATURES = [
+  'hooks on-session-start',
+  'hooks on-stop',
+  'hooks on-prompt',
+  'hooks pre-compact',
+  'hooks post-compact',
+];
+
+function shellQuote(value: string): string {
+  if (/^[A-Za-z0-9_./:@%+=,-]+$/.test(value)) return value;
+  return `'${value.replace(/'/g, `'\"'\"'`)}'`;
+}
+
+function looksLikeSbEntrypoint(path: string): boolean {
+  const normalized = path.replace(/\\/g, '/');
+  const baseName = normalized.split('/').pop() || '';
+  return (
+    normalized.endsWith('/packages/cli/dist/cli.js') ||
+    normalized.endsWith('/packages/cli/src/cli.ts') ||
+    normalized.endsWith('/node_modules/.bin/sb') ||
+    normalized.endsWith('/sb') ||
+    /^sb(?:[-_.][a-z0-9_-]+)?$/i.test(baseName)
+  );
+}
+
+function buildSbCommandPrefix(path: string): string {
+  if (/\.(mjs|cjs|js|ts)$/i.test(path)) {
+    return `${shellQuote(process.execPath)} ${shellQuote(path)}`;
+  }
+  return shellQuote(path);
+}
 
 /**
  * Resolve absolute path to the `sb` CLI binary from the main worktree's
@@ -780,10 +861,15 @@ const CODEX_LEGACY_HOOKS_END_MARKER = '# end pcp-managed';
  * environments where ~/.local/bin may not be in PATH.
  */
 function resolveSbBinaryPath(cwd: string): string {
+  const invokedPath = process.argv[1];
+  if (invokedPath && existsSync(invokedPath) && looksLikeSbEntrypoint(invokedPath)) {
+    return buildSbCommandPrefix(invokedPath);
+  }
+
   const worktrees = listWorktreePaths(cwd);
   const mainWorktree = worktrees[0] || cwd;
   const binPath = join(mainWorktree, 'node_modules', '.bin', 'sb');
-  if (existsSync(binPath)) return binPath;
+  if (existsSync(binPath)) return buildSbCommandPrefix(binPath);
   // Fallback: bare `sb` (relies on PATH)
   return 'sb';
 }
@@ -791,8 +877,9 @@ function resolveSbBinaryPath(cwd: string): string {
 /** Check if a hook command is PCP-managed (handles both bare `sb` and absolute paths) */
 function isPcpHookCommand(cmd: string | undefined): boolean {
   if (!cmd) return false;
-  // Match bare `sb hooks ...` or `/abs/path/to/sb hooks ...`
-  return /\bsb hooks /.test(cmd);
+  return (
+    /\bsb hooks\b/.test(cmd) || PCP_HOOK_SIGNATURES.some((signature) => cmd.includes(signature))
+  );
 }
 
 type InstallResult = 'installed' | 'already-installed' | 'conflict';
@@ -800,10 +887,18 @@ type InstallResult = 'installed' | 'already-installed' | 'conflict';
 function hasCodexPcpHooks(content: string): boolean {
   if (!content.trim()) return false;
   return (
-    /session_start\s*=\s*".*sb hooks on-session-start"/.test(content) &&
-    /session_end\s*=\s*".*sb hooks on-stop"/.test(content) &&
-    /user_prompt\s*=\s*".*sb hooks on-prompt"/.test(content)
+    /session_start\s*=\s*".*hooks on-session-start[^"]*"/.test(content) &&
+    /session_end\s*=\s*".*hooks on-stop[^"]*"/.test(content) &&
+    /user_prompt\s*=\s*".*hooks on-prompt[^"]*"/.test(content)
   );
+}
+
+function buildManagedHookCommand(sbPath: string, hookName: string, backendName: string): string {
+  return `${sbPath} hooks ${hookName} --backend ${backendName}`;
+}
+
+function formatHookHint(backendName: string, hookName: string): string {
+  return `sb hooks ${hookName} --backend ${backendName}`;
 }
 
 function buildClaudeCodeHooks(sbPath: string): Record<string, unknown> {
@@ -811,27 +906,52 @@ function buildClaudeCodeHooks(sbPath: string): Record<string, unknown> {
     hooks: {
       PreCompact: [
         {
-          hooks: [{ type: 'command', command: `${sbPath} hooks pre-compact` }],
+          hooks: [
+            {
+              type: 'command',
+              command: buildManagedHookCommand(sbPath, 'pre-compact', CLAUDE_CODE.name),
+            },
+          ],
         },
       ],
       SessionStart: [
         {
           matcher: 'compact',
-          hooks: [{ type: 'command', command: `${sbPath} hooks post-compact` }],
+          hooks: [
+            {
+              type: 'command',
+              command: buildManagedHookCommand(sbPath, 'post-compact', CLAUDE_CODE.name),
+            },
+          ],
         },
         {
           matcher: 'startup',
-          hooks: [{ type: 'command', command: `${sbPath} hooks on-session-start` }],
+          hooks: [
+            {
+              type: 'command',
+              command: buildManagedHookCommand(sbPath, 'on-session-start', CLAUDE_CODE.name),
+            },
+          ],
         },
       ],
       UserPromptSubmit: [
         {
-          hooks: [{ type: 'command', command: `${sbPath} hooks on-prompt` }],
+          hooks: [
+            {
+              type: 'command',
+              command: buildManagedHookCommand(sbPath, 'on-prompt', CLAUDE_CODE.name),
+            },
+          ],
         },
       ],
       Stop: [
         {
-          hooks: [{ type: 'command', command: `${sbPath} hooks on-stop` }],
+          hooks: [
+            {
+              type: 'command',
+              command: buildManagedHookCommand(sbPath, 'on-stop', CLAUDE_CODE.name),
+            },
+          ],
         },
       ],
     },
@@ -910,14 +1030,44 @@ function installGemini(cwd: string, force: boolean): InstallResult {
   const sbPath = resolveSbBinaryPath(cwd);
   const pcpHooks: Record<string, unknown> = {
     [GEMINI.events.sessionStart!]: [
-      { hooks: [{ type: 'command', command: `${sbPath} hooks on-session-start` }] },
+      {
+        hooks: [
+          {
+            type: 'command',
+            command: buildManagedHookCommand(sbPath, 'on-session-start', GEMINI.name),
+          },
+        ],
+      },
     ],
     [GEMINI.events.onPrompt!]: [
-      { hooks: [{ type: 'command', command: `${sbPath} hooks on-prompt` }] },
+      {
+        hooks: [
+          {
+            type: 'command',
+            command: buildManagedHookCommand(sbPath, 'on-prompt', GEMINI.name),
+          },
+        ],
+      },
     ],
-    [GEMINI.events.onStop!]: [{ hooks: [{ type: 'command', command: `${sbPath} hooks on-stop` }] }],
+    [GEMINI.events.onStop!]: [
+      {
+        hooks: [
+          {
+            type: 'command',
+            command: buildManagedHookCommand(sbPath, 'on-stop', GEMINI.name),
+          },
+        ],
+      },
+    ],
     [GEMINI.events.preCompact!]: [
-      { hooks: [{ type: 'command', command: `${sbPath} hooks pre-compact` }] },
+      {
+        hooks: [
+          {
+            type: 'command',
+            command: buildManagedHookCommand(sbPath, 'pre-compact', GEMINI.name),
+          },
+        ],
+      },
     ],
   };
 
@@ -1014,9 +1164,9 @@ function installCodex(cwd: string, force: boolean): InstallResult {
     '',
     CODEX_HOOKS_START_MARKER,
     '[hooks]',
-    `session_start = "${sbPath} hooks on-session-start"`,
-    `session_end = "${sbPath} hooks on-stop"`,
-    `user_prompt = "${sbPath} hooks on-prompt"`,
+    `session_start = "${buildManagedHookCommand(sbPath, 'on-session-start', CODEX.name)}"`,
+    `session_end = "${buildManagedHookCommand(sbPath, 'on-stop', CODEX.name)}"`,
+    `user_prompt = "${buildManagedHookCommand(sbPath, 'on-prompt', CODEX.name)}"`,
     CODEX_HOOKS_END_MARKER,
     '',
   ].join('\n');
@@ -1088,13 +1238,27 @@ function printInstallResult(
   console.log(chalk.green(`  ✓ ${targetDir} — installed (${backend.name})`));
   const events = backend.events;
   if (events.preCompact)
-    console.log(chalk.dim(`      ${events.preCompact} → sb hooks pre-compact`));
+    console.log(
+      chalk.dim(`      ${events.preCompact} → ${formatHookHint(backend.name, 'pre-compact')}`)
+    );
   if (events.postCompact)
-    console.log(chalk.dim(`      ${events.postCompact} (compact) → sb hooks post-compact`));
+    console.log(
+      chalk.dim(
+        `      ${events.postCompact} (compact) → ${formatHookHint(backend.name, 'post-compact')}`
+      )
+    );
   if (events.sessionStart)
-    console.log(chalk.dim(`      ${events.sessionStart} (startup) → sb hooks on-session-start`));
-  if (events.onPrompt) console.log(chalk.dim(`      ${events.onPrompt} → sb hooks on-prompt`));
-  if (events.onStop) console.log(chalk.dim(`      ${events.onStop} → sb hooks on-stop`));
+    console.log(
+      chalk.dim(
+        `      ${events.sessionStart} (startup) → ${formatHookHint(backend.name, 'on-session-start')}`
+      )
+    );
+  if (events.onPrompt)
+    console.log(
+      chalk.dim(`      ${events.onPrompt} → ${formatHookHint(backend.name, 'on-prompt')}`)
+    );
+  if (events.onStop)
+    console.log(chalk.dim(`      ${events.onStop} → ${formatHookHint(backend.name, 'on-stop')}`));
 }
 
 async function installCommand(options: {
@@ -1164,13 +1328,26 @@ async function installCommand(options: {
 
     console.log(chalk.green(`\nPCP hooks installed (${backend.name}):`));
     const events = backend.events;
-    if (events.preCompact) console.log(chalk.dim(`  ${events.preCompact} → sb hooks pre-compact`));
+    if (events.preCompact)
+      console.log(
+        chalk.dim(`  ${events.preCompact} → ${formatHookHint(backend.name, 'pre-compact')}`)
+      );
     if (events.postCompact)
-      console.log(chalk.dim(`  ${events.postCompact} (compact) → sb hooks post-compact`));
+      console.log(
+        chalk.dim(
+          `  ${events.postCompact} (compact) → ${formatHookHint(backend.name, 'post-compact')}`
+        )
+      );
     if (events.sessionStart)
-      console.log(chalk.dim(`  ${events.sessionStart} (startup) → sb hooks on-session-start`));
-    if (events.onPrompt) console.log(chalk.dim(`  ${events.onPrompt} → sb hooks on-prompt`));
-    if (events.onStop) console.log(chalk.dim(`  ${events.onStop} → sb hooks on-stop`));
+      console.log(
+        chalk.dim(
+          `  ${events.sessionStart} (startup) → ${formatHookHint(backend.name, 'on-session-start')}`
+        )
+      );
+    if (events.onPrompt)
+      console.log(chalk.dim(`  ${events.onPrompt} → ${formatHookHint(backend.name, 'on-prompt')}`));
+    if (events.onStop)
+      console.log(chalk.dim(`  ${events.onStop} → ${formatHookHint(backend.name, 'on-stop')}`));
     console.log(chalk.dim(`Config: ${backend.configPath}`));
   }
 
@@ -1302,12 +1479,12 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
         if (hasCodexPcpHooks(content)) {
           hasHooks = true;
           console.log(chalk.green('\n  PCP hooks installed (TOML)'));
-          if (content.includes('session_start'))
-            console.log(chalk.dim('    ● session_start → sb hooks on-session-start'));
-          if (content.includes('session_end'))
-            console.log(chalk.dim('    ● session_end → sb hooks on-stop'));
-          if (content.includes('user_prompt'))
-            console.log(chalk.dim('    ● user_prompt → sb hooks on-prompt'));
+          const sessionStart = content.match(/session_start\s*=\s*"([^"]+)"/)?.[1];
+          const sessionEnd = content.match(/session_end\s*=\s*"([^"]+)"/)?.[1];
+          const userPrompt = content.match(/user_prompt\s*=\s*"([^"]+)"/)?.[1];
+          if (sessionStart) console.log(chalk.dim(`    ● session_start → ${sessionStart}`));
+          if (sessionEnd) console.log(chalk.dim(`    ● session_end → ${sessionEnd}`));
+          if (userPrompt) console.log(chalk.dim(`    ● user_prompt → ${userPrompt}`));
         }
         break;
       }
@@ -1405,8 +1582,19 @@ async function postCompactHandler(): Promise<void> {
   process.stdout.write(output);
 }
 
-async function onSessionStartHandler(): Promise<void> {
+function resolveLifecycleBackend(cwd: string, backendOverride?: string): HookCapabilities {
+  if (backendOverride?.trim()) return getBackendByName(backendOverride.trim());
+  if (process.env.PCP_HOOK_BACKEND?.trim())
+    return getBackendByName(process.env.PCP_HOOK_BACKEND.trim());
+  return detectBackend(cwd);
+}
+
+async function onSessionStartHandler(options?: { backend?: string }): Promise<void> {
   const stdin = await readStdin();
+  sbDebugLog('hooks', 'on_session_start_begin', {
+    stdinKeys: Object.keys(stdin),
+    hookBackendOverride: options?.backend || process.env.PCP_HOOK_BACKEND || null,
+  });
 
   const cwd = process.cwd();
   const config = getPcpConfig();
@@ -1513,7 +1701,7 @@ async function onSessionStartHandler(): Promise<void> {
   }
 
   // Register PCP session with detected backend
-  const detectedBackend = detectBackend(cwd);
+  const detectedBackend = resolveLifecycleBackend(cwd, options?.backend);
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
   let pcpSessionId: string | undefined;
   let pcpThreadKey: string | undefined;
@@ -1550,6 +1738,12 @@ async function onSessionStartHandler(): Promise<void> {
     initialPcpSessionId: pcpSessionId,
     initialThreadKey: pcpThreadKey,
     startedAt,
+    hookBackend: detectedBackend.name,
+  });
+  sbDebugLog('hooks', 'on_session_start_reconciled', {
+    pcpSessionId: reconciled.pcpSessionId || pcpSessionId || null,
+    threadKey: reconciled.threadKey || pcpThreadKey || null,
+    backendSessionId: reconciled.backendSessionId || null,
   });
   pcpSessionId = reconciled.pcpSessionId || pcpSessionId;
   pcpThreadKey = reconciled.threadKey || pcpThreadKey;
@@ -1589,13 +1783,25 @@ async function onSessionStartHandler(): Promise<void> {
   process.stdout.write(output);
 }
 
-async function onPromptHandler(): Promise<void> {
+async function onPromptHandler(options?: { backend?: string }): Promise<void> {
   const stdin = await readStdin();
-
   const cwd = process.cwd();
+  const lifecycleBackend = resolveLifecycleBackend(cwd, options?.backend);
+  sbDebugLog('hooks', 'on_prompt_begin', {
+    stdinKeys: Object.keys(stdin),
+    hookBackend: lifecycleBackend.name,
+  });
+
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
-  await reconcileBackendSignal(cwd, config, agentId, stdin);
+  const reconciled = await reconcileBackendSignal(cwd, config, agentId, stdin, {
+    hookBackend: lifecycleBackend.name,
+  });
+  sbDebugLog('hooks', 'on_prompt_reconciled', {
+    pcpSessionId: reconciled.pcpSessionId || null,
+    threadKey: reconciled.threadKey || null,
+    backendSessionId: reconciled.backendSessionId || null,
+  });
 
   // Mark session as actively generating at prompt start.
   await updateRuntimeGenerationState(cwd, config, agentId, 'runtime:generating');
@@ -1632,14 +1838,26 @@ async function onPromptHandler(): Promise<void> {
   }
 }
 
-async function onStopHandler(): Promise<void> {
+async function onStopHandler(options?: { backend?: string }): Promise<void> {
   const stdin = await readStdin();
-
   const cwd = process.cwd();
+  const lifecycleBackend = resolveLifecycleBackend(cwd, options?.backend);
+  sbDebugLog('hooks', 'on_stop_begin', {
+    stdinKeys: Object.keys(stdin),
+    hookBackend: lifecycleBackend.name,
+  });
+
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
   const parts: string[] = [];
-  await reconcileBackendSignal(cwd, config, agentId, stdin);
+  const reconciled = await reconcileBackendSignal(cwd, config, agentId, stdin, {
+    hookBackend: lifecycleBackend.name,
+  });
+  sbDebugLog('hooks', 'on_stop_reconciled', {
+    pcpSessionId: reconciled.pcpSessionId || null,
+    threadKey: reconciled.threadKey || null,
+    backendSessionId: reconciled.backendSessionId || null,
+  });
 
   // Mark session as idle after each completed backend turn.
   await updateRuntimeGenerationState(cwd, config, agentId, 'runtime:idle');
@@ -1730,15 +1948,18 @@ export function registerHooksCommands(program: Command): void {
   hooks
     .command('on-session-start')
     .description('Hook: bootstrap identity and context at session start')
-    .action(onSessionStartHandler);
+    .option('--backend <name>', 'Backend context for this hook invocation')
+    .action((opts) => onSessionStartHandler(opts));
 
   hooks
     .command('on-prompt')
     .description('Hook: periodic inbox check on user prompt')
-    .action(onPromptHandler);
+    .option('--backend <name>', 'Backend context for this hook invocation')
+    .action((opts) => onPromptHandler(opts));
 
   hooks
     .command('on-stop')
     .description('Hook: session nudge and inbox check on stop')
-    .action(onStopHandler);
+    .option('--backend <name>', 'Backend context for this hook invocation')
+    .action((opts) => onStopHandler(opts));
 }

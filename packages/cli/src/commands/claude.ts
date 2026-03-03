@@ -975,8 +975,19 @@ function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
 }
 
 function hasPcpHookCommand(value: unknown): boolean {
+  const signatures = [
+    'hooks on-session-start',
+    'hooks on-stop',
+    'hooks on-prompt',
+    'hooks pre-compact',
+    'hooks post-compact',
+  ];
   if (typeof value === 'string') {
-    return value.includes('sb hooks ') || value.includes('commands/hooks.js');
+    return (
+      value.includes('sb hooks ') ||
+      signatures.some((signature) => value.includes(signature)) ||
+      value.includes('commands/hooks.js')
+    );
   }
   if (Array.isArray(value)) {
     return value.some((entry) => hasPcpHookCommand(entry));
@@ -996,9 +1007,9 @@ function getHookHealthForBackend(
     if (!existsSync(configPath)) return { installed: false, configPath: '.codex/config.toml' };
     const content = readFileSync(configPath, 'utf-8');
     const installed =
-      /session_start\s*=\s*".*sb hooks on-session-start"/.test(content) &&
-      /session_end\s*=\s*".*sb hooks on-stop"/.test(content) &&
-      /user_prompt\s*=\s*".*sb hooks on-prompt"/.test(content);
+      /session_start\s*=\s*".*hooks on-session-start[^"]*"/.test(content) &&
+      /session_end\s*=\s*".*hooks on-stop[^"]*"/.test(content) &&
+      /user_prompt\s*=\s*".*hooks on-prompt[^"]*"/.test(content);
     return { installed, configPath: '.codex/config.toml' };
   }
 
