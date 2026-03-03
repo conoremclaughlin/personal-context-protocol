@@ -182,10 +182,15 @@ See [AGENTS.md](./AGENTS.md) for onboarding instructions.
 yarn dev                   # Start all services (pm2)
 yarn build                 # Build all packages
 yarn type-check            # Type check all packages
+yarn test                  # Unit tests (all workspaces)
+yarn test:integration:db:local  # DB integration suite against isolated local Supabase
+yarn test:integration:runtime    # Runtime/CLI integration suite
 yarn logs:pcp              # View PCP server logs
 yarn pm2 list              # List running processes
 yarn pm2 restart pcp       # Restart PCP server
 ```
+
+`yarn test:integration:db:local` spins up an **isolated, temporary local Supabase stack** with dedicated ports, applies migrations + seed, runs integration tests, then tears it down. This avoids accidental use of remote `.env.local` credentials and keeps integration runs sandboxed from any online dev server.
 
 ## Contributing
 

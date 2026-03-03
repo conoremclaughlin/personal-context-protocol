@@ -13,6 +13,7 @@ import { SessionRepository } from './session-repository.js';
 import { ContextBuilder } from './context-builder.js';
 import type { IActivityStream } from './session-service.js';
 import type { IClaudeRunner } from './types.js';
+import { ensureEchoIntegrationFixture } from '../../test/integration-fixtures.js';
 
 describe('SessionService Codex backend integration', () => {
   let dataComposer: DataComposer | null = null;
@@ -48,22 +49,8 @@ describe('SessionService Codex backend integration', () => {
 
   beforeAll(async () => {
     dataComposer = await getDataComposer();
-
-    // Resolve known test user via existing echo identity (seeded by migration 008)
-    const { data: echoIdentity, error } = await dataComposer
-      .getClient()
-      .from('agent_identities')
-      .select('user_id')
-      .eq('agent_id', 'echo')
-      .single();
-
-    if (error || !echoIdentity) {
-      throw new Error(
-        'Echo test agent identity not found. Apply migration 008_add_echo_test_agent.sql first.'
-      );
-    }
-
-    testUserId = echoIdentity.user_id;
+    const fixture = await ensureEchoIntegrationFixture(dataComposer);
+    testUserId = fixture.userId;
 
     // Ensure echo_codex identity exists and is configured for codex backend
     const { data: existing } = await dataComposer

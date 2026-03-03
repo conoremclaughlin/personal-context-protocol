@@ -32,3 +32,48 @@ jobs:
       - run: yarn build
 
       - run: yarn test
+
+  integration-db-local:
+    name: Integration DB Tests (Local Supabase)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      # Rewrite git+ssh:// to git+https:// so transitive deps
+      # (e.g. libsignal via @whiskeysockets/baileys) clone without SSH keys
+      - run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - run: yarn install --immutable
+
+      - name: Run DB integration suite with isolated local Supabase
+        run: yarn test:integration:db:local
+
+  integration-runtime:
+    name: Integration Runtime Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: yarn
+
+      # Rewrite git+ssh:// to git+https:// so transitive deps
+      # (e.g. libsignal via @whiskeysockets/baileys) clone without SSH keys
+      - run: git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
+      - run: yarn install --immutable
+
+      - run: yarn test:integration:runtime
