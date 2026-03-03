@@ -65,25 +65,25 @@ describe('installHooks: Claude Code', () => {
     // or bare `sb hooks ...` depending on whether node_modules/.bin/sb exists
 
     // PreCompact
-    expect(config.hooks.PreCompact[0].hooks[0].command).toContain('sb hooks pre-compact');
+    expect(config.hooks.PreCompact[0].hooks[0].command).toContain('hooks pre-compact');
 
     // SessionStart — compact matcher
     const compactEntry = config.hooks.SessionStart.find(
       (e: Record<string, unknown>) => e.matcher === 'compact'
     );
-    expect(compactEntry.hooks[0].command).toContain('sb hooks post-compact');
+    expect(compactEntry.hooks[0].command).toContain('hooks post-compact');
 
     // SessionStart — startup matcher
     const startupEntry = config.hooks.SessionStart.find(
       (e: Record<string, unknown>) => e.matcher === 'startup'
     );
-    expect(startupEntry.hooks[0].command).toContain('sb hooks on-session-start');
+    expect(startupEntry.hooks[0].command).toContain('hooks on-session-start');
 
     // UserPromptSubmit
-    expect(config.hooks.UserPromptSubmit[0].hooks[0].command).toContain('sb hooks on-prompt');
+    expect(config.hooks.UserPromptSubmit[0].hooks[0].command).toContain('hooks on-prompt');
 
     // Stop
-    expect(config.hooks.Stop[0].hooks[0].command).toContain('sb hooks on-stop');
+    expect(config.hooks.Stop[0].hooks[0].command).toContain('hooks on-stop');
   });
 
   it('should preserve existing non-hooks settings', () => {
@@ -152,7 +152,7 @@ describe('installHooks: Claude Code', () => {
 
     const config = JSON.parse(readFileSync(join(configDir, 'settings.local.json'), 'utf-8'));
     // Should now have PCP hooks, not the custom one
-    expect(config.hooks.Stop[0].hooks[0].command).toContain('sb hooks on-stop');
+    expect(config.hooks.Stop[0].hooks[0].command).toContain('hooks on-stop');
   });
 
   it('should allow re-install over existing PCP hooks without force', () => {
@@ -194,10 +194,10 @@ describe('installHooks: Gemini', () => {
     expect(existsSync(configPath)).toBe(true);
 
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    expect(config.hooks.SessionStart[0].hooks[0].command).toContain('sb hooks on-session-start');
-    expect(config.hooks.BeforeAgent[0].hooks[0].command).toContain('sb hooks on-prompt');
-    expect(config.hooks.AfterAgent[0].hooks[0].command).toContain('sb hooks on-stop');
-    expect(config.hooks.PreCompress[0].hooks[0].command).toContain('sb hooks pre-compact');
+    expect(config.hooks.SessionStart[0].hooks[0].command).toContain('hooks on-session-start');
+    expect(config.hooks.BeforeAgent[0].hooks[0].command).toContain('hooks on-prompt');
+    expect(config.hooks.AfterAgent[0].hooks[0].command).toContain('hooks on-stop');
+    expect(config.hooks.PreCompress[0].hooks[0].command).toContain('hooks pre-compact');
   });
 
   it('should preserve existing Gemini settings', () => {
@@ -256,9 +256,9 @@ describe('installHooks: Codex', () => {
     const content = readFileSync(configPath, 'utf-8');
     expect(content).toContain('# pcp-managed:hooks:start');
     expect(content).toContain('[hooks]');
-    expect(content).toMatch(/session_start = ".*sb hooks on-session-start"/);
-    expect(content).toMatch(/session_end = ".*sb hooks on-stop"/);
-    expect(content).toMatch(/user_prompt = ".*sb hooks on-prompt"/);
+    expect(content).toMatch(/session_start = ".*hooks on-session-start[^"]*"/);
+    expect(content).toMatch(/session_end = ".*hooks on-stop[^"]*"/);
+    expect(content).toMatch(/user_prompt = ".*hooks on-prompt[^"]*"/);
     expect(content).toContain('# pcp-managed:hooks:end');
   });
 
@@ -327,7 +327,7 @@ describe('installHooks: Codex', () => {
     const endMarkers = content.match(/# pcp-managed:hooks:end/g);
     expect(startMarkers).toHaveLength(1);
     expect(endMarkers).toHaveLength(1);
-    expect(content).toMatch(/session_start = ".*sb hooks on-session-start"/);
+    expect(content).toMatch(/session_start = ".*hooks on-session-start[^"]*"/);
   });
 });
 
