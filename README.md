@@ -123,8 +123,12 @@ Useful Supabase docs:
 ```
 personal-context-protocol/
 ├── packages/
-│   ├── api/              # PCP server (MCP tools, services, data layer)
-│   └── cli/              # SB CLI (sb command)
+│   ├── api/              # PCP server (MCP tools, services, data layer) [FSL-1.1-MIT]
+│   ├── cli/              # SB CLI (sb command)
+│   ├── shared/           # Shared types and utilities
+│   ├── spec/             # PCP Protocol Specification
+│   ├── templates/        # Identity templates and conventions
+│   └── web/              # Admin dashboard
 ├── stories/              # Feature specs and design docs
 │   └── cli/              # CLI-related stories
 ├── supabase/
@@ -218,4 +222,6 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for git conventions, coding style, PR p
 
 ## License
 
-MIT
+MIT — matching [MCP](https://github.com/modelcontextprotocol) and [OpenClaw](https://github.com/openclaw).
+
+The PCP server (`packages/api`) is licensed under [FSL-1.1-MIT](./packages/api/LICENSE) (Functional Source License) — source-available with a competing-use restriction, converting to MIT after 2 years. All other packages are [MIT](./LICENSE).

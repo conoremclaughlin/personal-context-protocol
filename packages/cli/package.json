@@ -1,6 +1,7 @@
 {
   "name": "@personal-context/cli",
   "version": "0.2.0",
+  "license": "MIT",
   "description": "PCP CLI - Personal Context Protocol command-line interface",
   "type": "module",
   "main": "dist/index.js",
