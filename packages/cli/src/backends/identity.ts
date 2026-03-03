@@ -199,10 +199,6 @@ ${injectedContext}`;
  * Write the identity prompt to a temp file.
  * Returns the file path and a cleanup function.
  */
-export function createIdentityPromptFile(agentId: string): {
-  promptFile: string;
-  cleanup: () => void;
-};
 export function createIdentityPromptFile(
   agentId: string,
   startupContextBlock?: string
