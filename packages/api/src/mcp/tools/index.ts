@@ -32,7 +32,6 @@ import {
   handleForget,
   handleUpdateMemory,
   handleStartSession,
-  handleLogSession,
   handleEndSession,
   handleGetSession,
   handleListSessions,
@@ -1306,62 +1305,6 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
           return await handleStartSession(args, dataComposer);
         } catch (error) {
           logger.error('Error in start_session:', error);
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: JSON.stringify({
-                  success: false,
-                  error: error instanceof Error ? error.message : 'Unknown error',
-                }),
-              },
-            ],
-            isError: true,
-          };
-        }
-      }
-    );
-
-    // Register log_session tool
-    server.registerTool(
-      'log_session',
-      {
-        description: `[DEPRECATED] Add an entry to the current session log. Prefer update_session_phase for work status and remember for important decisions/events.
-
-User can be identified by ONE of: userId, email, phone, or platform + platformId`,
-        inputSchema: {
-          ...userIdentifierFields,
-          sessionId: z
-            .string()
-            .uuid()
-            .optional()
-            .describe('Session ID (uses active session if not provided)'),
-          agentId: z
-            .string()
-            .optional()
-            .describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
-          studioId: z
-            .string()
-            .uuid()
-            .optional()
-            .describe('Studio ID for session resolution when sessionId not provided'),
-          workspaceId: z
-            .string()
-            .uuid()
-            .optional()
-            .describe('[Deprecated] Workspace ID alias for studioId.'),
-          content: z.string().describe('Log entry content'),
-          salience: z
-            .enum(['low', 'medium', 'high', 'critical'])
-            .optional()
-            .describe('Importance (default: medium)'),
-        },
-      },
-      async (args) => {
-        try {
-          return await handleLogSession(args, dataComposer);
-        } catch (error) {
-          logger.error('Error in log_session:', error);
           return {
             content: [
               {
