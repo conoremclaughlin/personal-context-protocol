@@ -67,6 +67,7 @@ interface BackendLocalSessionSummary {
   modified: string;
   firstPrompt?: string;
   latestPrompt?: string;
+  latestPromptAt?: string;
   messageCount?: number;
   gitBranch?: string;
   transcriptPath?: string;
@@ -453,6 +454,14 @@ function formatSessionPreviewText(
         ? 'inbox'
         : 'you';
   return `${speaker}: ${truncateText(summary.content, 110)}`;
+}
+
+function withAgentPreviewSpeaker(preview: string | undefined, agentId: string): string | undefined {
+  if (!preview) return undefined;
+  if (/^assistant:\s*/i.test(preview)) {
+    return `${agentId}: ${preview.replace(/^assistant:\s*/i, '')}`;
+  }
+  return preview;
 }
 
 function extractLatestPreviewFromCodexRolloutJsonl(
@@ -1018,6 +1027,7 @@ LIMIT 200;
       : new Date().toISOString();
 
     let latestPrompt: string | undefined;
+    let latestPromptAt: string | undefined;
     const transcriptPath = rolloutPath?.trim() || undefined;
     if (transcriptPath && existsSync(transcriptPath)) {
       try {
@@ -1025,6 +1035,7 @@ LIMIT 200;
         const preview = extractLatestPreviewFromCodexRolloutJsonl(transcript);
         if (preview) {
           latestPrompt = formatSessionPreviewText(preview);
+          latestPromptAt = preview.ts;
         }
       } catch {
         // Best-effort preview extraction only.
@@ -1038,6 +1049,7 @@ LIMIT 200;
       modified,
       firstPrompt: firstPrompt?.trim(),
       latestPrompt,
+      latestPromptAt,
       gitBranch: gitBranch?.trim(),
       transcriptPath,
     });
@@ -1134,6 +1146,7 @@ function getCodexLocalSessionsFromJsonl(
         projectPath: sessionCwd,
         modified: parsed.payload?.timestamp || parsed.timestamp || sessionFile.modified,
         latestPrompt: latestPreview ? formatSessionPreviewText(latestPreview) : undefined,
+        latestPromptAt: latestPreview?.ts,
         transcriptPath: sessionFile.path,
       };
       break;
@@ -1782,7 +1795,10 @@ async function ensurePcpSessionContext(
       );
     }
     for (const localSession of untrackedLocalBackendSessions) {
-      const previewText = localSession.latestPrompt || localSession.firstPrompt;
+      const previewText = withAgentPreviewSpeaker(
+        localSession.latestPrompt || localSession.firstPrompt,
+        agentId
+      );
       console.log(
         chalk.dim(
           `  local:${localSession.sessionId}${previewText ? ` — ${truncateText(previewText)}` : ''}`
@@ -1839,14 +1855,18 @@ async function ensurePcpSessionContext(
 
     for (const localSession of untrackedLocalBackendSessions) {
       const value = `__local__:${localSession.sessionId}`;
-      const previewText = localSession.latestPrompt || localSession.firstPrompt;
+      const previewText = withAgentPreviewSpeaker(
+        localSession.latestPrompt || localSession.firstPrompt,
+        agentId
+      );
       const preview = previewText ? ` — ${truncateText(previewText)}` : '';
+      const previewAt = localSession.latestPromptAt || localSession.modified;
       const backendLabel = localSession.backend[0].toUpperCase() + localSession.backend.slice(1);
       choices.push({
         name:
           localSession.backend === 'claude'
-            ? `Resume Claude local ${localSession.sessionId.slice(0, 8)} (${new Date(localSession.modified).toLocaleString()})${preview}`
-            : `Resume ${backendLabel} local ${localSession.sessionId.slice(0, 8)} (${new Date(localSession.modified).toLocaleString()})${preview}`,
+            ? `Resume Claude local ${localSession.sessionId.slice(0, 8)} (${new Date(previewAt).toLocaleString()})${preview}`
+            : `Resume ${backendLabel} local ${localSession.sessionId.slice(0, 8)} (${new Date(previewAt).toLocaleString()})${preview}`,
         value,
       });
       sessionChoiceByValue.set(value, localSession.sessionId);
