@@ -1478,6 +1478,12 @@ async function ensurePcpSessionContext(
   }
 
   if (!pcpAvailable) {
+    sbDebugLog('sb', 'pcp_unavailable', {
+      backend,
+      agentId,
+      reason: pcpUnavailableReason || 'unknown error',
+      studioId: studioId || null,
+    });
     printPcpUnavailableWarning(pcpUnavailableReason || 'unknown error', cwd);
   }
 
@@ -1531,6 +1537,14 @@ async function ensurePcpSessionContext(
         forceNew: true,
         sessionId: newSessionId,
       });
+      sbDebugLog('sb', 'pcp_start_session_success', {
+        backend,
+        agentId,
+        studioId: studioId || null,
+        requestedSessionId: newSessionId,
+        returnedSessionId: started.session?.id || null,
+        mode: 'with_session_id',
+      });
       return started.session;
     } catch (errorWithSessionId) {
       // Backward compatibility: older PCP servers may reject the newer `sessionId`
@@ -1554,6 +1568,14 @@ async function ensurePcpSessionContext(
           ...(studioId ? { studioId } : {}),
           backend,
           forceNew: true,
+        });
+        sbDebugLog('sb', 'pcp_start_session_success', {
+          backend,
+          agentId,
+          studioId: studioId || null,
+          requestedSessionId: newSessionId,
+          returnedSessionId: startedLegacy.session?.id || null,
+          mode: 'legacy_without_session_id',
         });
         return startedLegacy.session;
       } catch (legacyError) {

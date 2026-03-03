@@ -1,4 +1,5 @@
 import { getValidAccessToken } from '../auth/tokens.js';
+import { sbDebugLog } from './sb-debug.js';
 
 let jsonRpcId = 1;
 
@@ -27,20 +28,45 @@ export async function callPcpTool<T = Record<string, unknown>>(
     headers['x-pcp-caller-profile'] = options.callerProfile;
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: { name: tool, arguments: args },
-      id: jsonRpcId++,
-    }),
-    ...(options?.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
+  sbDebugLog('pcp-mcp', 'call_start', {
+    tool,
+    serverUrl,
+    timeoutMs: options?.timeoutMs || null,
+    argKeys: Object.keys(args || {}),
   });
 
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { name: tool, arguments: args },
+        id: jsonRpcId++,
+      }),
+      ...(options?.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
+    });
+  } catch (error) {
+    sbDebugLog('pcp-mcp', 'call_fetch_error', {
+      tool,
+      serverUrl,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+
   if (!response.ok) {
-    throw new Error(`PCP call failed (${response.status}): ${await response.text()}`);
+    const body = await response.text();
+    sbDebugLog('pcp-mcp', 'call_http_error', {
+      tool,
+      serverUrl,
+      status: response.status,
+      statusText: response.statusText,
+      responseBody: body.slice(0, 1500),
+    });
+    throw new Error(`PCP call failed (${response.status}): ${body}`);
   }
 
   const contentType = response.headers.get('content-type') || '';
@@ -54,15 +80,23 @@ export async function callPcpTool<T = Record<string, unknown>>(
       .map((line) => line.slice(6));
     const lastData = dataLines[dataLines.length - 1];
     if (!lastData) {
+      sbDebugLog('pcp-mcp', 'call_sse_no_data', { tool, serverUrl });
       throw new Error('PCP SSE response contained no data lines');
     }
     payload = JSON.parse(lastData) as Record<string, unknown>;
+    sbDebugLog('pcp-mcp', 'call_success', { tool, mode: 'sse' });
   } else {
     payload = (await response.json()) as Record<string, unknown>;
+    sbDebugLog('pcp-mcp', 'call_success', { tool, mode: 'json-content' });
   }
 
   if (payload.error) {
     const err = payload.error as { message?: string; code?: number };
+    sbDebugLog('pcp-mcp', 'call_tool_error', {
+      tool,
+      code: err.code ?? null,
+      message: err.message ?? null,
+    });
     throw new Error(`PCP tool error (${err.code}): ${err.message}`);
   }
 
