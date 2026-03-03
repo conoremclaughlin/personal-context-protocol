@@ -606,7 +606,7 @@ async function updateRuntimeGenerationState(
   cwd: string,
   config: PcpConfig | null,
   agentId: string,
-  phase: string
+  lifecycle: 'running' | 'idle'
 ): Promise<void> {
   const sessionId = resolveActivePcpSessionId(cwd);
   if (!sessionId) return;
@@ -616,8 +616,7 @@ async function updateRuntimeGenerationState(
       email: config?.email,
       agentId,
       sessionId,
-      phase,
-      status: 'active',
+      lifecycle,
       workingDir: cwd,
     });
   } catch {
@@ -1749,16 +1748,14 @@ async function onSessionStartHandler(options?: { backend?: string }): Promise<vo
   pcpThreadKey = reconciled.threadKey || pcpThreadKey;
   const backendSessionId = reconciled.backendSessionId;
 
-  // Keep an explicit runtime phase for dashboard "generating vs idle" visualization.
-  // Startup phase should always settle to idle.
+  // Set lifecycle to idle on startup (ready for user input).
   if (pcpSessionId) {
     try {
       const updateArgs: Record<string, unknown> = {
         email: config?.email,
         agentId,
         sessionId: pcpSessionId,
-        phase: 'runtime:idle',
-        status: 'active',
+        lifecycle: 'idle',
         workingDir: cwd,
       };
       if (backendSessionId) updateArgs.backendSessionId = backendSessionId;
@@ -1804,7 +1801,7 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
   });
 
   // Mark session as actively generating at prompt start.
-  await updateRuntimeGenerationState(cwd, config, agentId, 'runtime:generating');
+  await updateRuntimeGenerationState(cwd, config, agentId, 'running');
 
   // Check if inbox check is stale (> 5 minutes)
   const lastCheck = readRuntimeFile(cwd, 'last-inbox-check');
@@ -1860,7 +1857,7 @@ async function onStopHandler(options?: { backend?: string }): Promise<void> {
   });
 
   // Mark session as idle after each completed backend turn.
-  await updateRuntimeGenerationState(cwd, config, agentId, 'runtime:idle');
+  await updateRuntimeGenerationState(cwd, config, agentId, 'idle');
 
   // Increment tool call counter
   const countStr = readRuntimeFile(cwd, 'tool-count');
