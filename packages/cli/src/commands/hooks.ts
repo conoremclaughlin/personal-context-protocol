@@ -225,29 +225,58 @@ export async function callPcpTool(
 ): Promise<Record<string, unknown>> {
   const serverUrl = getPcpServerUrl();
   const url = `${serverUrl}/mcp`;
+  const hasInjectedEnvToken = Boolean(process.env.PCP_ACCESS_TOKEN?.trim());
 
-  const headers: Record<string, string> = {
+  const baseHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
     'x-pcp-caller-profile': 'runtime',
   };
 
-  // Attach CLI auth token so hooks pass OAuth checks on the MCP server
-  const token = await getValidAccessToken(serverUrl);
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
+  const callOnce = async (token: string | null): Promise<Response> => {
+    const headers = { ...baseHeaders };
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      jsonrpc: '2.0',
-      method: 'tools/call',
-      params: { name: tool, arguments: args },
-      id: jsonRpcId++,
-    }),
-  });
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        method: 'tools/call',
+        params: { name: tool, arguments: args },
+        id: jsonRpcId++,
+      }),
+    });
+  };
+
+  // Attach CLI auth token so hooks pass OAuth checks on the MCP server.
+  // Prefer runtime-injected env token, then local auth file.
+  let response = await callOnce(await getValidAccessToken(serverUrl));
+
+  // If an injected env token is stale/invalid, retry once using local auth fallback.
+  if (response.status === 401 && hasInjectedEnvToken) {
+    // Drain first response body before retrying so the underlying HTTP client
+    // can cleanly release the stream (avoids occasional undici body warnings).
+    try {
+      await response.text();
+    } catch {
+      // Best-effort: failure to read the body should not block retry.
+    }
+
+    sbDebugLog('hooks', 'mcp_auth_retry_without_env_token', {
+      tool,
+      status: 401,
+      reason: 'env_token_rejected',
+    });
+    console.error(
+      chalk.yellow(
+        '⚠ PCP hook auth token was rejected; retrying with local ~/.pcp/auth.json token fallback.'
+      )
+    );
+    response = await callOnce(await getValidAccessToken(serverUrl, { allowEnvToken: false }));
+  }
 
   if (!response.ok) {
     throw new Error(`PCP call failed (${response.status}): ${await response.text()}`);
