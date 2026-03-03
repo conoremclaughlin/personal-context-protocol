@@ -237,6 +237,12 @@ describe('getValidAccessToken', () => {
     const token = await getValidAccessToken('http://localhost:3001');
     expect(token).toBe('env-only-token');
   });
+
+  it('can skip env token lookup when allowEnvToken=false', async () => {
+    process.env.PCP_ACCESS_TOKEN = 'env-only-token';
+    const token = await getValidAccessToken('http://localhost:3001', { allowEnvToken: false });
+    expect(token).toBeNull();
+  });
 });
 
 // ============================================================================

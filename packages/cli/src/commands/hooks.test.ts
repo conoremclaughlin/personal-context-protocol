@@ -492,6 +492,7 @@ describe('callPcpTool: Streamable HTTP response formats', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    delete process.env.PCP_ACCESS_TOKEN;
   });
 
   it('should parse application/json response (enableJsonResponse mode)', async () => {
@@ -612,6 +613,57 @@ describe('callPcpTool: Streamable HTTP response formats', () => {
 
     const result = await callPcpTool('bootstrap', { agentId: 'wren' });
     expect(result).toEqual({ text: 'plain text result' });
+  });
+
+  it('retries with local auth fallback when injected env token is rejected (401)', async () => {
+    process.env.PCP_ACCESS_TOKEN = 'env-token';
+    mockedGetValidAccessToken
+      .mockResolvedValueOnce('env-token')
+      .mockResolvedValueOnce('fallback-token');
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    fetchSpy = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 401,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        text: async () => 'unauthorized',
+      })
+      .mockResolvedValueOnce(mockJsonResponse(TOOL_RESULT_PAYLOAD));
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const result = await callPcpTool('bootstrap', { agentId: 'wren' });
+    expect(result).toEqual({ success: true });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+    const [, firstOptions] = fetchSpy.mock.calls[0];
+    const [, secondOptions] = fetchSpy.mock.calls[1];
+    expect(firstOptions.headers).toHaveProperty('Authorization', 'Bearer env-token');
+    expect(secondOptions.headers).toHaveProperty('Authorization', 'Bearer fallback-token');
+    expect(
+      mockedGetValidAccessToken.mock.calls.some(
+        ([, options]) =>
+          (options as { allowEnvToken?: boolean } | undefined)?.allowEnvToken === false
+      )
+    ).toBe(true);
+    expect(consoleSpy).toHaveBeenCalled();
+  });
+
+  it('does not retry on 401 when no env token is injected', async () => {
+    mockedGetValidAccessToken.mockResolvedValue('file-token');
+    fetchSpy = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 401,
+      headers: new Headers({ 'content-type': 'application/json' }),
+      text: async () => 'unauthorized',
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(callPcpTool('bootstrap', { agentId: 'wren' })).rejects.toThrow(
+      'PCP call failed (401)'
+    );
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
