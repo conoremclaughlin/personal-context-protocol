@@ -66,8 +66,16 @@ interface BackendLocalSessionSummary {
   projectPath: string;
   modified: string;
   firstPrompt?: string;
+  latestPrompt?: string;
   messageCount?: number;
   gitBranch?: string;
+  transcriptPath?: string;
+}
+
+interface SessionPreviewSummary {
+  role: 'user' | 'assistant' | 'inbox';
+  content: string;
+  ts?: string;
 }
 
 function toEpochMs(value: string | undefined): number | undefined {
@@ -384,6 +392,201 @@ function truncateText(text: string | null | undefined, max = 90): string {
   return `${compact.slice(0, max - 1)}…`;
 }
 
+function parseJsonl(content: string): Array<Record<string, unknown>> {
+  const parsed: Array<Record<string, unknown>> = [];
+  for (const line of content.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      parsed.push(obj);
+    } catch {
+      // ignore malformed lines
+    }
+  }
+  return parsed;
+}
+
+function extractMessageText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    const compact = value.replace(/\s+/g, ' ').trim();
+    return compact || undefined;
+  }
+  if (Array.isArray(value)) {
+    const chunks: string[] = [];
+    for (const item of value) {
+      const chunk = extractMessageText(item);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const textLikeKeys = ['text', 'message', 'content', 'output', 'input'];
+    const chunks: string[] = [];
+    for (const key of textLikeKeys) {
+      const chunk = extractMessageText(record[key]);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+  return undefined;
+}
+
+function roleFromUnknown(value: unknown): SessionPreviewSummary['role'] | undefined {
+  if (value === 'user') return 'user';
+  if (value === 'assistant' || value === 'model') return 'assistant';
+  if (value === 'inbox') return 'inbox';
+  return undefined;
+}
+
+function formatSessionPreviewText(
+  summary: SessionPreviewSummary,
+  options?: { assistantLabel?: string }
+): string {
+  const speaker =
+    summary.role === 'assistant'
+      ? options?.assistantLabel || 'assistant'
+      : summary.role === 'inbox'
+        ? 'inbox'
+        : 'you';
+  return `${speaker}: ${truncateText(summary.content, 110)}`;
+}
+
+function extractLatestPreviewFromCodexRolloutJsonl(
+  jsonl: string
+): SessionPreviewSummary | undefined {
+  const events = parseJsonl(jsonl);
+  let latest: SessionPreviewSummary | undefined;
+  for (const event of events) {
+    const eventType = typeof event.type === 'string' ? event.type : '';
+    const ts =
+      typeof event.timestamp === 'string'
+        ? event.timestamp
+        : typeof event.ts === 'string'
+          ? event.ts
+          : undefined;
+
+    if (eventType === 'response_item') {
+      const payload =
+        event.payload && typeof event.payload === 'object'
+          ? (event.payload as Record<string, unknown>)
+          : undefined;
+      if (!payload) continue;
+      if (payload.type !== 'message') continue;
+
+      const role = roleFromUnknown(payload.role);
+      if (!role || role === 'inbox') continue;
+      const content = extractMessageText(payload.content);
+      if (!content) continue;
+      latest = { role, content, ts };
+      continue;
+    }
+
+    if (eventType === 'event_msg') {
+      const payload =
+        event.payload && typeof event.payload === 'object'
+          ? (event.payload as Record<string, unknown>)
+          : undefined;
+      if (!payload) continue;
+      if (payload.type === 'user_message') {
+        const content = extractMessageText(payload.message);
+        if (content) latest = { role: 'user', content, ts };
+      } else if (payload.type === 'agent_message') {
+        const content = extractMessageText(payload.message);
+        if (content) latest = { role: 'assistant', content, ts };
+      }
+    }
+  }
+  return latest;
+}
+
+function extractLatestPreviewFromPcpTranscriptJsonl(
+  jsonl: string
+): SessionPreviewSummary | undefined {
+  const events = parseJsonl(jsonl);
+  let latest: SessionPreviewSummary | undefined;
+  for (const event of events) {
+    const type = typeof event.type === 'string' ? event.type : '';
+    if (type === 'user') {
+      const content = extractMessageText(event.content);
+      if (!content) continue;
+      latest = {
+        role: 'user',
+        content,
+        ts: typeof event.ts === 'string' ? event.ts : undefined,
+      };
+      continue;
+    }
+    if (type === 'assistant') {
+      const content = extractMessageText(event.content);
+      if (!content) continue;
+      latest = {
+        role: 'assistant',
+        content,
+        ts: typeof event.ts === 'string' ? event.ts : undefined,
+      };
+      continue;
+    }
+    if (type === 'inbox') {
+      const content = extractMessageText(event.rendered) || extractMessageText(event.content);
+      if (!content) continue;
+      latest = {
+        role: 'inbox',
+        content,
+        ts: typeof event.ts === 'string' ? event.ts : undefined,
+      };
+    }
+  }
+  return latest;
+}
+
+function findLatestPcpReplTranscriptForSession(
+  sessionId: string,
+  cwd = process.cwd()
+): string | undefined {
+  const dir = join(cwd, '.pcp', 'runtime', 'repl');
+  if (!existsSync(dir)) return undefined;
+  const prefix = `${sessionId}-`;
+  const candidates = readdirSync(dir)
+    .filter((entry) => entry.startsWith(prefix) && entry.endsWith('.jsonl'))
+    .map((entry) => join(dir, entry))
+    .filter((fullPath) => {
+      try {
+        return statSync(fullPath).isFile();
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => {
+      try {
+        return statSync(b).mtimeMs - statSync(a).mtimeMs;
+      } catch {
+        return 0;
+      }
+    });
+  return candidates[0];
+}
+
+function getPcpSessionPreviewLabel(
+  session: PcpSessionSummary,
+  agentId: string,
+  cwd = process.cwd()
+): string | undefined {
+  const transcriptPath = findLatestPcpReplTranscriptForSession(session.id, cwd);
+  if (!transcriptPath) return undefined;
+  try {
+    const content = readFileSync(transcriptPath, 'utf-8');
+    const summary = extractLatestPreviewFromPcpTranscriptJsonl(content);
+    if (!summary) return undefined;
+    return formatSessionPreviewText(summary, { assistantLabel: agentId });
+  } catch {
+    return undefined;
+  }
+}
+
 export function sanitizeBackendExecutionArgs(
   args: string[],
   backend: string,
@@ -632,6 +835,7 @@ export function getClaudeLocalSessionsForProject(
           sessionId,
           projectPath: normalizedCwd,
           modified: stats.mtime.toISOString(),
+          transcriptPath: filePath,
         });
       } catch {
         // Ignore unreadable file stats.
@@ -777,6 +981,7 @@ export function getCodexLocalSessionsForProject(
   const query = `
 SELECT id, cwd, updated_at,
        replace(replace(first_user_message, char(10), ' '), char(9), ' ') AS first_user_message,
+       rollout_path,
        git_branch
 FROM threads
 WHERE archived = 0
@@ -800,7 +1005,8 @@ LIMIT 200;
   const lines = result.stdout.split('\n').map((line) => line.trim());
   for (const line of lines) {
     if (!line) continue;
-    const [sessionId, sessionCwd, updatedAtRaw, firstPrompt, gitBranch] = line.split('\t');
+    const [sessionId, sessionCwd, updatedAtRaw, firstPrompt, rolloutPath, gitBranch] =
+      line.split('\t');
     if (!sessionId || !sessionCwd || !updatedAtRaw) continue;
 
     const normalizedSessionPath = normalizePath(sessionCwd);
@@ -811,13 +1017,29 @@ LIMIT 200;
       ? new Date(updatedAtSeconds * 1000).toISOString()
       : new Date().toISOString();
 
+    let latestPrompt: string | undefined;
+    const transcriptPath = rolloutPath?.trim() || undefined;
+    if (transcriptPath && existsSync(transcriptPath)) {
+      try {
+        const transcript = readFileSync(transcriptPath, 'utf-8');
+        const preview = extractLatestPreviewFromCodexRolloutJsonl(transcript);
+        if (preview) {
+          latestPrompt = formatSessionPreviewText(preview);
+        }
+      } catch {
+        // Best-effort preview extraction only.
+      }
+    }
+
     sessions.push({
       backend: 'codex',
       sessionId,
       projectPath: sessionCwd,
       modified,
       firstPrompt: firstPrompt?.trim(),
+      latestPrompt,
       gitBranch: gitBranch?.trim(),
+      transcriptPath,
     });
   }
 
@@ -885,6 +1107,7 @@ function getCodexLocalSessionsFromJsonl(
     }
 
     let matched: BackendLocalSessionSummary | undefined;
+    const latestPreview = extractLatestPreviewFromCodexRolloutJsonl(content);
     const lines = content.split('\n');
     for (const line of lines) {
       const trimmed = line.trim();
@@ -910,6 +1133,8 @@ function getCodexLocalSessionsFromJsonl(
         sessionId,
         projectPath: sessionCwd,
         modified: parsed.payload?.timestamp || parsed.timestamp || sessionFile.modified,
+        latestPrompt: latestPreview ? formatSessionPreviewText(latestPreview) : undefined,
+        transcriptPath: sessionFile.path,
       };
       break;
     }
@@ -1011,11 +1236,21 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
       if (!modified) continue;
 
       const firstUserMessage = (parsed.messages || []).find((message) => message.type === 'user');
+      const latestMessage = [...(parsed.messages || [])]
+        .reverse()
+        .find((message) => Boolean(message?.content?.trim()));
       const firstPrompt =
         parsed.summary ||
         (typeof firstUserMessage?.content === 'string'
           ? firstUserMessage.content.trim()
           : undefined);
+      const latestPrompt =
+        latestMessage && typeof latestMessage.content === 'string'
+          ? formatSessionPreviewText({
+              role: latestMessage.type === 'user' ? 'user' : 'assistant',
+              content: latestMessage.content,
+            })
+          : undefined;
 
       sessions.push({
         backend: 'gemini',
@@ -1023,6 +1258,8 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
         projectPath,
         modified,
         firstPrompt,
+        latestPrompt,
+        transcriptPath: sessionPath,
       });
     } catch {
       // Ignore malformed session files.
@@ -1486,6 +1723,11 @@ async function ensurePcpSessionContext(
     localBackendSessions,
     activeSessions
   );
+  const pcpPreviewBySessionId = new Map<string, string>();
+  for (const session of activeSessions) {
+    const preview = getPcpSessionPreviewLabel(session, agentId, cwd);
+    if (preview) pcpPreviewBySessionId.set(session.id, preview);
+  }
 
   let chosen: PcpSessionSummary | undefined;
   let selectedLocalBackendSessionId: string | undefined;
@@ -1532,16 +1774,18 @@ async function ensurePcpSessionContext(
     for (const session of activeSessions) {
       const linkedBackendSessionId =
         backend === 'claude' ? getSessionBackendId(session) : undefined;
+      const preview = pcpPreviewBySessionId.get(session.id);
       console.log(
         chalk.dim(
-          `  pcp:${session.id}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}${linkedBackendSessionId ? ` · tracks ${linkedBackendSessionId}` : ''}`
+          `  pcp:${session.id}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}${linkedBackendSessionId ? ` · tracks ${linkedBackendSessionId}` : ''}${preview ? ` — ${preview}` : ''}`
         )
       );
     }
     for (const localSession of untrackedLocalBackendSessions) {
+      const previewText = localSession.latestPrompt || localSession.firstPrompt;
       console.log(
         chalk.dim(
-          `  local:${localSession.sessionId}${localSession.firstPrompt ? ` — ${truncateText(localSession.firstPrompt)}` : ''}`
+          `  local:${localSession.sessionId}${previewText ? ` — ${truncateText(previewText)}` : ''}`
         )
       );
     }
@@ -1585,8 +1829,9 @@ async function ensurePcpSessionContext(
       const value = `__pcp__:${session.id}`;
       const linkedBackendSessionId = getSessionBackendId(session);
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
+      const preview = pcpPreviewBySessionId.get(session.id);
       choices.push({
-        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}${linkedBackendSessionId ? ` · tracks ${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : ''}`,
+        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}${linkedBackendSessionId ? ` · tracks ${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : ''}${preview ? ` — ${truncateText(preview, 120)}` : ''}`,
         value,
       });
       sessionChoiceByValue.set(value, session.id);
@@ -1594,9 +1839,8 @@ async function ensurePcpSessionContext(
 
     for (const localSession of untrackedLocalBackendSessions) {
       const value = `__local__:${localSession.sessionId}`;
-      const preview = localSession.firstPrompt
-        ? ` — ${truncateText(localSession.firstPrompt)}`
-        : '';
+      const previewText = localSession.latestPrompt || localSession.firstPrompt;
+      const preview = previewText ? ` — ${truncateText(previewText)}` : '';
       const backendLabel = localSession.backend[0].toUpperCase() + localSession.backend.slice(1);
       choices.push({
         name:

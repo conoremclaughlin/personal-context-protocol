@@ -570,15 +570,26 @@ describe('getCodexLocalSessionsForProject', () => {
     const nonMatchingSessionId = '019a23b9-b211-7972-b007-012a8bc1d6f2';
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${matchingSessionId}.jsonl`),
-      `${JSON.stringify({
-        timestamp: '2026-03-02T11:44:41.000Z',
-        type: 'session_meta',
-        payload: {
-          id: matchingSessionId,
-          cwd: projectPath,
+      [
+        JSON.stringify({
           timestamp: '2026-03-02T11:44:41.000Z',
-        },
-      })}\n`
+          type: 'session_meta',
+          payload: {
+            id: matchingSessionId,
+            cwd: projectPath,
+            timestamp: '2026-03-02T11:44:41.000Z',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-03-02T11:44:51.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'Most recent assistant reply' }],
+          },
+        }),
+      ].join('\n') + '\n'
     );
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${nonMatchingSessionId}.jsonl`),
@@ -599,6 +610,8 @@ describe('getCodexLocalSessionsForProject', () => {
     try {
       const sessions = getCodexLocalSessionsForProject(projectPath, 10);
       expect(sessions.map((session) => session.sessionId)).toEqual([matchingSessionId]);
+      expect(sessions[0]?.latestPrompt).toBe('assistant: Most recent assistant reply');
+      expect(sessions[0]?.transcriptPath).toContain(matchingSessionId);
     } finally {
       process.env.HOME = originalHome;
       rmSync(tempHome, { recursive: true, force: true });
