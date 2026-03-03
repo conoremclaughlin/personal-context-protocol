@@ -387,6 +387,7 @@ describe('resolveAdoptableLocalBackendSessionId', () => {
     expect(
       resolveAdoptableLocalBackendSessionId({
         backend: 'codex',
+        createdNewPcpSession: false,
         chosen: { id: 'pcp-1', startedAt: '2026-03-02T21:30:14.354Z' },
         localSessions: [
           {
@@ -398,6 +399,24 @@ describe('resolveAdoptableLocalBackendSessionId', () => {
         ],
       })
     ).toBe('019cb076-af49-7471-bd8e-12315a616dca');
+  });
+
+  it('does not auto-adopt local codex sessions for newly created PCP sessions', () => {
+    expect(
+      resolveAdoptableLocalBackendSessionId({
+        backend: 'codex',
+        createdNewPcpSession: true,
+        chosen: { id: 'pcp-1', startedAt: '2026-03-02T21:30:14.354Z' },
+        localSessions: [
+          {
+            backend: 'codex',
+            sessionId: '019cb076-af49-7471-bd8e-12315a616dca',
+            projectPath: '/tmp/project',
+            modified: '2026-03-02T21:33:22.000Z',
+          },
+        ],
+      })
+    ).toBeUndefined();
   });
 
   it('adopts by start-time proximity when exactly one nearby session exists', () => {

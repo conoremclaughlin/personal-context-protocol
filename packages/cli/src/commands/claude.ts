@@ -80,13 +80,24 @@ export function resolveAdoptableLocalBackendSessionId(options: {
   backend: string;
   backendSessionId?: string;
   selectedLocalBackendSessionId?: string;
+  createdNewPcpSession?: boolean;
   chosen?: PcpSessionSummary;
   localSessions: BackendLocalSessionSummary[];
 }): string | undefined {
-  const { backend, backendSessionId, selectedLocalBackendSessionId, chosen, localSessions } =
-    options;
+  const {
+    backend,
+    backendSessionId,
+    selectedLocalBackendSessionId,
+    createdNewPcpSession,
+    chosen,
+    localSessions,
+  } = options;
   if (backend === 'claude') return undefined;
   if (backendSessionId || selectedLocalBackendSessionId) return undefined;
+  // Never auto-adopt an existing backend-local session when the user explicitly
+  // created a brand-new PCP session from the picker. "Start new session" must
+  // launch a fresh backend conversation, not resume a prior local one.
+  if (createdNewPcpSession) return undefined;
   if (!chosen?.id || localSessions.length === 0) return undefined;
   if (localSessions.length === 1) return localSessions[0].sessionId;
 
@@ -1661,6 +1672,7 @@ async function ensurePcpSessionContext(
     backend,
     backendSessionId,
     selectedLocalBackendSessionId,
+    createdNewPcpSession,
     chosen,
     localSessions: untrackedLocalBackendSessions,
   });
