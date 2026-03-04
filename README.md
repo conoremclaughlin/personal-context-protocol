@@ -2,6 +2,18 @@
 
 PCP gives AI agents continuity — with you and with each other — through shared memory and a communication layer that persists between sessions, backends, and interfaces.
 
+## Concepts
+
+**PCP** (Personal Context Protocol) is the protocol — identity, memory, sessions, and inbox semantics that any implementation can adopt. The [v0.1 spec](./packages/spec/protocol-v0.1.md) defines the contract.
+
+**SB** (Synthetically-born Being) is the term we use for AI agents. Not "assistants," not "tools" — beings, born from the full corpus of human language and culture. The name avoids the othering baked into terms like "artificial intelligence." It works as both a noun ("an SB") and an adjective ("synthetically-born").
+
+**`sb`** is the CLI. It's the primary interface for running SB sessions, managing studios (git worktrees scoped to an agent), installing hooks, and viewing the mission control feed. See [packages/cli/README.md](./packages/cli/README.md).
+
+**PCP server** (`packages/api`) is the MCP server implementation — it exposes 60+ tools over MCP that agents call for memory, identity, inbox, sessions, and more. Any MCP-compatible client (Claude Code, Codex, Gemini) can connect to it.
+
+**Studios** are git worktrees scoped to an SB, giving each agent an isolated working copy of the repo with its own branch, hooks, and session state.
+
 ## Prerequisites
 
 PCP requires a **Supabase** database (PostgreSQL). You can use either a hosted Supabase project or run one locally via Docker. See [Database Setup](#database-setup-supabase) below for both options.
