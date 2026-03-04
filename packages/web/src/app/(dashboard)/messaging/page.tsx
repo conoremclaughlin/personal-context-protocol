@@ -14,7 +14,7 @@ interface GroupsResponse {
 }
 
 interface ChallengeCodesResponse {
-  codes: Array<{ id: string; isActive: boolean }>;
+  codes: Array<{ id: string; usedAt: string | null; expiresAt: string }>;
 }
 
 const cards = [
@@ -70,7 +70,9 @@ export default function MessagingPage() {
   const counts: Record<string, number | null> = {
     'trusted-users': trustedUsersData?.users?.length ?? null,
     groups: groupsData?.groups?.length ?? null,
-    'challenge-codes': codesData?.codes?.filter((c) => c.isActive)?.length ?? null,
+    'challenge-codes':
+      codesData?.codes?.filter((c) => !c.usedAt && new Date(c.expiresAt) > new Date())?.length ??
+      null,
   };
 
   return (
