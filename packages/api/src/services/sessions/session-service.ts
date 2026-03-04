@@ -464,7 +464,8 @@ export class SessionService implements ISessionService {
     }
 
     // 7. Update session with new Claude session ID, usage, message count, and lifecycle
-    const postRunLifecycle = result.success ? 'completed' : 'failed';
+    // idle (not completed) after success — session stays reusable. completed only via end_session.
+    const postRunLifecycle = result.success ? 'idle' : 'failed';
     if (result.claudeSessionId !== session.claudeSessionId) {
       await this.repository.update(session.id, {
         claudeSessionId: result.claudeSessionId,
