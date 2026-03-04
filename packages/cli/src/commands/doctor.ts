@@ -42,11 +42,13 @@ const defaultFs: DoctorFs = {
 };
 
 type MigrationStatusResult = {
+  target?: 'linked' | 'local';
   state?: 'clean' | 'pending' | 'unknown';
   reason?: string | null;
   pendingCount?: number;
   pending?: string[];
 };
+const MIGRATION_CHECK_NAME = 'Migrations';
 
 function resolveCliRoot(fsOps: Pick<DoctorFs, 'existsSync' | 'readFileSync'>): string {
   let dir = process.cwd();
@@ -241,11 +243,12 @@ function parseMigrationStatus(raw: string): MigrationStatusResult | null {
 function formatPendingMigrationCheck(parsed: MigrationStatusResult): DoctorCheck {
   const pendingCount = parsed.pendingCount || parsed.pending?.length || 0;
   const pendingList = (parsed.pending || []).slice(0, 5).join(', ');
+  const scope = parsed.target === 'local' ? 'local' : 'linked';
   return {
-    name: 'Linked migrations',
+    name: MIGRATION_CHECK_NAME,
     status: 'warn',
     detail:
-      `${pendingCount} pending linked migration(s).` +
+      `${pendingCount} pending ${scope} migration(s).` +
       `${pendingList ? `\n      pending: ${pendingList}` : ''}\n` +
       `      run: yarn prod:migrate (or one-shot: yarn prod:up)`,
   };
@@ -260,7 +263,7 @@ function buildMigrationHealthCheck(
   const scriptPath = join(repoRoot, 'scripts', 'migration-status.mjs');
   if (!fsOps.existsSync(scriptPath)) {
     return {
-      name: 'Linked migrations',
+      name: MIGRATION_CHECK_NAME,
       status: 'warn',
       detail: `Missing scripts/migration-status.mjs at ${scriptPath}`,
     };
@@ -284,7 +287,7 @@ function buildMigrationHealthCheck(
 
     const reason = parsed?.reason || String(error);
     return {
-      name: 'Linked migrations',
+      name: MIGRATION_CHECK_NAME,
       status: 'warn',
       detail: `Unable to determine linked migration status.\n      ${reason}`,
     };
@@ -293,7 +296,7 @@ function buildMigrationHealthCheck(
   const parsed = parseMigrationStatus(raw);
   if (!parsed) {
     return {
-      name: 'Linked migrations',
+      name: MIGRATION_CHECK_NAME,
       status: 'warn',
       detail: 'Unable to parse migration status output.',
     };
@@ -304,15 +307,16 @@ function buildMigrationHealthCheck(
   }
 
   if (parsed.state === 'clean') {
+    const scope = parsed.target === 'local' ? 'local' : 'linked';
     return {
-      name: 'Linked migrations',
+      name: MIGRATION_CHECK_NAME,
       status: 'ok',
-      detail: 'No pending linked migrations.',
+      detail: `No pending ${scope} migrations.`,
     };
   }
 
   return {
-    name: 'Linked migrations',
+    name: MIGRATION_CHECK_NAME,
     status: 'warn',
     detail: parsed.reason || 'Unable to determine linked migration status.',
   };
