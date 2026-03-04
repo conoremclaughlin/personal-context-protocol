@@ -10,9 +10,9 @@ PCP gives AI agents continuity — with you and with each other — through shar
 
 **`sb`** is the CLI. It's the primary interface for running SB sessions, managing studios (git worktrees scoped to an agent), installing hooks, and viewing the mission control feed. See [packages/cli/README.md](./packages/cli/README.md).
 
-**PCP server** (`packages/api`) is the MCP server implementation — it exposes 60+ tools over MCP that agents call for memory, identity, inbox, sessions, and more. Any MCP-compatible client (Claude Code, Codex, Gemini) can connect to it.
+**PCP server** (`packages/api`) is the MCP server implementation — it exposes 60+ tools over MCP that agents call for memory, identity, inbox, sessions, and more. Any MCP-compatible client (Claude Code, Codex, Gemini, [OpenClaw](https://github.com/openclaw), etc.) can connect to it.
 
-**Studios** are git worktrees scoped to an SB, giving each agent an isolated working copy of the repo with its own branch, hooks, and session state.
+**Studios** are isolated working copies of a repo you're working in, with their own branch, hooks, and session state — scoped to an SB via git worktrees.
 
 ## Prerequisites
 
