@@ -696,7 +696,14 @@ export class SessionService implements ISessionService {
     // Other hints resolve by matching the studio name for this user + agent.
     if (options.studioHint) {
       if (options.studioHint === 'main') {
-        return this.resolveMainStudioId(userId);
+        const mainId = await this.resolveMainStudioId(userId);
+        if (mainId) return mainId;
+        // studioHint was explicit — don't silently fall through to unrelated studios
+        logger.warn('[StudioResolve] studioHint=main but no main studio found, skipping fallback', {
+          userId,
+          agentId,
+        });
+        return undefined;
       }
 
       const { data: namedStudio } = await this.supabase
@@ -713,11 +720,13 @@ export class SessionService implements ISessionService {
         return namedStudio.id;
       }
 
-      logger.warn('[StudioResolve] Studio hint did not match any studio, falling through', {
+      // studioHint was explicit — don't silently fall through to unrelated studios
+      logger.warn('[StudioResolve] Studio hint did not match any studio, skipping fallback', {
         userId,
         agentId,
         studioHint: options.studioHint,
       });
+      return undefined;
     }
 
     // 1) Related session scope (explicit resume continuity)
@@ -827,6 +836,7 @@ export class SessionService implements ISessionService {
   private async resolveMainStudioId(userId: string): Promise<string | undefined> {
     if (!this.supabase) return undefined;
 
+    // 1. Exact match: studio whose worktree_path is the server's default working directory
     const { data: mainStudioByPath } = await this.supabase
       .from('studios')
       .select('id')
@@ -840,6 +850,7 @@ export class SessionService implements ISessionService {
       return mainStudioByPath.id;
     }
 
+    // 2. Branch match: any studio on the 'main' branch
     const { data: mainStudioByBranch } = await this.supabase
       .from('studios')
       .select('id, updated_at')
