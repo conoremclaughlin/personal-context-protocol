@@ -504,7 +504,7 @@ export class MemoryRepository {
       .select('*')
       .eq('user_id', userId)
       .is('ended_at', null)
-      .not('lifecycle', 'in', '("completed","failed")')
+      .neq('lifecycle', 'failed')
       .order('started_at', { ascending: false })
       .limit(1);
 
@@ -548,7 +548,7 @@ export class MemoryRepository {
       .eq('agent_id', agentId)
       .eq('thread_key', threadKey)
       .is('ended_at', null)
-      .not('lifecycle', 'in', '("completed","failed")')
+      .neq('lifecycle', 'failed')
       .order('started_at', { ascending: false })
       .limit(1);
 
@@ -581,7 +581,7 @@ export class MemoryRepository {
       .select('*')
       .eq('user_id', userId)
       .is('ended_at', null)
-      .not('lifecycle', 'in', '("completed","failed")')
+      .neq('lifecycle', 'failed')
       .order('started_at', { ascending: false });
 
     if (agentId) {

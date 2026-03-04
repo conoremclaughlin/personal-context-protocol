@@ -141,7 +141,7 @@ export class SessionRepository implements ISessionRepository {
       .eq('user_id', userId)
       .eq('agent_id', agentId)
       .is('ended_at', null)
-      .not('lifecycle', 'in', '("completed","failed")')
+      .neq('lifecycle', 'failed')
       .order('started_at', { ascending: false })
       .limit(1);
 
@@ -191,7 +191,7 @@ export class SessionRepository implements ISessionRepository {
       .eq('agent_id', agentId)
       .eq('thread_key', threadKey)
       .is('ended_at', null)
-      .not('lifecycle', 'in', '("completed","failed")')
+      .neq('lifecycle', 'failed')
       .order('started_at', { ascending: false })
       .limit(1);
 

@@ -3631,7 +3631,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
       .limit(100);
 
     if (!includeCompleted) {
-      sessionsQuery = sessionsQuery.not('lifecycle', 'in', '("completed","failed")');
+      sessionsQuery = sessionsQuery.is('ended_at', null).neq('lifecycle', 'failed');
     }
 
     const { data: sessions, error: sessionsError } = await sessionsQuery;
@@ -3918,7 +3918,7 @@ router.get('/studios', async (req: Request, res: Response) => {
         .eq('workspace_id', authReq.pcpWorkspaceId)
         .in('agent_id', agentIds)
         .is('ended_at', null)
-        .not('lifecycle', 'in', '("completed","failed")')
+        .neq('lifecycle', 'failed')
         .order('updated_at', { ascending: false });
 
       for (const session of sessions || []) {
