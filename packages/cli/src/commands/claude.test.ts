@@ -746,6 +746,60 @@ describe('extractClaudeHistorySessionsForProject', () => {
   });
 });
 
+describe('getClaudeLocalSessionsForProject previews', () => {
+  it('extracts latest assistant preview from claude project jsonl', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-preview-'));
+    const tempHome = join(tempRoot, 'home');
+    const projectPath = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectDirName = projectPath.replace(/[\\/]/g, '-');
+    const projectDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectDir, { recursive: true });
+
+    const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    writeFileSync(
+      join(projectDir, `${sessionId}.jsonl`),
+      [
+        JSON.stringify({
+          type: 'user',
+          sessionId,
+          timestamp: '2026-03-04T08:00:00.000Z',
+          message: { role: 'user', content: 'Hello Wren' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          sessionId,
+          timestamp: '2026-03-04T08:00:05.000Z',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Hi Conor — latest assistant reply' }],
+          },
+        }),
+      ].join('\n') + '\n'
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getClaudeLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.sessionId).toBe(sessionId);
+      expect(sessions[0]?.latestPrompt).toBe('assistant: Hi Conor — latest assistant reply');
+      expect(sessions[0]?.latestPromptAt).toBe('2026-03-04T08:00:05.000Z');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('getCodexLocalSessionsForProject', () => {
   it('falls back to codex session jsonl files when sqlite db is unavailable', () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'codex-jsonl-fallback-'));
