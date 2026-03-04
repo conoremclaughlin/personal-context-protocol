@@ -7,8 +7,8 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "pm2 start ecosystem.config.cjs",
-    "dev:isolated": "PM2_HOME=.pm2 pm2 start ecosystem.config.cjs",
+    "dev": "./scripts/dev.sh",
+    "dev:isolated": "PM2_HOME=.pm2 ./scripts/dev.sh",
     "dev:direct": "./scripts/dev-direct.sh",
     "prod:direct": "./scripts/prod-direct.sh",
     "prod:refresh": "./scripts/prod-refresh.sh",

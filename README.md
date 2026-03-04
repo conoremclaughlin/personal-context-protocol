@@ -221,6 +221,7 @@ Notes:
 
 - `yarn prod:direct` does **not rebuild** on start; it uses existing build artifacts.
 - `yarn prod:direct` now warns if linked migrations appear pending.
+- `yarn dev` / `yarn dev:direct` also run the same migration-status warning check before starting.
 - To run API only (no dashboard process): `PCP_RUN_WEB=false yarn prod:direct`
 - After `git pull`, run `yarn prod:refresh` and restart your direct/PM2 process.
 - The dashboard and `sb` CLI will warn when the running server is behind local HEAD and needs a restart.

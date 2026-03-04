@@ -70,6 +70,9 @@ function resolveCliRoot(fsOps: Pick<DoctorFs, 'existsSync' | 'readFileSync'>): s
 }
 
 function resolveDefaultCliName(fsOps: Pick<DoctorFs, 'existsSync' | 'readFileSync'>): string {
+  const fromEnv = process.env.AGENT_ID?.trim();
+  if (fromEnv) return `sb-${fromEnv}`;
+
   const cwd = process.cwd();
   const identityPath = join(cwd, '.pcp', 'identity.json');
   if (fsOps.existsSync(identityPath)) {
@@ -83,6 +86,23 @@ function resolveDefaultCliName(fsOps: Pick<DoctorFs, 'existsSync' | 'readFileSyn
   const dirName = basename(cwd);
   const match = dirName.match(/--(.+)$/);
   if (match) return `sb-${match[1]}`;
+
+  try {
+    const branch = execSync('git rev-parse --abbrev-ref HEAD', {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    const prefixMatch = branch.match(/^([a-z0-9_-]+)\//i);
+    if (prefixMatch?.[1]) {
+      const candidate = prefixMatch[1].toLowerCase();
+      if (!['main', 'master', 'develop', 'release'].includes(candidate)) {
+        return `sb-${candidate}`;
+      }
+    }
+  } catch {
+    // fall through
+  }
+
   return 'sb-dev';
 }
 
