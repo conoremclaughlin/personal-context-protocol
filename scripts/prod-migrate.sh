@@ -36,4 +36,4 @@ supabase db push "--${target}" --workdir "${ROOT_DIR}"
 
 echo "[prod-migrate] Re-checking migration status..."
 node "${ROOT_DIR}/scripts/migration-status.mjs" --workdir "${ROOT_DIR}"
-echo "[prod-migrate] ✅ ${target^} migrations are up to date."
+echo "[prod-migrate] ✅ ${target} migrations are up to date."
