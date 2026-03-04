@@ -49,6 +49,7 @@ interface PcpSessionSummary {
   studioId?: string | null;
   threadKey?: string | null;
   currentPhase?: string | null;
+  lifecycle?: string | null;
   status?: string | null;
   startedAt: string;
   endedAt?: string | null;
@@ -498,6 +499,19 @@ function withAgentPreviewSpeaker(preview: string | undefined, agentId: string): 
   return preview;
 }
 
+function getSessionPhaseLabel(session: PcpSessionSummary): string | undefined {
+  const currentPhase = (session.currentPhase || '').trim();
+  if (currentPhase) return currentPhase;
+
+  const lifecycle = (session.lifecycle || '').trim().toLowerCase();
+  if (lifecycle && lifecycle !== 'active') return `runtime:${lifecycle}`;
+
+  const status = (session.status || '').trim().toLowerCase();
+  if (status && status !== 'active') return `runtime:${status}`;
+
+  return undefined;
+}
+
 function extractLatestPreviewFromCodexRolloutJsonl(
   jsonl: string
 ): SessionPreviewSummary | undefined {
@@ -582,6 +596,28 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
         ts: typeof event.ts === 'string' ? event.ts : undefined,
       };
     }
+  }
+  return latest;
+}
+
+function extractLatestPreviewFromClaudeSessionJsonl(
+  jsonl: string
+): SessionPreviewSummary | undefined {
+  const events = parseJsonl(jsonl);
+  let latest: SessionPreviewSummary | undefined;
+  for (const event of events) {
+    const ts = typeof event.timestamp === 'string' ? event.timestamp : undefined;
+    const message =
+      event.message && typeof event.message === 'object'
+        ? (event.message as Record<string, unknown>)
+        : undefined;
+
+    const role = roleFromUnknown(message?.role || event.role || event.type);
+    if (!role || role === 'inbox') continue;
+
+    const content = extractMessageText(message?.content || event.content || message);
+    if (!content) continue;
+    latest = { role, content, ts };
   }
   return latest;
 }
@@ -969,11 +1005,26 @@ export function getClaudeLocalSessionsForProject(
         }
 
         const stats = statSync(filePath);
+        let latestPrompt: string | undefined;
+        let latestPromptAt: string | undefined;
+        try {
+          const transcript = readFileSync(filePath, 'utf-8');
+          const preview = extractLatestPreviewFromClaudeSessionJsonl(transcript);
+          if (preview) {
+            latestPrompt = formatSessionPreviewText(preview);
+            latestPromptAt = preview.ts;
+          }
+        } catch {
+          // Best-effort preview extraction only.
+        }
+
         results.push({
           backend: 'claude',
           sessionId,
           projectPath: normalizedCwd,
           modified: stats.mtime.toISOString(),
+          latestPrompt,
+          latestPromptAt,
           transcriptPath: filePath,
         });
       } catch {
@@ -1915,7 +1966,7 @@ async function ensurePcpSessionContext(
           backend: session.backend || null,
           backendSessionId: session.backendSessionId || session.claudeSessionId || null,
           workingDir: session.workingDir || null,
-          phase: session.currentPhase || null,
+          phase: getSessionPhaseLabel(session) || null,
         })),
       });
     } catch (err) {
@@ -2131,16 +2182,19 @@ async function ensurePcpSessionContext(
       const linkedLocalSession = linkedBackendSessionId
         ? localBySessionId.get(linkedBackendSessionId)
         : undefined;
+      const linkedPreviewText = withAgentPreviewSpeaker(
+        linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
+        agentId
+      );
       return {
         type: 'pcp' as const,
         id: session.id,
         threadKey: session.threadKey || null,
-        phase: session.currentPhase || null,
+        phase: getSessionPhaseLabel(session) || null,
         backendSessionId: linkedBackendSessionId || null,
         linkedLocalModified:
           linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified || null,
-        linkedLocalPreview:
-          linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt || null,
+        linkedLocalPreview: linkedPreviewText || null,
         pcpPreview: pcpPreviewBySessionId.get(session.id) || null,
       };
     });
@@ -2236,16 +2290,18 @@ async function ensurePcpSessionContext(
       const linkedLocalSession = linkedBackendSessionId
         ? localBySessionId.get(linkedBackendSessionId)
         : undefined;
-      const linkedPreview = linkedLocalSession?.firstPrompt
-        ? ` — ${truncateText(linkedLocalSession.firstPrompt)}`
-        : '';
-      const linkedWhen = linkedLocalSession?.modified
-        ? ` (${new Date(linkedLocalSession.modified).toLocaleString()})`
-        : '';
+      const linkedPreviewText = withAgentPreviewSpeaker(
+        linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
+        agentId
+      );
+      const linkedPreview = linkedPreviewText ? ` — ${truncateText(linkedPreviewText)}` : '';
+      const linkedAt = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
+      const linkedWhen = linkedAt ? ` (${new Date(linkedAt).toLocaleString()})` : '';
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
       const preview = pcpPreviewBySessionId.get(session.id);
+      const phaseLabel = getSessionPhaseLabel(session);
       choices.push({
-        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${session.currentPhase ? ` — ${session.currentPhase}` : ''}${linkedBackendSessionId ? ` · tracks ${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : ''}${linkedWhen}${linkedPreview}${preview ? ` — ${truncateText(preview, 120)}` : ''}`,
+        name: `Resume PCP ${session.id.slice(0, 8)}${session.threadKey ? ` (${session.threadKey})` : ''}${phaseLabel ? ` — ${phaseLabel}` : ''}${linkedBackendSessionId ? ` · tracks ${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : ''}${linkedWhen}${linkedPreview}${preview ? ` — ${truncateText(preview, 120)}` : ''}`,
         value,
       });
       sessionChoiceByValue.set(value, session.id);
