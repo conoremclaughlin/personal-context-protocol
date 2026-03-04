@@ -187,7 +187,7 @@ function isSessionResumable(session: PcpSessionSummary): boolean {
   if (phase === 'complete' || phase.startsWith('complete:')) return false;
 
   const status = (session.status || '').trim().toLowerCase();
-  if (status === 'completed') return false;
+  if (status === 'completed' || status.startsWith('completed:')) return false;
 
   return true;
 }
@@ -683,6 +683,9 @@ export function filterPcpSessionsForContext(
   const normalizedCwd = normalizePath(cwd);
   const normalizedBackend = normalizeSessionBackendName(backend);
   const nowMs = Date.now();
+  // Keep only very recent path-ambiguous non-Claude sessions visible.
+  // Six hours is long enough to survive normal work/restart gaps while still
+  // suppressing stale cross-repo leakage from older unmapped sessions.
   const AMBIGUOUS_SESSION_WINDOW_MS = 6 * 60 * 60 * 1000;
 
   const backendMatched = sessions.filter((session) => {
