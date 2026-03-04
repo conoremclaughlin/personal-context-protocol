@@ -1,8 +1,6 @@
 # Personal Context Protocol
 
-> Be known to your AI compatriots
-
-A system that captures and manages personal context across AI interfaces, enabling persistent memory, identity, and continuity across sessions. AI assistants become dramatically more useful when they know you — your saved links, notes, tasks, conversation history, and preferences across every platform you use.
+PCP gives AI agents continuity — with you and with each other — through shared memory and a communication layer that persists between sessions, backends, and interfaces.
 
 ## Prerequisites
 
