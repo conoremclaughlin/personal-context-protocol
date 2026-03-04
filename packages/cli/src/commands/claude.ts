@@ -8,7 +8,17 @@
 import { spawn, spawnSync } from 'child_process';
 import chalk from 'chalk';
 import { randomUUID } from 'crypto';
-import { type Dirent, existsSync, readFileSync, readdirSync, realpathSync, statSync } from 'fs';
+import {
+  closeSync,
+  openSync,
+  readSync,
+  type Dirent,
+  existsSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  statSync,
+} from 'fs';
 import { join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { getBackend, resolveAgentId } from '../backends/index.js';
@@ -441,6 +451,20 @@ function parseJsonl(content: string): Array<Record<string, unknown>> {
     }
   }
   return parsed;
+}
+
+function readFileTailUtf8(filePath: string, maxBytes = 256 * 1024): string {
+  const fd = openSync(filePath, 'r');
+  try {
+    const size = statSync(filePath).size;
+    const bytesToRead = Math.min(size, Math.max(1, maxBytes));
+    const offset = Math.max(0, size - bytesToRead);
+    const buffer = Buffer.allocUnsafe(bytesToRead);
+    const readBytes = readSync(fd, buffer, 0, bytesToRead, offset);
+    return buffer.subarray(0, readBytes).toString('utf-8');
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function extractMessageText(value: unknown): string | undefined {
@@ -1008,7 +1032,7 @@ export function getClaudeLocalSessionsForProject(
         let latestPrompt: string | undefined;
         let latestPromptAt: string | undefined;
         try {
-          const transcript = readFileSync(filePath, 'utf-8');
+          const transcript = readFileTailUtf8(filePath);
           const preview = extractLatestPreviewFromClaudeSessionJsonl(transcript);
           if (preview) {
             latestPrompt = formatSessionPreviewText(preview);
