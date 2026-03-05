@@ -151,7 +151,7 @@ Notes:
 ```
 personal-context-protocol/
 ├── packages/
-│   ├── api/              # PCP server (MCP tools, services, data layer) [FSL-1.1-MIT]
+│   ├── api/              # PCP server (MCP tools, services, data layer)
 │   ├── cli/              # SB CLI (sb command)
 │   ├── shared/           # Shared types and utilities
 │   ├── spec/             # PCP Protocol Specification
