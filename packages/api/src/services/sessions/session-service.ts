@@ -9,6 +9,7 @@
  */
 
 import { randomUUID } from 'crypto';
+import { access } from 'fs/promises';
 import { SupabaseClient } from '@supabase/supabase-js';
 import jwt from 'jsonwebtoken';
 import type { Database } from '../../data/supabase/types.js';
@@ -870,7 +871,20 @@ export class SessionService implements ISessionService {
       .maybeSingle();
 
     if (studio?.worktree_path) {
-      return studio.worktree_path;
+      const pathExists = await access(studio.worktree_path)
+        .then(() => true)
+        .catch(() => false);
+      if (pathExists) {
+        return studio.worktree_path;
+      }
+      logger.warn('Studio worktree path does not exist; falling back to default', {
+        userId,
+        agentId,
+        studioId,
+        worktreePath: studio.worktree_path,
+        defaultWorkingDirectory: this.config.defaultWorkingDirectory,
+      });
+      return this.config.defaultWorkingDirectory;
     }
 
     logger.warn('Studio not found for session; using default working directory', {

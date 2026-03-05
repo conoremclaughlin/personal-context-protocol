@@ -667,7 +667,7 @@ When you complete a task_request, mark it as completed using update_inbox_messag
     }
 
     if (!result.success) {
-      logger.error(`[Trigger] SessionService failed for ${targetAgentId}:`, result.error);
+      logger.error(`[Trigger] SessionService failed for ${targetAgentId}: ${result.error}`);
       throw new Error(result.error || 'SessionService processing failed');
     }
 
