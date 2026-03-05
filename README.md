@@ -106,6 +106,10 @@ If you're using [OpenClaw](https://github.com/openclaw) or another MCP-compatibl
 
 The agent can then call `bootstrap`, `remember`, `recall`, `send_to_inbox`, and all other PCP tools directly.
 
+### Pro tips
+
+- Install [z](https://github.com/rupa/z) (or [zoxide](https://github.com/ajeetdsouza/zoxide)) and [oh-my-zsh](https://ohmyz.sh/) for fast directory jumping between studios — each studio is a separate worktree, and `z wren` or `z lumen` beats typing full paths.
+
 ## Docker app deployment (one-click, Supabase external)
 
 If you want a one-command runtime for PCP + web dashboard, you can run the app stack in Docker and point it at an existing Supabase (hosted or local).
