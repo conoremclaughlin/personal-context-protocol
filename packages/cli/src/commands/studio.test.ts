@@ -10,6 +10,9 @@ import { tmpdir } from 'os';
 import {
   planInit,
   getWorktreePaths,
+  getWorktreeBranchMap,
+  removeStudioWorktreeOrFolder,
+  listStudios,
   getStudioPrefix,
   resolveCopySourceRoot,
   updateIdentityForStudioRename,
@@ -90,6 +93,53 @@ describe('Studio Commands', () => {
       const worktreeList = git('worktree list', TEST_REPO);
       expect(worktreeList).toContain(TEST_REPO);
       expect(worktreeList).toContain(worktreePath);
+    });
+
+    it('should ignore stale prefixed folders in studio list', () => {
+      const realRepo = git('rev-parse --show-toplevel', TEST_REPO);
+      const parent = join(realRepo, '..');
+
+      const validName = 'active';
+      const validPath = join(parent, `test-repo--${validName}`);
+      git(`worktree add -b wren/studio/${validName} "${validPath}"`, realRepo);
+
+      // Simulate stale folder left behind by rename/remove mismatch.
+      const stalePath = join(parent, 'test-repo--stale');
+      mkdirSync(stalePath, { recursive: true });
+
+      const studios = listStudios(realRepo);
+      const names = studios.map((s) => s.name);
+
+      expect(names).toContain(validName);
+      expect(names).not.toContain('stale');
+    });
+
+    it('removes stale non-worktree folders without throwing', () => {
+      const realRepo = git('rev-parse --show-toplevel', TEST_REPO);
+      const parent = join(realRepo, '..');
+      const stalePath = join(parent, 'test-repo--stale');
+      mkdirSync(stalePath, { recursive: true });
+
+      const removedKind = removeStudioWorktreeOrFolder(realRepo, stalePath, true);
+      expect(removedKind).toBe('folder');
+      expect(existsSync(stalePath)).toBe(false);
+    });
+
+    it('removes registered worktrees via git worktree remove', () => {
+      const realRepo = git('rev-parse --show-toplevel', TEST_REPO);
+      const parent = join(realRepo, '..');
+      const wtPath = join(parent, 'test-repo--remove-me');
+      git(`worktree add -b wren/studio/remove-me "${wtPath}"`, realRepo);
+
+      const before = getWorktreeBranchMap(realRepo);
+      expect(before.has(wtPath)).toBe(true);
+
+      const removedKind = removeStudioWorktreeOrFolder(realRepo, wtPath, true);
+      expect(removedKind).toBe('worktree');
+      expect(existsSync(wtPath)).toBe(false);
+
+      const after = getWorktreeBranchMap(realRepo);
+      expect(after.has(wtPath)).toBe(false);
     });
 
     it('should remove worktree', () => {

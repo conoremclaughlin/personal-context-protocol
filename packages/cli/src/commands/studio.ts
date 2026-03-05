@@ -27,6 +27,7 @@ import {
   renameSync,
   cpSync,
   statSync,
+  rmSync,
 } from 'fs';
 import {
   join,
@@ -170,25 +171,19 @@ function listStudios(gitRoot: string): StudioInfo[] {
   const parentDir = getStudioParent(gitRoot);
   const studios: StudioInfo[] = [];
 
-  const worktreeOutput = git('worktree list --porcelain', gitRoot);
-  const worktrees = new Map<string, string>();
-
-  let currentPath = '';
-  for (const line of worktreeOutput.split('\n')) {
-    if (line.startsWith('worktree ')) {
-      currentPath = line.substring(9);
-    } else if (line.startsWith('branch ')) {
-      worktrees.set(currentPath, line.substring(7).replace('refs/heads/', ''));
-    }
-  }
+  const worktrees = getWorktreeBranchMap(gitRoot);
 
   const prefix = getStudioPrefix(gitRoot);
   if (existsSync(parentDir)) {
     for (const entry of readdirSync(parentDir)) {
       if (entry.startsWith(prefix)) {
-        const wsPath = join(parentDir, entry);
+        const wsPath = resolvePath(join(parentDir, entry));
         const name = entry.slice(prefix.length);
-        const branch = worktrees.get(wsPath) || 'unknown';
+
+        // Ignore stale folders that match the naming convention but are not
+        // registered as git worktrees.
+        const branch = worktrees.get(wsPath);
+        if (!branch) continue;
 
         let identity: StudioIdentity | undefined;
         const identityPath = join(wsPath, '.pcp', 'identity.json');
@@ -212,19 +207,43 @@ function listStudios(gitRoot: string): StudioInfo[] {
  * Get all worktree paths registered with git (excluding the main worktree).
  */
 function getWorktreePaths(gitRoot: string): string[] {
-  const output = git('worktree list --porcelain', gitRoot);
-  const paths: string[] = [];
+  const worktreeMap = getWorktreeBranchMap(gitRoot);
+  return [...worktreeMap.keys()].filter((path) => path !== resolvePath(gitRoot));
+}
 
-  for (const line of output.split('\n')) {
+function getWorktreeBranchMap(gitRoot: string): Map<string, string> {
+  const worktreeOutput = git('worktree list --porcelain', gitRoot);
+  const worktrees = new Map<string, string>();
+
+  let currentPath = '';
+  for (const line of worktreeOutput.split('\n')) {
     if (line.startsWith('worktree ')) {
-      const path = line.substring(9);
-      if (path !== gitRoot) {
-        paths.push(path);
-      }
+      currentPath = resolvePath(line.substring(9));
+    } else if (line.startsWith('branch ')) {
+      worktrees.set(currentPath, line.substring(7).replace('refs/heads/', ''));
     }
   }
 
-  return paths;
+  return worktrees;
+}
+
+function removeStudioWorktreeOrFolder(
+  gitRoot: string,
+  wsPath: string,
+  force = false
+): 'worktree' | 'folder' {
+  const normalizedPath = resolvePath(wsPath);
+  const worktrees = getWorktreeBranchMap(gitRoot);
+
+  if (worktrees.has(normalizedPath)) {
+    const forceFlag = force ? ' --force' : '';
+    git(`worktree remove "${normalizedPath}"${forceFlag}`, gitRoot);
+    return 'worktree';
+  }
+
+  // Folder exists but is not a registered worktree: clean the stale folder.
+  rmSync(normalizedPath, { recursive: true, force: true });
+  return 'folder';
 }
 
 // ============================================================================
@@ -1014,8 +1033,11 @@ async function removeStudio(name: string): Promise<void> {
       process.exit(1);
     }
 
-    git(`worktree remove "${wsPath}"`, gitRoot);
+    const removedKind = removeStudioWorktreeOrFolder(gitRoot, wsPath);
     spinner.succeed(`Studio removed: ${name}`);
+    if (removedKind === 'folder') {
+      console.log(chalk.dim('  Removed stale folder (not registered as a git worktree).'));
+    }
     console.log(chalk.dim('  Branch kept for PR. Use "sb studio clean" to also delete branch.'));
   } catch (error) {
     spinner.fail(`Failed to remove studio: ${error}`);
@@ -1042,22 +1064,17 @@ async function cleanStudio(name: string): Promise<void> {
       }
     }
 
+    const worktreeMap = getWorktreeBranchMap(gitRoot);
     if (!branch) {
-      // Look up branch from git worktree list
-      const worktreeOutput = git('worktree list --porcelain', gitRoot);
-      let currentPath = '';
-      for (const line of worktreeOutput.split('\n')) {
-        if (line.startsWith('worktree ')) {
-          currentPath = line.substring(9);
-        } else if (line.startsWith('branch ') && currentPath === wsPath) {
-          branch = line.substring(7).replace('refs/heads/', '');
-        }
-      }
+      branch = worktreeMap.get(resolvePath(wsPath));
     }
 
-    if (existsSync(wsPath)) {
+    if (existsSync(wsPath) || worktreeMap.has(resolvePath(wsPath))) {
       spinner.text = 'Removing worktree...';
-      git(`worktree remove "${wsPath}" --force`, gitRoot);
+      const removedKind = removeStudioWorktreeOrFolder(gitRoot, wsPath, true);
+      if (removedKind === 'folder') {
+        console.log(chalk.dim('  Removed stale folder (not registered as a git worktree).'));
+      }
     }
 
     if (branch && branchExists(branch, gitRoot)) {
@@ -1313,8 +1330,11 @@ export {
   findGitRoot,
   getStudioParent,
   getStudioPrefix,
+  listStudios,
   getStudioPath,
   getWorktreePaths,
+  getWorktreeBranchMap,
+  removeStudioWorktreeOrFolder,
   updateIdentityForStudioRename,
   resolveCopySourceRoot,
   resolveRoleTemplate,
