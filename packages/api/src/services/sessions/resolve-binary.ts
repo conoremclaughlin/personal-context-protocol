@@ -1,7 +1,7 @@
 /**
  * Binary Path Resolution
  *
- * Resolves CLI binary paths (claude, codex) with fallback to zsh login shell.
+ * Resolves CLI binary paths (claude, codex, gemini) with fallback to zsh login shell.
  * Node's spawn() only searches the current process PATH, which may be a
  * stripped-down bash PATH missing user-installed tools (nvm, homebrew, etc.).
  *
@@ -9,9 +9,15 @@
  *   1. Check current process PATH via `which`
  *   2. Fall back to `zsh -ilc 'which <binary>'` to pick up login shell paths
  *   3. Cache resolved paths for the process lifetime
+ *
+ * Also provides `buildSpawnPath()` to augment the child process PATH with
+ * the resolved binary's directory. This is critical for shebang scripts
+ * (e.g. `#!/usr/bin/env node`) — without the binary's directory on PATH,
+ * `env` can't find the interpreter and spawn fails with ENOENT.
  */
 
 import { execFile } from 'child_process';
+import { dirname } from 'path';
 import { promisify } from 'util';
 import { logger } from '../../utils/logger.js';
 
@@ -64,4 +70,25 @@ export async function resolveBinaryPath(binary: string): Promise<string> {
     `Could not resolve ${binary} in PATH or zsh login shell. Spawn will likely fail with ENOENT.`
   );
   return binary;
+}
+
+/**
+ * Build a PATH string for child process env that includes the resolved
+ * binary's directory. This ensures shebang scripts (`#!/usr/bin/env node`)
+ * can find the interpreter even when the server's own PATH doesn't include it.
+ *
+ * Example: if codex resolves to `/Users/x/.nvm/versions/node/v22/bin/codex`,
+ * this prepends `/Users/x/.nvm/versions/node/v22/bin` to PATH so `env node`
+ * finds node in that same directory.
+ */
+export function buildSpawnPath(resolvedBinaryPath: string): string {
+  const binDir = dirname(resolvedBinaryPath);
+  const currentPath = process.env.PATH || '';
+
+  // Don't duplicate if already present
+  if (currentPath.split(':').includes(binDir)) {
+    return currentPath;
+  }
+
+  return `${binDir}:${currentPath}`;
 }
