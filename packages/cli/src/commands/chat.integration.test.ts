@@ -82,6 +82,8 @@ describe('runChat integration', () => {
   let logSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-02-27T00:00:00.000Z'));
     testState.inputs = [];
     testState.pcpCalls = [];
     testState.identity = { workspaceId: 'studio-test' };
@@ -129,6 +131,7 @@ describe('runChat integration', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     logSpy.mockRestore();
     if (originalPolicyPath === undefined) delete process.env.PCP_TOOL_POLICY_PATH;
     else process.env.PCP_TOOL_POLICY_PATH = originalPolicyPath;
