@@ -623,6 +623,96 @@ describe('admin endpoint handlers (no-500 regression)', () => {
   });
 
   // =========================================================================
+  // GET /sessions/:id/logs — loaded by session log viewer page
+  // =========================================================================
+
+  describe('GET /sessions/:id/logs', () => {
+    it('returns 200 for legacy session rows scoped by agent identity', async () => {
+      const handler = findRouteHandler('get', '/sessions/:id/logs');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'agent_identities') {
+          return createQueryChain([{ id: 'identity-1', agent_id: 'wren' }]);
+        }
+
+        if (table === 'sessions') {
+          return createQueryChain([
+            {
+              id: 'session-legacy',
+              identity_id: null,
+              agent_id: 'wren',
+              status: 'active',
+              current_phase: 'runtime:idle',
+              started_at: '2026-03-04T08:00:00Z',
+              updated_at: '2026-03-04T08:30:00Z',
+              ended_at: null,
+              backend: 'claude',
+              backend_session_id: 'backend-2',
+              claude_session_id: null,
+            },
+          ]);
+        }
+
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq({
+        params: { id: 'session-legacy' },
+        query: { limit: '20', offset: '0', includeLocal: 'false' },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      const json = res._json as any;
+      expect(json.session.id).toBe('session-legacy');
+      expect(json.logs).toEqual([]);
+    });
+
+    it('returns 404 when session identity is outside active workspace', async () => {
+      const handler = findRouteHandler('get', '/sessions/:id/logs');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'agent_identities') {
+          return createQueryChain([{ id: 'identity-1', agent_id: 'wren' }]);
+        }
+
+        if (table === 'sessions') {
+          return createQueryChain([
+            {
+              id: 'session-other-workspace',
+              identity_id: 'identity-other',
+              agent_id: 'wren',
+              status: 'active',
+              current_phase: 'runtime:idle',
+              started_at: '2026-03-04T08:00:00Z',
+              updated_at: '2026-03-04T08:30:00Z',
+              ended_at: null,
+              backend: 'claude',
+              backend_session_id: 'backend-2',
+              claude_session_id: null,
+            },
+          ]);
+        }
+
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq({
+        params: { id: 'session-other-workspace' },
+        query: { limit: '20', offset: '0', includeLocal: 'false' },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._json).toEqual({ error: 'Session not found' });
+    });
+  });
+
+  // =========================================================================
   // GET /artifacts — loaded by artifacts page
   // =========================================================================
 
