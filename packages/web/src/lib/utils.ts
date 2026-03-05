@@ -30,12 +30,12 @@ export function getAgentGradient(agentId: string): string {
 
 /**
  * Parse studio slug from worktree folder convention: "<repo>--<slug>".
- * Uses the last "--" so repo names containing "--" still resolve correctly.
+ * Uses the first "--" because the slug itself may include "--".
  */
 export function deriveStudioSlugFromWorktreePath(worktreePath: string | null): string | null {
   if (!worktreePath) return null;
   const folder = worktreePath.split('/').pop() || '';
-  const separatorIdx = folder.lastIndexOf('--');
+  const separatorIdx = folder.indexOf('--');
   if (separatorIdx === -1) return null;
   return folder.slice(separatorIdx + 2) || null;
 }

@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
-import { deriveRepoName } from '@/lib/utils';
 
 interface SessionWorkspace {
   id: string;
@@ -188,9 +187,7 @@ function SessionCard({ session }: { session: Session }) {
   const [expanded, setExpanded] = useState(false);
   const state = getSessionState(session);
   const phaseLabel = session.currentPhase;
-  const repoName =
-    session.studio?.repoName ||
-    deriveRepoName(session.studio?.repoRoot || null, session.studio?.worktreePath);
+  const repoName = session.studio?.repoName;
 
   return (
     <div className={clsx('rounded-lg border p-4', state.cardClass)}>
