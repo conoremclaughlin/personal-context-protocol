@@ -100,6 +100,8 @@ function getSessionState(session: Session): {
   badgeClass: string;
   phaseClass: string;
 } {
+  const normalizedStatus = String(session.status || '').toLowerCase();
+
   if (isBlocked(session)) {
     return {
       label: 'Blocked',
@@ -109,7 +111,7 @@ function getSessionState(session: Session): {
     };
   }
 
-  if (session.status === 'paused') {
+  if (normalizedStatus === 'paused') {
     return {
       label: 'Paused',
       cardClass: 'border-gray-200',
@@ -136,7 +138,25 @@ function getSessionState(session: Session): {
     };
   }
 
-  if (session.status === 'active') {
+  if (normalizedStatus === 'resumable') {
+    return {
+      label: 'Resumable',
+      cardClass: 'border-violet-200 bg-violet-50/50',
+      badgeClass: 'bg-violet-100 text-violet-700',
+      phaseClass: 'text-violet-700',
+    };
+  }
+
+  if (normalizedStatus === 'idle') {
+    return {
+      label: 'Idle',
+      cardClass: 'border-green-200 bg-green-50/50',
+      badgeClass: 'bg-green-100 text-green-700',
+      phaseClass: 'text-green-700',
+    };
+  }
+
+  if (normalizedStatus === 'active' || normalizedStatus === 'running') {
     return {
       label: 'Active',
       cardClass: 'border-green-200 bg-green-50/50',
@@ -146,7 +166,7 @@ function getSessionState(session: Session): {
   }
 
   return {
-    label: session.status,
+    label: session.status || 'unknown',
     cardClass: 'border-gray-200',
     badgeClass: 'bg-gray-100 text-gray-600',
     phaseClass: 'text-gray-600',
