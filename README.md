@@ -50,8 +50,7 @@ yarn prod
 
 ```bash
 # Build and install the CLI
-yarn workspace @personal-context/cli build
-yarn workspace @personal-context/cli install:cli
+yarn build:cli && yarn workspace @personal-context/cli install:cli
 
 # Log in (opens browser for OAuth)
 sb auth login

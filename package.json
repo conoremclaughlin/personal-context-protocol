@@ -40,6 +40,7 @@
     "ws:status": "yarn ws status",
     "pr:wait-reply": "node scripts/wait-pr-reply.mjs",
     "build": "yarn workspaces foreach -A -t run build",
+    "build:cli": "yarn install && yarn workspace @personal-context/cli build",
     "build:web": "yarn workspace @personal-context/web build",
     "test": "yarn workspaces foreach -A -t run test",
     "docker:app:up": "bash ./scripts/docker-app-up.sh",
