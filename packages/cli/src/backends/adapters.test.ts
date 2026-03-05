@@ -105,7 +105,7 @@ describe('backend adapters session resume wiring', () => {
     expect(prepared.args).toContain('--dangerously-skip-permissions');
   });
 
-  it('maps --dangerous to codex --full-auto', () => {
+  it('maps --dangerous to codex --dangerously-bypass-approvals-and-sandbox', () => {
     const adapter = new CodexAdapter();
     const prepared = adapter.prepare({
       agentId: 'lumen',
@@ -116,7 +116,7 @@ describe('backend adapters session resume wiring', () => {
     });
 
     try {
-      expect(prepared.args).toContain('--full-auto');
+      expect(prepared.args).toContain('--dangerously-bypass-approvals-and-sandbox');
     } finally {
       prepared.cleanup();
     }
@@ -157,7 +157,7 @@ describe('backend adapters session resume wiring', () => {
       passthroughArgs: [],
     });
     try {
-      expect(codexPrep.args).not.toContain('--full-auto');
+      expect(codexPrep.args).not.toContain('--dangerously-bypass-approvals-and-sandbox');
     } finally {
       codexPrep.cleanup();
     }
