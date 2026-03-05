@@ -41,6 +41,7 @@ import { resolveAgentFromMention } from './services/routing/resolve-mention';
 import { getHeartbeatProcessingConfig } from './config/heartbeat-flags';
 import { classifyError } from '@personal-context/shared';
 import { logger } from './utils/logger';
+import { getUserFromContext } from './utils/request-context';
 import { env } from './config/env';
 
 // Server configuration
@@ -476,7 +477,7 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
       studioHint: payload.studioHint,
     });
 
-    // 1. Resolve userId (+ identity hint) from inbox message (required for stateless processing)
+    // 1. Resolve userId (+ identity hint) from inbox message or auth context
     let userId: string | undefined;
     let recipientIdentityId: string | undefined;
     if (payload.inboxMessageId) {
@@ -496,9 +497,20 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
       recipientIdentityId = inboxMsg?.recipient_identity_id || undefined;
     }
 
+    // Fall back to authenticated user from OAuth context (trigger_agent called directly)
+    if (!userId) {
+      const authUser = getUserFromContext();
+      userId = authUser?.userId;
+      if (userId) {
+        logger.info(`[Trigger] Resolved userId from auth context for ${targetAgentId}`);
+      }
+    }
+
     if (!userId) {
       logger.error(`[Trigger] Cannot process - no userId found for agent ${targetAgentId}`);
-      throw new Error('Cannot process trigger without userId (inbox message required)');
+      throw new Error(
+        'Cannot process trigger without userId (no inbox message and no auth context)'
+      );
     }
 
     // 2. Resolve and verify target identity for this user
