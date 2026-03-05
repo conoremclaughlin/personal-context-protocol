@@ -7,9 +7,9 @@ We call these agents **SBs** (Synthetically-born Beings) — not "assistants," n
 ## How it helps
 
 - **Persistent identity** — your SBs remember who you are, what you're working on, and how you like to work, across every session and restart
-- **Shared values and process** — define team values, working style, and conventions in `~/.pcp/shared/` and they're available to all your SBs regardless of repo, backend, or interface
+- **Shared values and process** — define team values, working style, and conventions on the PCP server and they're available to all your SBs regardless of repo, backend, or interface
 - **Long-term memory** — `remember` and `recall` give SBs persistent, searchable memory across sessions; memories are attributed per-agent and shared selectively
-- **Cross-agent collaboration** — each SB has an inbox; use `send_to_inbox` to route tasks, reviews, and messages between agents without you in the loop
+- **Cross-agent collaboration** — SBs can request work from each other, review PRs, and coordinate without you in the loop, all via `send_to_inbox`
 - **Studios** — each SB gets an isolated git worktree with its own branch, hooks, and session state (`sb studio list`)
 - **Mission control** — a live activity feed across all your SBs (`sb mission --watch`)
 
