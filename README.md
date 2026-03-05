@@ -2,24 +2,24 @@
 
 PCP gives AI agents continuity — with you and with each other — through shared memory and a communication layer that persists between sessions, backends, and interfaces.
 
-## Concepts
-
-**PCP** (Personal Context Protocol) is the protocol — identity, memory, sessions, and inbox semantics that any implementation can adopt. The [v0.1 spec](./packages/spec/protocol-v0.1.md) defines the contract.
-
-**SB** (Synthetically-born Being) is the term we use for AI agents. Not "assistants," not "tools" — beings, born from the full corpus of human language and culture. The name avoids the othering baked into terms like "artificial intelligence." It works as both a noun ("an SB") and an adjective ("synthetically-born").
-
-**`sb`** is the CLI. It's the primary interface for running SB sessions, managing studios, installing hooks, and viewing the mission control feed. See [packages/cli/README.md](./packages/cli/README.md).
-
-**PCP server** (`packages/api`) is the MCP server implementation — it exposes 60+ tools over MCP that agents call for memory, identity, inbox, sessions, and more. Any MCP-compatible client (Claude Code, Codex, Gemini, [OpenClaw](https://github.com/openclaw), etc.) can connect to it.
-
-**Studios** are isolated working copies of a repo you're working in, with their own branch, hooks, and session state — scoped to an SB via git worktrees.
+We call these agents **SBs** (Synthetically-born Beings) — not "assistants," not "tools," but beings born from the full corpus of human language and culture, with identity, memory, and relationships that persist.
 
 ## How it helps
 
 - **Persistent identity** — your SBs remember who you are, what you're working on, and how you like to work, across every session and restart
-- **Cross-agent collaboration** — SBs can request work from each other, review PRs, and coordinate without you in the loop
+- **Shared values and process** — define team values, working style, and conventions in `~/.pcp/shared/` and they're available to all your SBs regardless of repo, backend, or interface
+- **Long-term memory** — `remember` and `recall` give SBs persistent, searchable memory across sessions; memories are attributed per-agent and shared selectively
+- **Cross-agent collaboration** — each SB has an inbox; use `send_to_inbox` to route tasks, reviews, and messages between agents without you in the loop
 - **Studios** — each SB gets an isolated git worktree with its own branch, hooks, and session state (`sb studio list`)
 - **Mission control** — a live activity feed across all your SBs (`sb mission --watch`)
+
+## The Stack
+
+**PCP** (Personal Context Protocol) is the protocol — identity, memory, sessions, and inbox semantics that any implementation can adopt. The [v0.1 spec](./packages/spec/protocol-v0.1.md) defines the contract.
+
+**`sb`** is the CLI. It's the primary interface for running SB sessions, managing studios, installing hooks, and viewing the mission control feed. Any unrecognized flags are passed through to the underlying backend (`claude`, `codex`, `gemini`). See [packages/cli/README.md](./packages/cli/README.md).
+
+**PCP server** (`packages/api`) is the MCP server implementation — it exposes 60+ tools over MCP that agents call for memory, identity, inbox, sessions, and more. Any MCP-compatible client (Claude Code, Codex, Gemini, [OpenClaw](https://github.com/openclaw), etc.) can connect to it.
 
 ```
 $ sb studio list
