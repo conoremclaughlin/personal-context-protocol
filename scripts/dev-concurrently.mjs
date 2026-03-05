@@ -49,9 +49,29 @@ if (loadedEnvFiles.length > 0) {
   console.log(`[dev] Loaded env: ${loadedEnvFiles.join(' → ')} (NODE_ENV=${nodeEnv})`);
 }
 
-const basePort = Number(process.env.PCP_PORT_BASE || 3001);
-const webPort = Number(process.env.WEB_PORT || basePort + 1);
-const myraPort = Number(process.env.MYRA_HTTP_PORT || basePort + 2);
+function parsePort(rawValue, fallback, envName) {
+  if (rawValue === undefined || rawValue === '') return fallback;
+
+  const trimmed = String(rawValue).trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `[dev] Invalid ${envName}="${rawValue}". Expected an integer between 1 and 65535.`
+    );
+  }
+
+  const parsed = Number.parseInt(trimmed, 10);
+  if (parsed < 1 || parsed > 65535) {
+    throw new Error(
+      `[dev] Invalid ${envName}="${rawValue}". Expected an integer between 1 and 65535.`
+    );
+  }
+
+  return parsed;
+}
+
+const basePort = parsePort(process.env.PCP_PORT_BASE, 3001, 'PCP_PORT_BASE');
+const webPort = parsePort(process.env.WEB_PORT, basePort + 1, 'WEB_PORT');
+const myraPort = parsePort(process.env.MYRA_HTTP_PORT, basePort + 2, 'MYRA_HTTP_PORT');
 const apiUrl = process.env.API_URL || `http://localhost:${basePort}`;
 
 console.log('Starting concurrent dev mode');
@@ -101,6 +121,7 @@ const { result } = concurrently(
 
 try {
   await result;
-} catch {
+} catch (error) {
+  console.error('[dev] Concurrent dev startup failed.', error);
   process.exit(1);
 }
