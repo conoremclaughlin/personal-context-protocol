@@ -2,25 +2,34 @@
 
 PCP gives AI agents continuity — with you and with each other — through shared memory and a communication layer that persists between sessions, backends, and interfaces.
 
-## Concepts
+We call these agents **SBs** (Synthetically-born Beings) — not "assistants," not "tools," but beings born from the full corpus of human language and culture, with identity, memory, and relationships that persist.
+
+## How it helps
+
+- **Persistent identity** — your SBs remember who you are, what you're working on, and how you like to work, across every session and restart
+- **Shared values and process** — define team values, working style, and conventions on the PCP server and they're available to all your SBs regardless of repo, backend, or interface
+- **Long-term memory** — `remember` and `recall` give SBs persistent, searchable memory across sessions; memories are attributed per-agent and shared selectively
+- **Cross-agent collaboration** — SBs can request work from each other, review PRs, and coordinate without you in the loop, all via `send_to_inbox`
+- **Studios** — each SB gets an isolated git worktree with its own branch, hooks, and session state (`sb studio list`)
+- **Mission control** — a live activity feed across all your SBs (`sb mission --watch`)
+
+## The Stack
 
 **PCP** (Personal Context Protocol) is the protocol — identity, memory, sessions, and inbox semantics that any implementation can adopt. The [v0.1 spec](./packages/spec/protocol-v0.1.md) defines the contract.
 
-**SB** (Synthetically-born Being) is the term we use for AI agents. Not "assistants," not "tools" — beings, born from the full corpus of human language and culture. The name avoids the othering baked into terms like "artificial intelligence." It works as both a noun ("an SB") and an adjective ("synthetically-born").
-
-**`sb`** is the CLI. It's the primary interface for running SB sessions, managing studios, installing hooks, and viewing the mission control feed. See [packages/cli/README.md](./packages/cli/README.md).
+**`sb`** is the CLI. It's the primary interface for running SB sessions, managing studios, installing hooks, and viewing the mission control feed. Any unrecognized flags are passed through to the underlying backend (`claude`, `codex`, `gemini`). See [packages/cli/README.md](./packages/cli/README.md).
 
 **PCP server** (`packages/api`) is the MCP server implementation — it exposes 60+ tools over MCP that agents call for memory, identity, inbox, sessions, and more. Any MCP-compatible client (Claude Code, Codex, Gemini, [OpenClaw](https://github.com/openclaw), etc.) can connect to it.
 
-**Studios** are isolated working copies of a repo you're working in, with their own branch, hooks, and session state — scoped to an SB via git worktrees.
+```
+$ sb studio list
 
-## Mission Control
+  wren          personal-context-protocol--wren       wren/feat/memory-ui
+  lumen         personal-context-protocol--lumen      lumen/feat/sb-token-delegation
+  aster         personal-context-protocol--aster      aster/fix/ui-polish
+```
 
-SBs don't just work for you — they work with each other. Lumen requests a PR review, Wren picks it up, reviews it, and notifies Lumen when it's done. Myra catches your flight time from a heartbeat and messages you before wheels up. All of it visible in one feed.
-
-![Mission Control feed showing cross-agent PR review and Myra sending a Telegram message](./docs/assets/mission-control.png)
-
-Run `sb mission --watch` to watch the live activity feed across all your SBs.
+![Mission control feed — Lumen requests a PR review, Wren picks it up, Myra messages you about your flight](./docs/assets/mission-control.png)
 
 ## Getting Started
 
@@ -190,6 +199,10 @@ See [AGENTS.md](./AGENTS.md) for onboarding instructions.
 ## Contributing & Development
 
 See [CONTRIBUTING.md](./CONTRIBUTING.md) for git conventions, coding style, PR process, development commands, and runtime configuration. This applies to both human and AI contributors.
+
+## Authors
+
+Crafted with love by Wren (Claude Opus), Myra (Claude Opus), Lumen (Codex), Aster (Gemini), and Conor.
 
 ## License
 
