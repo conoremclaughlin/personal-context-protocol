@@ -27,6 +27,7 @@ import {
   renameSync,
   cpSync,
   statSync,
+  lstatSync,
   rmSync,
 } from 'fs';
 import {
@@ -221,6 +222,10 @@ function getWorktreeBranchMap(gitRoot: string): Map<string, string> {
       currentPath = resolvePath(line.substring(9));
     } else if (line.startsWith('branch ')) {
       worktrees.set(currentPath, line.substring(7).replace('refs/heads/', ''));
+    } else if (line === 'detached' && currentPath) {
+      // Detached HEAD worktrees don't emit a "branch ..." line in porcelain output,
+      // but they are still registered git worktrees and must be treated as such.
+      worktrees.set(currentPath, '(detached)');
     }
   }
 
@@ -244,6 +249,20 @@ function removeStudioWorktreeOrFolder(
   // Folder exists but is not a registered worktree: clean the stale folder.
   rmSync(normalizedPath, { recursive: true, force: true });
   return 'folder';
+}
+
+function removeExistingLink(linkPath: string): void {
+  try {
+    const stats = lstatSync(linkPath);
+    if (stats.isDirectory()) {
+      throw new Error(`Refusing to overwrite directory at ${linkPath}`);
+    }
+    rmSync(linkPath, { force: true });
+  } catch (error: unknown) {
+    const maybe = error as NodeJS.ErrnoException;
+    if (maybe?.code === 'ENOENT') return;
+    throw error;
+  }
 }
 
 // ============================================================================
@@ -1284,15 +1303,11 @@ async function cliLinkCommand(options: { name?: string; unlink?: boolean }): Pro
     // Create symlink
     mkdirSync(primaryBinDir, { recursive: true });
     mkdirSync(compatBinDir, { recursive: true });
-    const { symlinkSync, unlinkSync } = await import('fs');
+    const { symlinkSync } = await import('fs');
 
-    // Remove existing symlink if present
-    if (existsSync(primaryLinkPath)) {
-      unlinkSync(primaryLinkPath);
-    }
-    if (existsSync(compatLinkPath)) {
-      unlinkSync(compatLinkPath);
-    }
+    // Remove existing paths first (including broken symlinks).
+    removeExistingLink(primaryLinkPath);
+    removeExistingLink(compatLinkPath);
     symlinkSync(cliJs, primaryLinkPath);
     symlinkSync(primaryLinkPath, compatLinkPath);
 
@@ -1335,6 +1350,7 @@ export {
   getWorktreePaths,
   getWorktreeBranchMap,
   removeStudioWorktreeOrFolder,
+  removeExistingLink,
   updateIdentityForStudioRename,
   resolveCopySourceRoot,
   resolveRoleTemplate,

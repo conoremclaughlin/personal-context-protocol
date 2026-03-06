@@ -4,7 +4,17 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, writeFileSync, rmSync, readFileSync, renameSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  readFileSync,
+  renameSync,
+  lstatSync,
+  symlinkSync,
+  mkdtempSync,
+} from 'fs';
 import { join, basename, delimiter as pathDelimiter } from 'path';
 import { tmpdir } from 'os';
 import {
@@ -12,6 +22,7 @@ import {
   getWorktreePaths,
   getWorktreeBranchMap,
   removeStudioWorktreeOrFolder,
+  removeExistingLink,
   listStudios,
   getStudioPrefix,
   resolveCopySourceRoot,
@@ -133,6 +144,24 @@ describe('Studio Commands', () => {
 
       const before = getWorktreeBranchMap(realRepo);
       expect(before.has(wtPath)).toBe(true);
+
+      const removedKind = removeStudioWorktreeOrFolder(realRepo, wtPath, true);
+      expect(removedKind).toBe('worktree');
+      expect(existsSync(wtPath)).toBe(false);
+
+      const after = getWorktreeBranchMap(realRepo);
+      expect(after.has(wtPath)).toBe(false);
+    });
+
+    it('treats detached HEAD worktrees as registered and removes via git', () => {
+      const realRepo = git('rev-parse --show-toplevel', TEST_REPO);
+      const parent = join(realRepo, '..');
+      const wtPath = join(parent, 'test-repo--detached');
+      git(`worktree add -b wren/studio/detached "${wtPath}"`, realRepo);
+      git('checkout --detach', wtPath);
+
+      const before = getWorktreeBranchMap(realRepo);
+      expect(before.get(wtPath)).toBe('(detached)');
 
       const removedKind = removeStudioWorktreeOrFolder(realRepo, wtPath, true);
       expect(removedKind).toBe('worktree');
@@ -295,6 +324,18 @@ describe('CLI link path helpers', () => {
     expect(shouldWarnMissingCliBinPath(['/usr/bin', '/bin'].join(pathDelimiter), targets)).toBe(
       true
     );
+  });
+
+  it('removes broken symlinks before re-linking', () => {
+    const tmpLinkDir = mkdtempSync(join(tmpdir(), 'sb-link-test-'));
+    const linkPath = join(tmpLinkDir, 'broken-sb-link');
+    symlinkSync('/tmp/nonexistent-target', linkPath);
+    expect(() => lstatSync(linkPath)).not.toThrow();
+
+    removeExistingLink(linkPath);
+    expect(() => lstatSync(linkPath)).toThrow();
+
+    rmSync(tmpLinkDir, { recursive: true, force: true });
   });
 });
 
