@@ -170,20 +170,16 @@ interface PickerMetaLineInput {
 
 function buildPickerMetaLine(input: PickerMetaLineInput): string {
   const maxWidth = getPickerLabelMaxWidth();
-  const sourceWidth = 12;
-  const idWidth = 9;
-  const whenWidth = 16;
+  const sourceWidth = 7;
+  const idWidth = 8;
+  const whenWidth = 14;
   const separator = '  ';
   const fixed = sourceWidth + idWidth + whenWidth + separator.length * 4;
   const flexible = Math.max(34, maxWidth - fixed);
-  let stateWidth = Math.max(16, Math.floor(flexible * 0.45));
-  let branchWidth = Math.max(12, flexible - stateWidth);
-  if (stateWidth + branchWidth > flexible) {
-    branchWidth = Math.max(12, flexible - stateWidth);
-  }
-  if (stateWidth + branchWidth > flexible) {
-    stateWidth = Math.max(18, flexible - branchWidth);
-  }
+  let stateWidth = Math.max(12, Math.floor(flexible * 0.3));
+  let branchWidth = Math.max(20, flexible - stateWidth);
+  if (stateWidth + branchWidth > flexible) stateWidth = Math.max(12, flexible - branchWidth);
+  if (stateWidth + branchWidth > flexible) branchWidth = Math.max(20, flexible - stateWidth);
 
   return [
     padSessionCandidateCell(input.source, sourceWidth),
@@ -208,17 +204,29 @@ export function buildSessionPickerLabel(options: {
 }
 
 export function renderSessionCandidatesTable(rows: SessionCandidateTableRow[]): string[] {
+  const terminalWidth = process.stdout.columns || 220;
+  const separator = '  ';
+  const fixedColumns: Array<{
+    key: keyof SessionCandidateTableRow;
+    header: string;
+    width: number;
+  }> = [
+    { key: 'type', header: 'TYPE', width: 7 },
+    { key: 'choice', header: 'CHOICE', width: 14 },
+    { key: 'updated', header: 'UPDATED', width: 18 },
+    { key: 'phase', header: 'PHASE', width: 16 },
+    { key: 'thread', header: 'THREAD', width: 14 },
+    { key: 'link', header: 'LINK', width: 16 },
+  ];
+  const fixedWidth =
+    fixedColumns.reduce((sum, column) => sum + column.width, 0) +
+    separator.length * fixedColumns.length;
+  const previewWidth = Math.max(36, terminalWidth - fixedWidth);
   const columns: Array<{ key: keyof SessionCandidateTableRow; header: string; width: number }> = [
-    { key: 'type', header: 'TYPE', width: 8 },
-    { key: 'choice', header: 'CHOICE', width: 20 },
-    { key: 'updated', header: 'UPDATED', width: 22 },
-    { key: 'phase', header: 'PHASE', width: 18 },
-    { key: 'thread', header: 'THREAD', width: 18 },
-    { key: 'link', header: 'LINK', width: 22 },
-    { key: 'preview', header: 'PREVIEW', width: 120 },
+    ...fixedColumns,
+    { key: 'preview', header: 'PREVIEW', width: previewWidth },
   ];
 
-  const separator = '  ';
   const header = columns
     .map((column) => padSessionCandidateCell(column.header, column.width))
     .join(separator);
