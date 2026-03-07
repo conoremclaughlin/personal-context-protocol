@@ -19,7 +19,7 @@ import {
   realpathSync,
   statSync,
 } from 'fs';
-import { join, resolve as resolvePath } from 'path';
+import { basename, dirname, join, resolve as resolvePath } from 'path';
 import { homedir } from 'os';
 import { getBackend, resolveAgentId } from '../backends/index.js';
 import { classifyError } from '@personal-context/shared';
@@ -59,6 +59,7 @@ interface PcpSessionSummary {
   id: string;
   studioId?: string | null;
   threadKey?: string | null;
+  context?: string | null;
   currentPhase?: string | null;
   lifecycle?: string | null;
   status?: string | null;
@@ -772,26 +773,61 @@ function findLatestPcpReplTranscriptForSession(
   sessionId: string,
   cwd = process.cwd()
 ): string | undefined {
-  const dir = join(cwd, '.pcp', 'runtime', 'repl');
-  if (!existsSync(dir)) return undefined;
+  const searchRoots = new Set<string>([cwd]);
+  const worktreesDir = join(cwd, '.worktrees');
+  if (existsSync(worktreesDir)) {
+    try {
+      for (const entry of readdirSync(worktreesDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        searchRoots.add(join(worktreesDir, entry.name));
+      }
+    } catch {
+      // Ignore unreadable .worktrees directory
+    }
+  }
+
+  const cwdBase = basename(cwd);
+  const repoPrefix = cwdBase.split('--')[0] || cwdBase;
+  const parentDir = dirname(cwd);
+  if (existsSync(parentDir)) {
+    try {
+      for (const entry of readdirSync(parentDir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        if (entry.name !== repoPrefix && !entry.name.startsWith(`${repoPrefix}--`)) continue;
+        searchRoots.add(join(parentDir, entry.name));
+      }
+    } catch {
+      // Ignore unreadable sibling directories
+    }
+  }
+
   const prefix = `${sessionId}-`;
-  const candidates = readdirSync(dir)
-    .filter((entry) => entry.startsWith(prefix) && entry.endsWith('.jsonl'))
-    .map((entry) => join(dir, entry))
-    .filter((fullPath) => {
-      try {
-        return statSync(fullPath).isFile();
-      } catch {
-        return false;
+  const candidates: string[] = [];
+  for (const root of searchRoots) {
+    const dir = join(root, '.pcp', 'runtime', 'repl');
+    if (!existsSync(dir)) continue;
+    try {
+      for (const entry of readdirSync(dir)) {
+        if (!entry.startsWith(prefix) || !entry.endsWith('.jsonl')) continue;
+        const fullPath = join(dir, entry);
+        try {
+          if (statSync(fullPath).isFile()) candidates.push(fullPath);
+        } catch {
+          // Ignore unreadable candidate files
+        }
       }
-    })
-    .sort((a, b) => {
-      try {
-        return statSync(b).mtimeMs - statSync(a).mtimeMs;
-      } catch {
-        return 0;
-      }
-    });
+    } catch {
+      // Ignore unreadable repl directories
+    }
+  }
+
+  candidates.sort((a, b) => {
+    try {
+      return statSync(b).mtimeMs - statSync(a).mtimeMs;
+    } catch {
+      return 0;
+    }
+  });
   return candidates[0];
 }
 
@@ -2351,6 +2387,7 @@ async function ensurePcpSessionContext(
         id: session.id,
         threadKey: session.threadKey || null,
         phase: getSessionPhaseLabel(session) || null,
+        contextPreview: session.context || null,
         startedAt: session.startedAt || null,
         backendSessionId: linkedBackendSessionId || null,
         linkedLocalModified:
@@ -2421,7 +2458,8 @@ async function ensurePcpSessionContext(
           link: session.backendSessionId
             ? `${backendLabel} ${session.backendSessionId.slice(0, 8)}`
             : '-',
-          preview: session.linkedLocalPreview || session.pcpPreview || '-',
+          preview:
+            session.linkedLocalPreview || session.pcpPreview || session.contextPreview || '-',
         })),
         ...localCandidates.map((localSession) => ({
           type: localSession.linkedPcpSessionId ? 'local+pcp' : 'local',
@@ -2503,7 +2541,7 @@ async function ensurePcpSessionContext(
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
       const preview = pcpPreviewBySessionId.get(session.id);
       const phaseLabel = getSessionPhaseLabel(session);
-      const pickerPreview = linkedPreviewText || preview;
+      const pickerPreview = linkedPreviewText || preview || session.context || undefined;
       choices.push({
         name: buildSessionPickerLabel({
           primary: `Resume PCP ${session.id.slice(0, 8)}`,
@@ -2551,9 +2589,11 @@ async function ensurePcpSessionContext(
 
     try {
       const { select } = await import('@inquirer/prompts');
+      const pageSize = Math.max(12, Math.min(30, (process.stdout.rows || 28) - 6));
       const selection = await select({
         message: `Session for ${agentId}/${backend}`,
         choices,
+        pageSize,
       });
       if (selection === '__new__') {
         chosen = await startNewPcpSession();
