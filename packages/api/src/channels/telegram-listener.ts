@@ -1033,6 +1033,135 @@ export class TelegramListener extends EventEmitter {
   }
 
   /**
+   * Send a photo to a Telegram chat
+   */
+  async sendPhoto(
+    conversationId: string,
+    filePath: string,
+    options?: {
+      replyToMessageId?: string;
+      caption?: string;
+      contentType?: string;
+      filename?: string;
+    }
+  ): Promise<void> {
+    const chatId = conversationId.startsWith('telegram:')
+      ? conversationId.replace('telegram:', '')
+      : conversationId;
+
+    const fs = await import('fs/promises');
+    const pathMod = await import('path');
+    const bytes = await fs.readFile(filePath);
+    const filename = options?.filename || pathMod.basename(filePath) || 'photo.jpg';
+    const contentType = options?.contentType || 'image/jpeg';
+
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    if (options?.replyToMessageId) {
+      form.append('reply_to_message_id', String(parseInt(options.replyToMessageId, 10)));
+    }
+    if (options?.caption) {
+      form.append('caption', options.caption);
+    }
+    form.append('photo', new Blob([new Uint8Array(bytes)], { type: contentType }), filename);
+
+    const url = `${TELEGRAM_API}/bot${this.token}/sendPhoto`;
+    const response = await fetch(url, { method: 'POST', body: form });
+
+    const data = (await response.json()) as TelegramApiResponse<unknown>;
+    if (!data.ok) {
+      throw new Error(`Telegram API error: ${data.description}`);
+    }
+    logger.info(`Sent photo to Telegram chat ${chatId}`, { filename, size: bytes.byteLength });
+  }
+
+  /**
+   * Send a document (file) to a Telegram chat
+   */
+  async sendDocument(
+    conversationId: string,
+    filePath: string,
+    options?: {
+      replyToMessageId?: string;
+      caption?: string;
+      contentType?: string;
+      filename?: string;
+    }
+  ): Promise<void> {
+    const chatId = conversationId.startsWith('telegram:')
+      ? conversationId.replace('telegram:', '')
+      : conversationId;
+
+    const fs = await import('fs/promises');
+    const pathMod = await import('path');
+    const bytes = await fs.readFile(filePath);
+    const filename = options?.filename || pathMod.basename(filePath) || 'file';
+    const contentType = options?.contentType || 'application/octet-stream';
+
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    if (options?.replyToMessageId) {
+      form.append('reply_to_message_id', String(parseInt(options.replyToMessageId, 10)));
+    }
+    if (options?.caption) {
+      form.append('caption', options.caption);
+    }
+    form.append('document', new Blob([new Uint8Array(bytes)], { type: contentType }), filename);
+
+    const url = `${TELEGRAM_API}/bot${this.token}/sendDocument`;
+    const response = await fetch(url, { method: 'POST', body: form });
+
+    const data = (await response.json()) as TelegramApiResponse<unknown>;
+    if (!data.ok) {
+      throw new Error(`Telegram API error: ${data.description}`);
+    }
+    logger.info(`Sent document to Telegram chat ${chatId}`, { filename, size: bytes.byteLength });
+  }
+
+  /**
+   * Send a video to a Telegram chat
+   */
+  async sendVideo(
+    conversationId: string,
+    filePath: string,
+    options?: {
+      replyToMessageId?: string;
+      caption?: string;
+      contentType?: string;
+      filename?: string;
+    }
+  ): Promise<void> {
+    const chatId = conversationId.startsWith('telegram:')
+      ? conversationId.replace('telegram:', '')
+      : conversationId;
+
+    const fs = await import('fs/promises');
+    const pathMod = await import('path');
+    const bytes = await fs.readFile(filePath);
+    const filename = options?.filename || pathMod.basename(filePath) || 'video.mp4';
+    const contentType = options?.contentType || 'video/mp4';
+
+    const form = new FormData();
+    form.append('chat_id', chatId);
+    if (options?.replyToMessageId) {
+      form.append('reply_to_message_id', String(parseInt(options.replyToMessageId, 10)));
+    }
+    if (options?.caption) {
+      form.append('caption', options.caption);
+    }
+    form.append('video', new Blob([new Uint8Array(bytes)], { type: contentType }), filename);
+
+    const url = `${TELEGRAM_API}/bot${this.token}/sendVideo`;
+    const response = await fetch(url, { method: 'POST', body: form });
+
+    const data = (await response.json()) as TelegramApiResponse<unknown>;
+    if (!data.ok) {
+      throw new Error(`Telegram API error: ${data.description}`);
+    }
+    logger.info(`Sent video to Telegram chat ${chatId}`, { filename, size: bytes.byteLength });
+  }
+
+  /**
    * Cache a message for context retrieval
    * Messages are stored in memory only, never persisted
    */

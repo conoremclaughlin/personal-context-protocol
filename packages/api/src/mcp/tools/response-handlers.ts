@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 import type { DataComposer } from '../../data/composer';
-import type { ChannelType, AgentResponse, ResponseFormat } from '../../agent/types';
+import type { ChannelType, AgentResponse, ResponseFormat, OutboundMedia } from '../../agent/types';
 import { logger } from '../../utils/logger';
 
 // Response handler callback type
@@ -75,6 +75,17 @@ function markExplicitResponse(channel: string, conversationId: string): void {
 // SEND RESPONSE
 // ============================================================================
 
+const outboundMediaSchema = z.object({
+  type: z
+    .enum(['image', 'video', 'audio', 'document'])
+    .describe('Media type (determines upload method per channel)'),
+  path: z.string().optional().describe('Local file path to upload'),
+  url: z.string().optional().describe('Remote URL (some channels support direct URL sending)'),
+  contentType: z.string().optional().describe('MIME type (auto-detected if omitted)'),
+  filename: z.string().optional().describe('Display filename'),
+  caption: z.string().optional().describe('Caption for this attachment'),
+});
+
 export const sendResponseSchema = z.object({
   channel: z
     .enum(['telegram', 'terminal', 'discord', 'whatsapp', 'slack', 'http', 'api', 'agent'])
@@ -87,6 +98,10 @@ export const sendResponseSchema = z.object({
     .describe('Format of the response content'),
   replyToMessageId: z.string().optional().describe('Message ID to reply to (for threading)'),
   metadata: z.record(z.unknown()).optional().describe('Additional channel-specific metadata'),
+  media: z
+    .array(outboundMediaSchema)
+    .optional()
+    .describe('Media attachments to send (images, videos, documents)'),
 });
 
 type McpResponse = {
@@ -122,6 +137,7 @@ export async function handleSendResponse(
       format: args.format as ResponseFormat | undefined,
       replyToMessageId: args.replyToMessageId,
       metadata: args.metadata,
+      media: args.media as OutboundMedia[] | undefined,
     };
 
     // Mark this conversation as having received an explicit response
@@ -142,6 +158,7 @@ export async function handleSendResponse(
             channel: args.channel,
             conversationId: args.conversationId,
             content: args.content,
+            media: args.media,
           }),
         });
 

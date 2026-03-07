@@ -779,6 +779,36 @@ export class DiscordListener extends EventEmitter {
   }
 
   /**
+   * Send a file (image, document, video, etc.) to a Discord channel
+   * Discord uses a unified attachments API for all file types
+   */
+  async sendFile(
+    conversationId: string,
+    filePath: string,
+    options?: { caption?: string; filename?: string }
+  ): Promise<void> {
+    const channelId = conversationId.startsWith('discord:')
+      ? conversationId.replace('discord:', '')
+      : conversationId;
+
+    const pathMod = await import('path');
+    const channel = await this.client.channels.fetch(channelId);
+    if (!channel || !('send' in channel)) {
+      throw new Error(`Channel ${channelId} not found or not a text channel`);
+    }
+
+    const textChannel = channel as TextChannel | DMChannel | NewsChannel;
+    const filename = options?.filename || pathMod.basename(filePath);
+
+    await textChannel.send({
+      content: options?.caption || undefined,
+      files: [{ attachment: filePath, name: filename }],
+    });
+
+    logger.info(`Sent file to Discord channel ${channelId}`, { filename });
+  }
+
+  /**
    * Send typing indicator
    */
   async sendTypingIndicator(conversationId: string): Promise<void> {

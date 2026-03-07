@@ -906,7 +906,9 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Send a response to a specific channel. Use this tool to reply to messages from Telegram, terminal, or other channels.
 
-This is the primary way to send responses back to users. Always use this tool instead of just outputting text.`,
+This is the primary way to send responses back to users. Always use this tool instead of just outputting text.
+
+Supports media attachments (images, videos, documents) via the media parameter. Provide a local file path for each attachment.`,
       inputSchema: {
         channel: z
           .enum(['telegram', 'terminal', 'discord', 'whatsapp', 'http', 'api', 'agent'])
@@ -918,6 +920,19 @@ This is the primary way to send responses back to users. Always use this tool in
           .optional()
           .describe('Format of the response content'),
         replyToMessageId: z.string().optional().describe('Message ID to reply to (for threading)'),
+        media: z
+          .array(
+            z.object({
+              type: z.enum(['image', 'video', 'audio', 'document']).describe('Media type'),
+              path: z.string().optional().describe('Local file path to upload'),
+              url: z.string().optional().describe('Remote URL'),
+              contentType: z.string().optional().describe('MIME type'),
+              filename: z.string().optional().describe('Display filename'),
+              caption: z.string().optional().describe('Caption for this attachment'),
+            })
+          )
+          .optional()
+          .describe('Media attachments to send (images, videos, documents)'),
       },
     },
     async (args) => {

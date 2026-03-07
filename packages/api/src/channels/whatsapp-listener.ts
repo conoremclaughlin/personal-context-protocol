@@ -667,6 +667,91 @@ export class WhatsAppListener extends EventEmitter {
   }
 
   /**
+   * Send an image to a WhatsApp chat
+   */
+  async sendImage(
+    conversationId: string,
+    filePath: string,
+    options?: { caption?: string }
+  ): Promise<void> {
+    if (!this.sock || !this.isConnected) {
+      throw new Error('WhatsApp not connected');
+    }
+
+    const jid = conversationId.startsWith('whatsapp:')
+      ? conversationId.replace('whatsapp:', '')
+      : conversationId;
+
+    const fs = await import('fs/promises');
+    const bytes = await fs.readFile(filePath);
+
+    await this.sock.sendMessage(jid, {
+      image: bytes,
+      caption: options?.caption,
+    });
+
+    logger.info(`Sent image to WhatsApp chat ${jid}`, { size: bytes.byteLength });
+  }
+
+  /**
+   * Send a document to a WhatsApp chat
+   */
+  async sendDocument(
+    conversationId: string,
+    filePath: string,
+    options?: { caption?: string; filename?: string; contentType?: string }
+  ): Promise<void> {
+    if (!this.sock || !this.isConnected) {
+      throw new Error('WhatsApp not connected');
+    }
+
+    const jid = conversationId.startsWith('whatsapp:')
+      ? conversationId.replace('whatsapp:', '')
+      : conversationId;
+
+    const fs = await import('fs/promises');
+    const pathMod = await import('path');
+    const bytes = await fs.readFile(filePath);
+    const filename = options?.filename || pathMod.basename(filePath);
+
+    await this.sock.sendMessage(jid, {
+      document: bytes,
+      mimetype: options?.contentType || 'application/octet-stream',
+      fileName: filename,
+      caption: options?.caption,
+    });
+
+    logger.info(`Sent document to WhatsApp chat ${jid}`, { filename, size: bytes.byteLength });
+  }
+
+  /**
+   * Send a video to a WhatsApp chat
+   */
+  async sendVideo(
+    conversationId: string,
+    filePath: string,
+    options?: { caption?: string }
+  ): Promise<void> {
+    if (!this.sock || !this.isConnected) {
+      throw new Error('WhatsApp not connected');
+    }
+
+    const jid = conversationId.startsWith('whatsapp:')
+      ? conversationId.replace('whatsapp:', '')
+      : conversationId;
+
+    const fs = await import('fs/promises');
+    const bytes = await fs.readFile(filePath);
+
+    await this.sock.sendMessage(jid, {
+      video: bytes,
+      caption: options?.caption,
+    });
+
+    logger.info(`Sent video to WhatsApp chat ${jid}`, { size: bytes.byteLength });
+  }
+
+  /**
    * Send typing indicator
    */
   async sendTypingIndicator(conversationId: string): Promise<void> {
