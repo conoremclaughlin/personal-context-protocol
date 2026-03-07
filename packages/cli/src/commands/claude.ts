@@ -137,10 +137,16 @@ function padSessionCandidateCell(value: string, width: number): string {
   return truncateText(value || '-', width).padEnd(width, ' ');
 }
 
+function truncatePickerLine(value: string, max = 120): string {
+  if (!value) return '';
+  if (value.length <= max) return value;
+  return `${value.slice(0, max - 1)}…`;
+}
+
 function getPickerLabelMaxWidth(): number {
   const columns = process.stdout.columns;
   if (!columns || columns <= 0) return 110;
-  return Math.max(72, Math.min(140, columns - 12));
+  return Math.max(88, Math.min(200, columns - 8));
 }
 
 interface PickerMetaLineInput {
@@ -153,13 +159,13 @@ interface PickerMetaLineInput {
 
 function buildPickerMetaLine(input: PickerMetaLineInput): string {
   const maxWidth = getPickerLabelMaxWidth();
-  const sourceWidth = 10;
+  const sourceWidth = 12;
   const idWidth = 9;
   const ageWidth = 8;
   const separator = '  ';
   const fixed = sourceWidth + idWidth + ageWidth + separator.length * 4;
   const flexible = Math.max(34, maxWidth - fixed);
-  let stateWidth = Math.max(18, Math.floor(flexible * 0.62));
+  let stateWidth = Math.max(16, Math.floor(flexible * 0.45));
   let branchWidth = Math.max(12, flexible - stateWidth);
   if (stateWidth + branchWidth > flexible) {
     branchWidth = Math.max(12, flexible - stateWidth);
@@ -182,7 +188,7 @@ export function buildSessionPickerLabel(options: {
   preview?: string | null;
 }): string {
   const maxWidth = getPickerLabelMaxWidth();
-  const firstLine = truncateText(options.metaLine, maxWidth);
+  const firstLine = truncatePickerLine(options.metaLine, maxWidth);
   if (!options.preview) return firstLine;
 
   const previewWidth = Math.max(36, maxWidth - 4);
