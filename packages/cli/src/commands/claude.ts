@@ -2645,7 +2645,6 @@ async function ensurePcpSessionContext(
             state: stateTokens.join(' · '),
             branch: pickerPreview || branchLabel,
           }),
-          preview: branchLabel !== '-' ? `branch ${branchLabel}` : undefined,
         }),
         value,
       });
@@ -2670,7 +2669,6 @@ async function ensurePcpSessionContext(
             state: linkedPcpSession ? `linked pcp:${linkedPcpSession.id.slice(0, 8)}` : 'local',
             branch: previewText || localSession.gitBranch || '-',
           }),
-          preview: localSession.gitBranch ? `branch ${localSession.gitBranch}` : undefined,
         }),
         value,
       });
