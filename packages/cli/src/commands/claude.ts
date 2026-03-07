@@ -149,8 +149,8 @@ export function buildSessionPickerLabel(options: {
   preview?: string | null;
 }): string {
   const maxWidth = getPickerLabelMaxWidth();
-  const detailText = (options.details || []).filter(Boolean).join(' · ');
-  const base = detailText ? `${options.primary} — ${detailText}` : options.primary;
+  const detailText = (options.details || []).filter(Boolean).join(' | ');
+  const base = detailText ? `${options.primary} | ${detailText}` : options.primary;
   const firstLine = truncateText(base, maxWidth);
   if (!options.preview) return firstLine;
 
@@ -2544,7 +2544,7 @@ async function ensurePcpSessionContext(
       const pickerPreview = linkedPreviewText || preview || session.context || undefined;
       choices.push({
         name: buildSessionPickerLabel({
-          primary: `Resume PCP ${session.id.slice(0, 8)}`,
+          primary: `PCP ${session.id.slice(0, 8)}`,
           details: [
             session.threadKey ? `thread ${truncateText(session.threadKey, 24)}` : null,
             phaseLabel || null,
@@ -2573,8 +2573,8 @@ async function ensurePcpSessionContext(
         name: buildSessionPickerLabel({
           primary:
             localSession.backend === 'claude'
-              ? `Resume Claude local ${localSession.sessionId.slice(0, 8)}`
-              : `Resume ${backendLabel} local ${localSession.sessionId.slice(0, 8)}`,
+              ? `Claude local ${localSession.sessionId.slice(0, 8)}`
+              : `${backendLabel} local ${localSession.sessionId.slice(0, 8)}`,
           details: [
             linkedPcpSession ? `linked pcp:${linkedPcpSession.id.slice(0, 8)}` : null,
             localSession.gitBranch ? `branch ${truncateText(localSession.gitBranch, 22)}` : null,
