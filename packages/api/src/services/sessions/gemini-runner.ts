@@ -411,7 +411,12 @@ export class GeminiRunner implements IClaudeRunner {
 
         if (input && typeof input === 'object') {
           toolCalls.push({
-            toolUseId: typeof obj.id === 'string' ? obj.id : '',
+            toolUseId:
+              typeof obj.id === 'string'
+                ? obj.id
+                : typeof obj.toolCallId === 'string'
+                  ? obj.toolCallId
+                  : '',
             toolName: name,
             input: input as Record<string, unknown>,
           });
