@@ -2,10 +2,12 @@
  * Skills Commands
  *
  * Manage PCP skills: discover, list, and sync across studios/worktrees.
+ * Writes to ALL backend skill directories so skills show up natively in
+ * Claude Code (/skills), Codex, and Gemini — not just PCP's discovery.
  *
  * Commands:
  *   skills list    Show discovered skills (local + server)
- *   skills sync    Sync MCP-providing skills to local dirs + inject into backend configs
+ *   skills sync    Sync skills from PCP server to all backend configs
  */
 
 import { Command } from 'commander';
@@ -63,6 +65,21 @@ interface McpJsonConfig {
 }
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+/**
+ * Home-level skill directories for each backend.
+ * Writing here means skills persist across ALL projects/studios.
+ */
+const HOME_SKILL_DIRS = [
+  join(homedir(), '.pcp', 'skills'), // PCP discovery (sb chat, buildMergedMcpConfig)
+  join(homedir(), '.claude', 'skills'), // Claude Code native (/skills)
+  join(homedir(), '.codex', 'skills'), // Codex native
+  join(homedir(), '.gemini', 'skills'), // Gemini native
+];
+
+// ============================================================================
 // Helpers
 // ============================================================================
 
@@ -81,9 +98,6 @@ function getWorktrees(): string[] {
   }
 }
 
-/**
- * Reconstruct a SKILL.md file from get_skill response data.
- */
 function buildSkillMd(skill: GetSkillResponse): string {
   const frontmatter: Record<string, unknown> = {
     name: skill.skillName,
@@ -137,10 +151,6 @@ function serializeYaml(obj: unknown, indent: number): string {
   return String(obj);
 }
 
-/**
- * Inject skill MCP servers into a project's .mcp.json.
- * Does not override existing servers. Returns names of servers added.
- */
 function injectMcpServers(
   mcpJsonPath: string,
   skills: ServerSkill[]
@@ -181,6 +191,23 @@ function injectMcpServers(
   }
 
   return { added, existed };
+}
+
+/**
+ * Write a SKILL.md to a directory, return true if written (false if skipped).
+ */
+function writeSkillToDir(dir: string, skillName: string, content: string): boolean {
+  const skillDir = join(dir, skillName);
+  const skillFile = join(skillDir, 'SKILL.md');
+
+  if (existsSync(skillFile)) {
+    const existing = readFileSync(skillFile, 'utf-8');
+    if (existing === content) return false;
+  }
+
+  mkdirSync(skillDir, { recursive: true });
+  writeFileSync(skillFile, content);
+  return true;
 }
 
 // ============================================================================
@@ -247,7 +274,6 @@ async function listCommand(): Promise<void> {
 
 interface SyncOptions {
   all?: boolean;
-  workspace?: boolean;
 }
 
 async function syncCommand(options: SyncOptions): Promise<void> {
@@ -280,29 +306,15 @@ async function syncCommand(options: SyncOptions): Promise<void> {
 
   console.log(chalk.dim(`  Found ${mcpSkills.length} MCP-providing skill(s) on server\n`));
 
-  // ---- Step 1: Write SKILL.md files to ~/.pcp/skills/ ----
-  const skillTargets: Array<{ dir: string; label: string }> = [
-    { dir: join(homedir(), '.pcp', 'skills'), label: '~/.pcp/skills' },
-  ];
+  // ---- Step 1: Write SKILL.md to all backend skill dirs (home-level) ----
+  // This is the core of "one sync, skills everywhere":
+  //   ~/.pcp/skills/    → PCP discovery (sb chat, buildMergedMcpConfig)
+  //   ~/.claude/skills/ → Claude Code native (/skills)
+  //   ~/.codex/skills/  → Codex native
+  //   ~/.gemini/skills/ → Gemini native
 
-  if (options.workspace) {
-    skillTargets.push({
-      dir: join(cwd, '.pcp', 'skills'),
-      label: '.pcp/skills (workspace)',
-    });
-  }
-
-  if (options.all) {
-    for (const wt of getWorktrees()) {
-      const wtDir = join(wt, '.pcp', 'skills');
-      if (!skillTargets.some((t) => t.dir === wtDir)) {
-        skillTargets.push({ dir: wtDir, label: `.pcp/skills (${wt})` });
-      }
-    }
-  }
-
-  let skillsSynced = 0;
-  let skillsSkipped = 0;
+  let written = 0;
+  let skipped = 0;
 
   for (const skill of mcpSkills) {
     let detail: GetSkillResponse;
@@ -320,22 +332,14 @@ async function syncCommand(options: SyncOptions): Promise<void> {
     if (!detail.mcp && skill.mcp) detail.mcp = skill.mcp;
     const skillMd = buildSkillMd(detail);
 
-    for (const target of skillTargets) {
-      const skillDir = join(target.dir, skill.name);
-      const skillFile = join(skillDir, 'SKILL.md');
-
-      if (existsSync(skillFile)) {
-        const existing = readFileSync(skillFile, 'utf-8');
-        if (existing === skillMd) {
-          skillsSkipped++;
-          continue;
-        }
+    for (const dir of HOME_SKILL_DIRS) {
+      if (writeSkillToDir(dir, skill.name, skillMd)) {
+        written++;
+        const shortDir = dir.replace(homedir(), '~');
+        console.log(chalk.green(`  + ${skill.name}`), chalk.dim(`→ ${shortDir}/`));
+      } else {
+        skipped++;
       }
-
-      mkdirSync(skillDir, { recursive: true });
-      writeFileSync(skillFile, skillMd);
-      skillsSynced++;
-      console.log(chalk.green(`  + ${skill.name} SKILL.md`), chalk.dim(`→ ${target.label}`));
     }
   }
 
@@ -354,14 +358,14 @@ async function syncCommand(options: SyncOptions): Promise<void> {
     const mcpPath = join(targetDir, '.mcp.json');
     if (!existsSync(mcpPath)) continue;
 
-    const { added, existed } = injectMcpServers(mcpPath, mcpSkills);
+    const { added } = injectMcpServers(mcpPath, mcpSkills);
     if (added.length > 0) {
       const label = targetDir === cwd ? '.mcp.json' : `.mcp.json (${targetDir})`;
       console.log(chalk.green(`  + ${added.join(', ')}`), chalk.dim(`→ ${label}`));
     }
   }
 
-  // ---- Step 3: Sync to Codex/Gemini backend configs ----
+  // ---- Step 3: Sync to Codex/Gemini backend configs (from .mcp.json) ----
   const syncTargets = options.all ? getWorktrees() : [cwd];
   for (const targetDir of syncTargets) {
     if (!existsSync(join(targetDir, '.mcp.json'))) continue;
@@ -376,14 +380,13 @@ async function syncCommand(options: SyncOptions): Promise<void> {
   }
 
   // ---- Summary ----
-  const total = skillsSynced;
-  if (total === 0 && skillsSkipped > 0) {
+  if (written === 0 && skipped > 0) {
     console.log(chalk.dim(`\n  All skill(s) already up to date.`));
-  } else if (total > 0) {
-    console.log('');
   }
 
-  console.log(chalk.dim('Done. MCP servers available to all backends.\n'));
+  console.log(
+    chalk.dim('\nDone. Skills available to all backends (claude /skills, codex, gemini).\n')
+  );
 }
 
 // ============================================================================
@@ -398,7 +401,6 @@ export function registerSkillsCommands(program: Command): void {
   skills
     .command('sync')
     .description('Sync MCP-providing skills from PCP server to all backend configs')
-    .option('--workspace', 'Also sync to workspace .pcp/skills/ (current directory)')
-    .option('--all', 'Sync to all git worktrees')
+    .option('--all', 'Also sync .mcp.json + backend configs across all git worktrees')
     .action(syncCommand);
 }
