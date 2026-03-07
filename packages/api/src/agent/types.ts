@@ -126,6 +126,24 @@ export interface AgentMessage {
  * Response going OUT from the agent to a channel
  * This is what the send_response MCP tool receives
  */
+/**
+ * Media attachment for outbound responses
+ */
+export interface OutboundMedia {
+  /** Media type determines which API method to use per channel */
+  type: 'image' | 'video' | 'audio' | 'document';
+  /** Local file path (read and uploaded) */
+  path?: string;
+  /** Remote URL (some channels support sending by URL directly) */
+  url?: string;
+  /** MIME type (auto-detected from extension if omitted) */
+  contentType?: string;
+  /** Display filename */
+  filename?: string;
+  /** Caption for this specific attachment (overrides response content for this item) */
+  caption?: string;
+}
+
 export interface AgentResponse {
   channel: ChannelType;
   conversationId: string;
@@ -133,6 +151,8 @@ export interface AgentResponse {
   format?: ResponseFormat;
   replyToMessageId?: string;
   metadata?: Record<string, unknown>;
+  /** Optional media attachments to send alongside or instead of text */
+  media?: OutboundMedia[];
 }
 
 /**

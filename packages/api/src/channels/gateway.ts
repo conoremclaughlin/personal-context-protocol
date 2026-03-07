@@ -18,7 +18,7 @@ import { createWhatsAppListener, WhatsAppListener } from './whatsapp-listener';
 import { createDiscordListener, DiscordListener } from './discord-listener';
 import { createSlackListener, SlackListener } from './slack-listener';
 import { setResponseCallback, type ResponseCallback } from '../mcp/tools/response-handlers';
-import type { AgentResponse } from '../agent/types';
+import type { AgentResponse, OutboundMedia } from '../agent/types';
 import type { DataComposer } from '../data/composer';
 import { logger } from '../utils/logger';
 import { env } from '../config/env';
@@ -669,7 +669,7 @@ export class ChannelGateway extends EventEmitter {
    * Called by the response callback or directly
    */
   async sendResponse(response: AgentResponse): Promise<void> {
-    const { channel, conversationId, content, format, replyToMessageId } = response;
+    const { channel, conversationId, content, format, replyToMessageId, media } = response;
 
     // Stop typing indicator when sending response
     this.stopTypingIndicator(conversationId);
@@ -688,14 +688,27 @@ export class ChannelGateway extends EventEmitter {
           break;
         }
 
-        await this.sendTelegramMessage(conversationId, content, { format, replyToMessageId });
+        // Send text first (if any meaningful content), then media
+        if (content && (!media || media.length === 0)) {
+          await this.sendTelegramMessage(conversationId, content, { format, replyToMessageId });
+        } else if (media && media.length > 0) {
+          if (content) {
+            await this.sendTelegramMessage(conversationId, content, { format, replyToMessageId });
+          }
+          await this.sendMediaAttachments('telegram', conversationId, media, { replyToMessageId });
+        }
         break;
 
       case 'whatsapp':
         if (!this.whatsappListener) {
           throw new Error('WhatsApp listener not available');
         }
-        await this.whatsappListener.sendMessage(conversationId, content);
+        if (content) {
+          await this.whatsappListener.sendMessage(conversationId, content);
+        }
+        if (media && media.length > 0) {
+          await this.sendMediaAttachments('whatsapp', conversationId, media);
+        }
         // Log outgoing WhatsApp message to activity stream
         {
           const userId = await this.resolveUserIdForConversation('whatsapp', conversationId);
@@ -724,7 +737,12 @@ export class ChannelGateway extends EventEmitter {
         if (!this.discordListener) {
           throw new Error('Discord listener not available');
         }
-        await this.discordListener.sendMessage(conversationId, content);
+        if (content) {
+          await this.discordListener.sendMessage(conversationId, content);
+        }
+        if (media && media.length > 0) {
+          await this.sendMediaAttachments('discord', conversationId, media);
+        }
         // Log outgoing Discord message to activity stream
         {
           const userId = await this.resolveUserIdForConversation('discord', conversationId);
@@ -941,6 +959,87 @@ export class ChannelGateway extends EventEmitter {
     if (!this.pendingVoiceReplyConversations.has(key)) return false;
     this.pendingVoiceReplyConversations.delete(key);
     return true;
+  }
+
+  /**
+   * Send media attachments to a channel.
+   * Routes each attachment to the appropriate channel-specific method.
+   */
+  private async sendMediaAttachments(
+    channel: GatewayChannel,
+    conversationId: string,
+    media: OutboundMedia[],
+    options?: { replyToMessageId?: string }
+  ): Promise<void> {
+    for (const attachment of media) {
+      const filePath = attachment.path;
+      if (!filePath) {
+        logger.warn('Media attachment missing file path, skipping', { channel, attachment });
+        continue;
+      }
+
+      try {
+        const mediaOpts = {
+          caption: attachment.caption,
+          filename: attachment.filename,
+          contentType: attachment.contentType,
+          replyToMessageId: options?.replyToMessageId,
+        };
+
+        switch (channel) {
+          case 'telegram':
+            if (!this.telegramListener) break;
+            switch (attachment.type) {
+              case 'image':
+                await this.telegramListener.sendPhoto(conversationId, filePath, mediaOpts);
+                break;
+              case 'video':
+                await this.telegramListener.sendVideo(conversationId, filePath, mediaOpts);
+                break;
+              case 'audio':
+                await this.telegramListener.sendVoice(conversationId, filePath, mediaOpts);
+                break;
+              case 'document':
+                await this.telegramListener.sendDocument(conversationId, filePath, mediaOpts);
+                break;
+            }
+            break;
+
+          case 'whatsapp':
+            if (!this.whatsappListener) break;
+            switch (attachment.type) {
+              case 'image':
+                await this.whatsappListener.sendImage(conversationId, filePath, mediaOpts);
+                break;
+              case 'video':
+                await this.whatsappListener.sendVideo(conversationId, filePath, mediaOpts);
+                break;
+              case 'document':
+              case 'audio':
+                await this.whatsappListener.sendDocument(conversationId, filePath, mediaOpts);
+                break;
+            }
+            break;
+
+          case 'discord':
+            if (!this.discordListener) break;
+            // Discord uses a unified file attachment API for all types
+            await this.discordListener.sendFile(conversationId, filePath, mediaOpts);
+            break;
+
+          case 'slack':
+            // Slack file uploads can be added later
+            logger.warn('Slack media sending not yet implemented');
+            break;
+        }
+
+        logger.info(`Sent ${attachment.type} to ${channel}:${conversationId}`, {
+          filename: attachment.filename,
+        });
+      } catch (error) {
+        logger.error(`Failed to send ${attachment.type} to ${channel}:${conversationId}`, error);
+      }
+    }
   }
 
   private async trySendTelegramVoiceReply(response: AgentResponse): Promise<boolean> {
