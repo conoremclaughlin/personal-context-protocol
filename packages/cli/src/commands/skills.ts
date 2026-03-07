@@ -5,7 +5,7 @@
  *
  * Commands:
  *   skills list    Show discovered skills (local + server)
- *   skills sync    Sync MCP-providing skills to local directories
+ *   skills sync    Sync MCP-providing skills to local dirs + inject into backend configs
  */
 
 import { Command } from 'commander';
@@ -14,9 +14,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { execSync } from 'child_process';
-import { discoverSkills, loadSkillInstruction } from '../repl/skills.js';
+import { discoverSkills } from '../repl/skills.js';
 import { parseSkillMcpConfig } from '../lib/skill-mcp.js';
 import { callPcpTool } from '../lib/pcp-mcp.js';
+import { syncMcpConfig } from './mcp.js';
 
 // ============================================================================
 // Types
@@ -45,6 +46,20 @@ interface GetSkillResponse {
   content: string;
   mcp?: ServerSkill['mcp'];
   triggers?: { keywords?: string[] };
+}
+
+interface McpJsonConfig {
+  mcpServers: Record<
+    string,
+    {
+      type?: string;
+      command?: string;
+      args?: string[];
+      url?: string;
+      env?: Record<string, string>;
+      headers?: Record<string, string>;
+    }
+  >;
 }
 
 // ============================================================================
@@ -86,7 +101,6 @@ function buildSkillMd(skill: GetSkillResponse): string {
     frontmatter.mcp = skill.mcp;
   }
 
-  // Simple YAML serialization for the frontmatter
   const yamlLines = serializeYaml(frontmatter, 0);
   return `---\n${yamlLines}---\n\n${skill.content}\n`;
 }
@@ -97,7 +111,6 @@ function serializeYaml(obj: unknown, indent: number): string {
 
   if (Array.isArray(obj)) {
     if (obj.length === 0) return '[]\n';
-    // Use inline format for simple string arrays
     if (obj.every((v) => typeof v === 'string')) {
       const items = obj.map((v) => JSON.stringify(v)).join(', ');
       return `[${items}]\n`;
@@ -124,6 +137,52 @@ function serializeYaml(obj: unknown, indent: number): string {
   return String(obj);
 }
 
+/**
+ * Inject skill MCP servers into a project's .mcp.json.
+ * Does not override existing servers. Returns names of servers added.
+ */
+function injectMcpServers(
+  mcpJsonPath: string,
+  skills: ServerSkill[]
+): { added: string[]; existed: string[] } {
+  let config: McpJsonConfig = { mcpServers: {} };
+  if (existsSync(mcpJsonPath)) {
+    try {
+      config = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
+      if (!config.mcpServers) config.mcpServers = {};
+    } catch {
+      config = { mcpServers: {} };
+    }
+  }
+
+  const added: string[] = [];
+  const existed: string[] = [];
+
+  for (const skill of skills) {
+    if (!skill.mcp) continue;
+    const serverName = skill.mcp.name;
+
+    if (config.mcpServers[serverName]) {
+      existed.push(serverName);
+      continue;
+    }
+
+    config.mcpServers[serverName] = {
+      type: 'stdio',
+      command: skill.mcp.command,
+      args: skill.mcp.args,
+      ...(skill.mcp.env && Object.keys(skill.mcp.env).length > 0 ? { env: skill.mcp.env } : {}),
+    };
+    added.push(serverName);
+  }
+
+  if (added.length > 0) {
+    writeFileSync(mcpJsonPath, JSON.stringify(config, null, 2) + '\n');
+  }
+
+  return { added, existed };
+}
+
 // ============================================================================
 // List Command
 // ============================================================================
@@ -132,7 +191,6 @@ async function listCommand(): Promise<void> {
   const cwd = process.cwd();
   const localSkills = discoverSkills(cwd);
 
-  // Check which local skills provide MCP servers
   const withMcp = localSkills.map((skill) => {
     const mcp = parseSkillMcpConfig(skill.path);
     return { ...skill, mcp };
@@ -193,6 +251,7 @@ interface SyncOptions {
 }
 
 async function syncCommand(options: SyncOptions): Promise<void> {
+  const cwd = process.cwd();
   console.log(chalk.bold('\nSyncing skills from PCP server...\n'));
 
   // Fetch all skills from server
@@ -207,51 +266,43 @@ async function syncCommand(options: SyncOptions): Promise<void> {
       process.exit(1);
     }
     serverSkills = result.skills;
-  } catch (error) {
+  } catch {
     console.error(chalk.red('Cannot reach PCP server.'));
     console.error(chalk.dim('Ensure the server is running (yarn dev) and try again.'));
     process.exit(1);
   }
 
-  // Filter to skills with MCP configs
   const mcpSkills = serverSkills.filter((s) => s.mcp);
   if (mcpSkills.length === 0) {
     console.log(chalk.dim('  No MCP-providing skills found on server.'));
     return;
   }
 
-  console.log(chalk.dim(`  Found ${mcpSkills.length} MCP-providing skill(s) on server`));
+  console.log(chalk.dim(`  Found ${mcpSkills.length} MCP-providing skill(s) on server\n`));
 
-  // Determine target directories
-  const targets: Array<{ dir: string; label: string }> = [];
-
-  // Always sync to ~/.pcp/skills/ (managed tier — available to all SBs)
-  targets.push({
-    dir: join(homedir(), '.pcp', 'skills'),
-    label: '~/.pcp/skills',
-  });
+  // ---- Step 1: Write SKILL.md files to ~/.pcp/skills/ ----
+  const skillTargets: Array<{ dir: string; label: string }> = [
+    { dir: join(homedir(), '.pcp', 'skills'), label: '~/.pcp/skills' },
+  ];
 
   if (options.workspace) {
-    targets.push({
-      dir: join(process.cwd(), '.pcp', 'skills'),
+    skillTargets.push({
+      dir: join(cwd, '.pcp', 'skills'),
       label: '.pcp/skills (workspace)',
     });
   }
 
   if (options.all) {
-    const worktrees = getWorktrees();
-    for (const wt of worktrees) {
-      const wtSkillsDir = join(wt, '.pcp', 'skills');
-      // Avoid duplicating cwd
-      if (!targets.some((t) => t.dir === wtSkillsDir)) {
-        targets.push({ dir: wtSkillsDir, label: `.pcp/skills (${wt})` });
+    for (const wt of getWorktrees()) {
+      const wtDir = join(wt, '.pcp', 'skills');
+      if (!skillTargets.some((t) => t.dir === wtDir)) {
+        skillTargets.push({ dir: wtDir, label: `.pcp/skills (${wt})` });
       }
     }
   }
 
-  // Fetch full skill content for each MCP skill
-  let synced = 0;
-  let skipped = 0;
+  let skillsSynced = 0;
+  let skillsSkipped = 0;
 
   for (const skill of mcpSkills) {
     let detail: GetSkillResponse;
@@ -266,40 +317,73 @@ async function syncCommand(options: SyncOptions): Promise<void> {
       continue;
     }
 
-    // Ensure mcp field is on the detail
-    if (!detail.mcp && skill.mcp) {
-      detail.mcp = skill.mcp;
-    }
-
+    if (!detail.mcp && skill.mcp) detail.mcp = skill.mcp;
     const skillMd = buildSkillMd(detail);
 
-    for (const target of targets) {
+    for (const target of skillTargets) {
       const skillDir = join(target.dir, skill.name);
       const skillFile = join(skillDir, 'SKILL.md');
 
-      // Skip if already exists and content matches
       if (existsSync(skillFile)) {
         const existing = readFileSync(skillFile, 'utf-8');
         if (existing === skillMd) {
-          skipped++;
+          skillsSkipped++;
           continue;
         }
       }
 
       mkdirSync(skillDir, { recursive: true });
       writeFileSync(skillFile, skillMd);
-      synced++;
-      console.log(chalk.green(`  + ${skill.name}`), chalk.dim(`→ ${target.label}`));
+      skillsSynced++;
+      console.log(chalk.green(`  + ${skill.name} SKILL.md`), chalk.dim(`→ ${target.label}`));
     }
   }
 
-  if (synced === 0 && skipped > 0) {
-    console.log(chalk.dim(`\n  All ${skipped} skill(s) already up to date.`));
-  } else if (synced > 0) {
-    console.log(chalk.dim(`\n  Synced ${synced} skill(s), ${skipped} already up to date.`));
+  // ---- Step 2: Inject MCP servers into .mcp.json ----
+  const mcpTargets: string[] = [cwd];
+
+  if (options.all) {
+    for (const wt of getWorktrees()) {
+      if (wt !== cwd && existsSync(join(wt, '.mcp.json'))) {
+        mcpTargets.push(wt);
+      }
+    }
   }
 
-  console.log(chalk.dim('Done.\n'));
+  for (const targetDir of mcpTargets) {
+    const mcpPath = join(targetDir, '.mcp.json');
+    if (!existsSync(mcpPath)) continue;
+
+    const { added, existed } = injectMcpServers(mcpPath, mcpSkills);
+    if (added.length > 0) {
+      const label = targetDir === cwd ? '.mcp.json' : `.mcp.json (${targetDir})`;
+      console.log(chalk.green(`  + ${added.join(', ')}`), chalk.dim(`→ ${label}`));
+    }
+  }
+
+  // ---- Step 3: Sync to Codex/Gemini backend configs ----
+  const syncTargets = options.all ? getWorktrees() : [cwd];
+  for (const targetDir of syncTargets) {
+    if (!existsSync(join(targetDir, '.mcp.json'))) continue;
+    const result = syncMcpConfig(targetDir);
+    const synced: string[] = [];
+    if (result.codex) synced.push('.codex/config.toml');
+    if (result.gemini) synced.push('.gemini/settings.json');
+    if (synced.length > 0) {
+      const label = targetDir === cwd ? '' : ` (${targetDir})`;
+      console.log(chalk.green(`  + backend configs${label}:`), chalk.dim(synced.join(', ')));
+    }
+  }
+
+  // ---- Summary ----
+  const total = skillsSynced;
+  if (total === 0 && skillsSkipped > 0) {
+    console.log(chalk.dim(`\n  All skill(s) already up to date.`));
+  } else if (total > 0) {
+    console.log('');
+  }
+
+  console.log(chalk.dim('Done. MCP servers available to all backends.\n'));
 }
 
 // ============================================================================
@@ -313,7 +397,7 @@ export function registerSkillsCommands(program: Command): void {
 
   skills
     .command('sync')
-    .description('Sync MCP-providing skills from PCP server to local directories')
+    .description('Sync MCP-providing skills from PCP server to all backend configs')
     .option('--workspace', 'Also sync to workspace .pcp/skills/ (current directory)')
     .option('--all', 'Sync to all git worktrees')
     .action(syncCommand);
