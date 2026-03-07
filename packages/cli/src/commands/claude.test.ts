@@ -8,6 +8,7 @@ import {
   filterUntrackedLocalBackendSessions,
   filterPcpSessionsForContext,
   filterUntrackedLocalClaudeSessions,
+  buildSessionPickerLabel,
   getClaudeLocalSessionsForProject,
   getKnownClaudeSessionIds,
   getCodexLocalSessionsForProject,
@@ -83,6 +84,20 @@ describe('renderSessionCandidatesTable', () => {
     expect(lines[2]).toContain('new');
     expect(lines[3]).toContain('pcp:12345678');
     expect(lines[3].length).toBe(lines[2].length);
+  });
+});
+
+describe('buildSessionPickerLabel', () => {
+  it('renders two lines when preview is present', () => {
+    const label = buildSessionPickerLabel({
+      primary: 'Resume PCP c4ec2f5e',
+      details: ['runtime:idle', '2m ago'],
+      preview: 'lumen: latest assistant message preview here',
+    });
+
+    expect(label).toContain('\n');
+    expect(label).toContain('↳');
+    expect(label).toContain('Resume PCP c4ec2f5e');
   });
 });
 

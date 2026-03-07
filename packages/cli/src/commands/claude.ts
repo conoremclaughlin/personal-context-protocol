@@ -142,7 +142,7 @@ function getPickerLabelMaxWidth(): number {
   return Math.max(72, Math.min(140, columns - 12));
 }
 
-function buildSessionPickerLabel(options: {
+export function buildSessionPickerLabel(options: {
   primary: string;
   details?: Array<string | null | undefined>;
   preview?: string | null;
@@ -150,10 +150,12 @@ function buildSessionPickerLabel(options: {
   const maxWidth = getPickerLabelMaxWidth();
   const detailText = (options.details || []).filter(Boolean).join(' · ');
   const base = detailText ? `${options.primary} — ${detailText}` : options.primary;
-  if (!options.preview) return truncateText(base, maxWidth);
+  const firstLine = truncateText(base, maxWidth);
+  if (!options.preview) return firstLine;
 
-  const previewBudget = Math.max(24, maxWidth - base.length - 3);
-  return truncateText(`${base} — ${truncateText(options.preview, previewBudget)}`, maxWidth);
+  const previewWidth = Math.max(36, maxWidth - 4);
+  const previewLine = `  ↳ ${truncateText(options.preview, previewWidth)}`;
+  return `${firstLine}\n${previewLine}`;
 }
 
 export function renderSessionCandidatesTable(rows: SessionCandidateTableRow[]): string[] {
