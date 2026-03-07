@@ -1084,7 +1084,7 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
   runtimeLinkId?: string;
   agentId?: string;
   studioId?: string;
-  knownLocalSessionIds?: Set<string>;
+  knownLocalSessionSnapshot?: Map<string, string>;
   fallbackBackendSessionId?: string;
 }): string | undefined {
   const {
@@ -1094,7 +1094,7 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     runtimeLinkId,
     agentId,
     studioId,
-    knownLocalSessionIds,
+    knownLocalSessionSnapshot,
     fallbackBackendSessionId,
   } = options;
 
@@ -1132,12 +1132,19 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     if (currentSessionId) return currentSessionId;
   }
 
-  if (knownLocalSessionIds && knownLocalSessionIds.size > 0) {
+  if (knownLocalSessionSnapshot && knownLocalSessionSnapshot.size > 0) {
     const postRunLocalSessions = getBackendLocalSessionsForProject(backend, cwd, 50);
     const newLocalSession = postRunLocalSessions.find(
-      (session) => !knownLocalSessionIds.has(session.sessionId)
+      (session) => !knownLocalSessionSnapshot.has(session.sessionId)
     );
     if (newLocalSession?.sessionId) return newLocalSession.sessionId;
+
+    const updatedExistingSession = postRunLocalSessions.find((session) => {
+      const previousModified = knownLocalSessionSnapshot.get(session.sessionId);
+      if (!previousModified) return false;
+      return previousModified !== session.modified;
+    });
+    if (updatedExistingSession?.sessionId) return updatedExistingSession.sessionId;
   }
 
   return resolveFromRecord(scopedRecords[0]) || fallbackBackendSessionId;
@@ -2238,9 +2245,24 @@ async function ensurePcpSessionContext(
     localBackendSessions,
     activeSessions
   );
+  const runtimeSessionsForBackend = listRuntimeSessions(cwd, backend);
+  const runtimeBackendSessionIdByPcpSessionId = new Map<string, string>();
+  const runtimeBranchByPcpSessionId = new Map<string, string>();
+  for (const session of runtimeSessionsForBackend) {
+    if (
+      session.backendSessionId &&
+      !runtimeBackendSessionIdByPcpSessionId.has(session.pcpSessionId)
+    ) {
+      runtimeBackendSessionIdByPcpSessionId.set(session.pcpSessionId, session.backendSessionId);
+    }
+    if (session.gitBranch && !runtimeBranchByPcpSessionId.has(session.pcpSessionId)) {
+      runtimeBranchByPcpSessionId.set(session.pcpSessionId, session.gitBranch);
+    }
+  }
   const pcpSessionByBackendSessionId = new Map<string, PcpSessionSummary>();
   for (const session of activeSessions) {
-    const backendSessionId = getSessionBackendId(session);
+    const backendSessionId =
+      getSessionBackendId(session) || runtimeBackendSessionIdByPcpSessionId.get(session.id);
     if (!backendSessionId || pcpSessionByBackendSessionId.has(backendSessionId)) continue;
     pcpSessionByBackendSessionId.set(backendSessionId, session);
   }
@@ -2302,7 +2324,9 @@ async function ensurePcpSessionContext(
         const scopedActive =
           backend === 'claude'
             ? listedActive.filter((session) => {
-                const linkedBackendSessionId = getSessionBackendId(session);
+                const linkedBackendSessionId =
+                  getSessionBackendId(session) ||
+                  runtimeBackendSessionIdByPcpSessionId.get(session.id);
                 if (!linkedBackendSessionId) return true;
                 return knownBackendSessionIds.has(linkedBackendSessionId);
               })
@@ -2423,14 +2447,10 @@ async function ensurePcpSessionContext(
   const localBySessionId = new Map(
     localBackendSessions.map((session) => [session.sessionId, session])
   );
-  const runtimeBranchByPcpSessionId = new Map(
-    listRuntimeSessions(cwd, backend)
-      .filter((session) => Boolean(session.gitBranch))
-      .map((session) => [session.pcpSessionId, session.gitBranch as string])
-  );
   if (options.listCandidates || options.listCandidatesJson) {
     const pcpCandidates = activeSessions.map((session) => {
-      const linkedBackendSessionId = getSessionBackendId(session);
+      const linkedBackendSessionId =
+        getSessionBackendId(session) || runtimeBackendSessionIdByPcpSessionId.get(session.id);
       const linkedLocalSession = linkedBackendSessionId
         ? localBySessionId.get(linkedBackendSessionId)
         : undefined;
@@ -2585,7 +2605,8 @@ async function ensurePcpSessionContext(
 
     for (const session of activeSessions) {
       const value = `__pcp__:${session.id}`;
-      const linkedBackendSessionId = getSessionBackendId(session);
+      const linkedBackendSessionId =
+        getSessionBackendId(session) || runtimeBackendSessionIdByPcpSessionId.get(session.id);
       const linkedLocalSession = linkedBackendSessionId
         ? localBySessionId.get(linkedBackendSessionId)
         : undefined;
@@ -2917,11 +2938,12 @@ export async function runClaude(
   };
   const executionStartedAt = Date.now();
   const backendStartActivityId = await logBackendExecutionStart(executionContext);
-  const knownLocalSessionIds = options.session
-    ? new Set(
-        getBackendLocalSessionsForProject(options.backend, process.cwd(), 50).map(
-          (session) => session.sessionId
-        )
+  const knownLocalSessionSnapshot = options.session
+    ? new Map(
+        getBackendLocalSessionsForProject(options.backend, process.cwd(), 50).map((session) => [
+          session.sessionId,
+          session.modified,
+        ])
       )
     : undefined;
   let capturedBackendSessionId = sessionContext.backendSessionId;
@@ -2988,7 +3010,7 @@ export async function runClaude(
         runtimeLinkId,
         agentId,
         studioId,
-        knownLocalSessionIds,
+        knownLocalSessionSnapshot,
         fallbackBackendSessionId: capturedBackendSessionId,
       });
     }
@@ -3088,11 +3110,12 @@ export async function runClaudeInteractive(
     verbose: options.verbose,
     pcpSessionId: sessionContext.pcpSessionId,
   });
-  const knownLocalSessionIds = options.session
-    ? new Set(
-        getBackendLocalSessionsForProject(options.backend, process.cwd(), 50).map(
-          (session) => session.sessionId
-        )
+  const knownLocalSessionSnapshot = options.session
+    ? new Map(
+        getBackendLocalSessionsForProject(options.backend, process.cwd(), 50).map((session) => [
+          session.sessionId,
+          session.modified,
+        ])
       )
     : undefined;
   const maxAttempts = sessionContext.backendSessionId ? 2 : 1;
@@ -3164,7 +3187,7 @@ export async function runClaudeInteractive(
           runtimeLinkId,
           agentId,
           studioId,
-          knownLocalSessionIds,
+          knownLocalSessionSnapshot,
           fallbackBackendSessionId: finalCapturedBackendSessionId,
         });
 

@@ -752,10 +752,64 @@ describe('resolveCapturedBackendSessionIdFromRuntime', () => {
         cwd: tempRepo,
         backend: 'claude',
         pcpSessionId: 'pcp-session-1',
-        knownLocalSessionIds: new Set([oldSessionId]),
+        knownLocalSessionSnapshot: new Map([[oldSessionId, '2026-03-04T00:00:00.000Z']]),
       });
 
       expect(resolved).toBe(newSessionId);
+    } finally {
+      if (oldHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = oldHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to modified existing local backend session when no new local id appears', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-'));
+    const tempHome = join(tempRoot, 'home');
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(tempRepo, { recursive: true });
+
+    const projectDirName = tempRepo.replace(/[\\/]/g, '-');
+    const projectKeyDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectKeyDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const existingSessionId = '33333333-3333-4333-8333-333333333333';
+      const sessionPath = join(projectKeyDir, `${existingSessionId}.jsonl`);
+      writeFileSync(
+        sessionPath,
+        JSON.stringify({
+          type: 'progress',
+          sessionId: existingSessionId,
+          timestamp: '2026-03-04T00:00:00.000Z',
+        }) + '\n'
+      );
+
+      const beforeModified = '2000-01-01T00:00:00.000Z';
+      writeFileSync(
+        sessionPath,
+        JSON.stringify({
+          type: 'progress',
+          sessionId: existingSessionId,
+          timestamp: '2026-03-04T00:02:00.000Z',
+        }) + '\n'
+      );
+
+      const resolved = resolveCapturedBackendSessionIdFromRuntime({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-1',
+        knownLocalSessionSnapshot: new Map([[existingSessionId, beforeModified]]),
+      });
+
+      expect(resolved).toBe(existingSessionId);
     } finally {
       if (oldHome === undefined) {
         delete process.env.HOME;
