@@ -731,6 +731,62 @@ describe('admin endpoint handlers (no-500 regression)', () => {
     });
   });
 
+  describe('PATCH /artifacts/:id/permissions', () => {
+    it('should update permissions for a single artifact', async () => {
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'artifacts') {
+          return createQueryChain([
+            {
+              id: 'artifact-1',
+              edit_mode: 'workspace',
+              collaborators: [],
+              updated_at: '2026-03-07T05:00:00.000Z',
+            },
+          ]);
+        }
+        return createQueryChain([]);
+      });
+
+      const handler = findRouteHandler('patch', '/artifacts/:id/permissions');
+      expect(handler).not.toBeNull();
+
+      const req = createAuthenticatedReq({
+        params: { id: 'artifact-1' },
+        body: { editMode: 'workspace' },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).success).toBe(true);
+      expect((res._json as any).artifact.editMode).toBe('workspace');
+    });
+  });
+
+  describe('PATCH /artifacts/permissions', () => {
+    it('should bulk update permissions in the active workspace', async () => {
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'artifacts') {
+          return createQueryChain([{ id: 'artifact-1' }, { id: 'artifact-2' }]);
+        }
+        return createQueryChain([]);
+      });
+
+      const handler = findRouteHandler('patch', '/artifacts/permissions');
+      expect(handler).not.toBeNull();
+
+      const req = createAuthenticatedReq({
+        body: { editMode: 'workspace' },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).success).toBe(true);
+      expect((res._json as any).updatedCount).toBe(2);
+    });
+  });
+
   // =========================================================================
   // GET /connected-accounts — loaded by connected accounts page
   // =========================================================================
