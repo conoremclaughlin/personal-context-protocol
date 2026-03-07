@@ -1873,11 +1873,7 @@ export function hasBackendSessionOverride(
 ): boolean {
   const lowered = passthroughArgs.map((arg) => arg.toLowerCase());
   const has = (flag: string) => lowered.includes(flag.toLowerCase());
-  const isCodexResumePrompt =
-    backend === 'codex' &&
-    promptParts[0]?.toLowerCase() === 'resume' &&
-    Boolean(promptParts[1]) &&
-    !promptParts[1]?.startsWith('-');
+  const isCodexResumePrompt = backend === 'codex' && promptParts[0]?.toLowerCase() === 'resume';
   const isCodexResumePassthrough =
     backend === 'codex' && passthroughArgs[0]?.toLowerCase() === 'resume';
 
