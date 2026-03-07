@@ -56,6 +56,13 @@ describe('hasBackendSessionOverride', () => {
     expect(hasBackendSessionOverride('claude', ['--resume', 'abc123'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['--session-id', 'abc123'])).toBe(true);
   });
+
+  it('treats backend resume flags as overrides even without explicit ids', () => {
+    expect(hasBackendSessionOverride('claude', ['--resume'])).toBe(true);
+    expect(hasBackendSessionOverride('claude', ['-r'])).toBe(true);
+    expect(hasBackendSessionOverride('gemini', ['--resume'])).toBe(true);
+    expect(hasBackendSessionOverride('gemini', ['-r'])).toBe(true);
+  });
 });
 
 describe('renderSessionCandidatesTable', () => {
