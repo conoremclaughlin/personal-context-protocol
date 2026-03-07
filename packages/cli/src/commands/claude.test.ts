@@ -12,6 +12,7 @@ import {
   getKnownClaudeSessionIds,
   getCodexLocalSessionsForProject,
   hasBackendSessionOverride,
+  renderSessionCandidatesTable,
   resolveCapturedBackendSessionIdFromRuntime,
   resolveAdoptableLocalBackendSessionId,
   resolveBackendSessionIdForResume,
@@ -49,6 +50,39 @@ describe('hasBackendSessionOverride', () => {
     expect(hasBackendSessionOverride('codex', ['--resume', 'abc123'])).toBe(true);
     expect(hasBackendSessionOverride('claude', ['--resume', 'abc123'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['--session-id', 'abc123'])).toBe(true);
+  });
+});
+
+describe('renderSessionCandidatesTable', () => {
+  it('renders headers and aligned rows with truncation', () => {
+    const lines = renderSessionCandidatesTable([
+      {
+        type: 'new',
+        choice: 'new',
+        updated: '-',
+        phase: '-',
+        thread: '-',
+        link: '-',
+        preview: 'Start new session',
+      },
+      {
+        type: 'pcp',
+        choice: 'pcp:12345678',
+        updated: '3/7/2026, 1:23:45 PM',
+        phase: 'runtime:idle',
+        thread: 'pr:182',
+        link: 'Claude 48650142',
+        preview:
+          'lumen: Resumed ✅ Quick checkpoint: Open PRs #149, #147, #126 and more detail that should be truncated in the table row output.',
+      },
+    ]);
+
+    expect(lines[0]).toContain('TYPE');
+    expect(lines[0]).toContain('CHOICE');
+    expect(lines[0]).toContain('PREVIEW');
+    expect(lines[2]).toContain('new');
+    expect(lines[3]).toContain('pcp:12345678');
+    expect(lines[3].length).toBe(lines[2].length);
   });
 });
 

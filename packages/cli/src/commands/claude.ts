@@ -93,10 +93,57 @@ interface SessionPreviewSummary {
   ts?: string;
 }
 
+interface SessionCandidateTableRow {
+  type: string;
+  choice: string;
+  updated: string;
+  phase: string;
+  thread: string;
+  link: string;
+  preview: string;
+}
+
 function toEpochMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+function formatCandidateTimestamp(value: string | null | undefined): string {
+  if (!value) return '-';
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return '-';
+  return new Date(ms).toLocaleString();
+}
+
+function padSessionCandidateCell(value: string, width: number): string {
+  return truncateText(value || '-', width).padEnd(width, ' ');
+}
+
+export function renderSessionCandidatesTable(rows: SessionCandidateTableRow[]): string[] {
+  const columns: Array<{ key: keyof SessionCandidateTableRow; header: string; width: number }> = [
+    { key: 'type', header: 'TYPE', width: 8 },
+    { key: 'choice', header: 'CHOICE', width: 20 },
+    { key: 'updated', header: 'UPDATED', width: 22 },
+    { key: 'phase', header: 'PHASE', width: 18 },
+    { key: 'thread', header: 'THREAD', width: 18 },
+    { key: 'link', header: 'LINK', width: 22 },
+    { key: 'preview', header: 'PREVIEW', width: 120 },
+  ];
+
+  const separator = '  ';
+  const header = columns
+    .map((column) => padSessionCandidateCell(column.header, column.width))
+    .join(separator);
+  const divider = columns.map((column) => '-'.repeat(column.width)).join(separator);
+
+  const lines = rows.map((row) =>
+    columns
+      .map((column) => padSessionCandidateCell(row[column.key] || '-', column.width))
+      .join(separator)
+  );
+
+  return [header, divider, ...lines];
 }
 
 export function resolveAdoptableLocalBackendSessionId(options: {
@@ -1952,7 +1999,9 @@ async function ensurePcpSessionContext(
   const email = config?.email;
   const cwd = process.cwd();
   const { studioId, identityId } = getIdentityContextFromIdentityJson(cwd);
-  const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, 20);
+  const localSessionLimit = options.listCandidates || options.listCandidatesJson ? 120 : 40;
+  const pcpSessionLimit = options.listCandidates || options.listCandidatesJson ? 80 : 40;
+  const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, localSessionLimit);
   const localBackendSessionIds = new Set(localBackendSessions.map((session) => session.sessionId));
   const knownBackendSessionIds =
     backend === 'claude' ? getKnownClaudeSessionIds() : localBackendSessionIds;
@@ -2004,7 +2053,7 @@ async function ensurePcpSessionContext(
         email,
         agentId,
         ...(studioId ? { studioId } : {}),
-        limit: 20,
+        limit: pcpSessionLimit,
       });
       activeSessions = filterPcpSessionsForContext(
         (listed.sessions || []).filter((s) => isSessionResumable(s)),
@@ -2064,6 +2113,16 @@ async function ensurePcpSessionContext(
     localBackendSessions,
     activeSessions
   );
+  const pcpSessionByBackendSessionId = new Map<string, PcpSessionSummary>();
+  for (const session of activeSessions) {
+    const backendSessionId = getSessionBackendId(session);
+    if (!backendSessionId || pcpSessionByBackendSessionId.has(backendSessionId)) continue;
+    pcpSessionByBackendSessionId.set(backendSessionId, session);
+  }
+  const displayLocalBackendSessions =
+    options.listCandidates || options.listCandidatesJson
+      ? localBackendSessions
+      : untrackedLocalBackendSessions;
   const existingSessionIds = new Set(activeSessions.map((session) => session.id));
   const pcpPreviewBySessionId = new Map<string, string>();
   for (const session of activeSessions) {
@@ -2085,7 +2144,7 @@ async function ensurePcpSessionContext(
   };
   const localSelection = (selection: string): string | undefined => {
     const value = selection.replace(/^__local__:/, '').replace(/^local:/, '');
-    const found = untrackedLocalBackendSessions.find(
+    const found = localBackendSessions.find(
       (session) => session.sessionId === value || session.sessionId.startsWith(value)
     );
     return found?.sessionId;
@@ -2105,7 +2164,7 @@ async function ensurePcpSessionContext(
             email,
             agentId,
             ...(studioId ? { studioId } : {}),
-            limit: 20,
+            limit: pcpSessionLimit,
           },
           { callerProfile: 'runtime' }
         );
@@ -2254,6 +2313,7 @@ async function ensurePcpSessionContext(
         id: session.id,
         threadKey: session.threadKey || null,
         phase: getSessionPhaseLabel(session) || null,
+        startedAt: session.startedAt || null,
         backendSessionId: linkedBackendSessionId || null,
         linkedLocalModified:
           linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified || null,
@@ -2261,14 +2321,21 @@ async function ensurePcpSessionContext(
         pcpPreview: pcpPreviewBySessionId.get(session.id) || null,
       };
     });
-    const localCandidates = untrackedLocalBackendSessions.map((session) => ({
-      type: 'local' as const,
-      id: session.sessionId,
-      modified: session.latestPromptAt || session.modified,
-      preview:
-        withAgentPreviewSpeaker(session.latestPrompt || session.firstPrompt, agentId) || null,
-      gitBranch: session.gitBranch || null,
-    }));
+    const localCandidates = displayLocalBackendSessions.map((session) => {
+      const linkedPcpSession = pcpSessionByBackendSessionId.get(session.sessionId);
+      const preview =
+        withAgentPreviewSpeaker(session.latestPrompt || session.firstPrompt, agentId) || null;
+      return {
+        type: 'local' as const,
+        id: session.sessionId,
+        modified: session.latestPromptAt || session.modified,
+        preview,
+        gitBranch: session.gitBranch || null,
+        linkedPcpSessionId: linkedPcpSession?.id || null,
+        linkedPcpPhase: linkedPcpSession ? getSessionPhaseLabel(linkedPcpSession) || null : null,
+        selectable: !linkedPcpSession,
+      };
+    });
 
     if (options.listCandidatesJson) {
       console.log(
@@ -2279,6 +2346,15 @@ async function ensurePcpSessionContext(
             cwd,
             pcpAvailable,
             pcpUnavailableReason: pcpUnavailableReason || null,
+            limits: {
+              local: localSessionLimit,
+              pcp: pcpSessionLimit,
+            },
+            counts: {
+              pcp: pcpCandidates.length,
+              local: localCandidates.length,
+              localSelectable: localCandidates.filter((candidate) => candidate.selectable).length,
+            },
             candidates: [{ type: 'new' as const }, ...pcpCandidates, ...localCandidates],
           },
           null,
@@ -2287,29 +2363,52 @@ async function ensurePcpSessionContext(
       );
     } else {
       console.log(chalk.bold(`\nSession candidates for ${agentId}/${backend}:`));
-      console.log(chalk.dim('  new'));
-      for (const session of pcpCandidates) {
-        const backendLabel = backend[0].toUpperCase() + backend.slice(1);
-        const linkedPreview = session.linkedLocalPreview
-          ? ` — ${truncateText(session.linkedLocalPreview)}`
-          : '';
-        const linkedWhen = session.linkedLocalModified
-          ? ` (${new Date(session.linkedLocalModified).toLocaleString()})`
-          : '';
-        const pcpPreview = session.pcpPreview ? ` — ${truncateText(session.pcpPreview, 120)}` : '';
-        console.log(
-          chalk.dim(
-            `  pcp:${session.id}${session.threadKey ? ` (${session.threadKey})` : ''}${session.phase ? ` — ${session.phase}` : ''}${session.backendSessionId ? ` · tracks ${backendLabel} ${session.backendSessionId.slice(0, 8)}` : ''}${linkedWhen}${linkedPreview}${pcpPreview}`
-          )
-        );
+      const backendLabel = backend[0].toUpperCase() + backend.slice(1);
+      const rows: SessionCandidateTableRow[] = [
+        {
+          type: 'new',
+          choice: 'new',
+          updated: '-',
+          phase: '-',
+          thread: '-',
+          link: '-',
+          preview: pcpAvailable ? 'Start new session' : 'Start new backend session',
+        },
+        ...pcpCandidates.map((session) => ({
+          type: 'pcp',
+          choice: `pcp:${session.id.slice(0, 8)}`,
+          updated: formatCandidateTimestamp(session.linkedLocalModified || session.startedAt),
+          phase: session.phase || '-',
+          thread: session.threadKey || '-',
+          link: session.backendSessionId
+            ? `${backendLabel} ${session.backendSessionId.slice(0, 8)}`
+            : '-',
+          preview: session.linkedLocalPreview || session.pcpPreview || '-',
+        })),
+        ...localCandidates.map((localSession) => ({
+          type: localSession.linkedPcpSessionId ? 'local+pcp' : 'local',
+          choice: `local:${localSession.id.slice(0, 8)}`,
+          updated: formatCandidateTimestamp(localSession.modified),
+          phase: localSession.linkedPcpPhase || '-',
+          thread: '-',
+          link: localSession.linkedPcpSessionId
+            ? `pcp:${localSession.linkedPcpSessionId.slice(0, 8)}`
+            : localSession.gitBranch || '-',
+          preview: localSession.preview || '-',
+        })),
+      ];
+      const [header, divider, ...body] = renderSessionCandidatesTable(rows);
+      if (header) console.log(chalk.bold(`  ${header}`));
+      if (divider) console.log(chalk.dim(`  ${divider}`));
+      for (const line of body) {
+        console.log(chalk.dim(`  ${line}`));
       }
-      for (const localSession of localCandidates) {
-        console.log(
-          chalk.dim(
-            `  local:${localSession.id}${localSession.preview ? ` — ${truncateText(localSession.preview)}` : ''}`
-          )
-        );
-      }
+      const selectableLocals = localCandidates.filter((candidate) => candidate.selectable).length;
+      console.log(
+        chalk.dim(
+          `\n  Local sessions: ${localCandidates.length} (${selectableLocals} selectable, ${localCandidates.length - selectableLocals} already linked to PCP)`
+        )
+      );
       console.log('');
     }
     if (!normalizedSelectionOverride) {
@@ -2328,8 +2427,13 @@ async function ensurePcpSessionContext(
     } else if (selection.startsWith('local:') || selection.startsWith('__local__:')) {
       selectedLocalBackendSessionId = localSelection(selection);
       if (selectedLocalBackendSessionId && pcpAvailable) {
-        chosen = await startNewPcpSession();
-        createdNewPcpSession = Boolean(chosen?.id);
+        const linkedPcpSession = pcpSessionByBackendSessionId.get(selectedLocalBackendSessionId);
+        if (linkedPcpSession) {
+          chosen = linkedPcpSession;
+        } else {
+          chosen = await startNewPcpSession();
+          createdNewPcpSession = Boolean(chosen?.id);
+        }
       }
     } else {
       console.error(
@@ -2404,8 +2508,13 @@ async function ensurePcpSessionContext(
       } else if (selection.startsWith('__local__:')) {
         selectedLocalBackendSessionId = sessionChoiceByValue.get(selection);
         if (selectedLocalBackendSessionId && pcpAvailable) {
-          chosen = await startNewPcpSession();
-          createdNewPcpSession = Boolean(chosen?.id);
+          const linkedPcpSession = pcpSessionByBackendSessionId.get(selectedLocalBackendSessionId);
+          if (linkedPcpSession) {
+            chosen = linkedPcpSession;
+          } else {
+            chosen = await startNewPcpSession();
+            createdNewPcpSession = Boolean(chosen?.id);
+          }
         }
       }
     } catch (err) {
