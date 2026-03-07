@@ -130,6 +130,24 @@ function normalizeNullableText(input: unknown): string | null {
   return normalized.length > 0 ? normalized : null;
 }
 
+type ArtifactEditMode = 'workspace' | 'editors';
+
+function normalizeArtifactEditMode(input: unknown): ArtifactEditMode {
+  return input === 'editors' ? 'editors' : 'workspace';
+}
+
+function normalizeArtifactEditors(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  return Array.from(
+    new Set(
+      input
+        .filter((value): value is string => typeof value === 'string')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
 function parseRouteMetadata(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) {
     return {};
@@ -3172,7 +3190,9 @@ router.get('/artifacts', async (req: Request, res: Response) => {
 
     const { data, error } = await supabase
       .from('artifacts')
-      .select('id, uri, title, artifact_type, visibility, version, tags, created_at, updated_at')
+      .select(
+        'id, uri, title, artifact_type, visibility, edit_mode, collaborators, version, tags, created_at, updated_at'
+      )
       .eq('user_id', authReq.pcpUserId)
       .eq('workspace_id', authReq.pcpWorkspaceId)
       .order('updated_at', { ascending: false });
@@ -3190,6 +3210,8 @@ router.get('/artifacts', async (req: Request, res: Response) => {
         title: a.title,
         artifactType: a.artifact_type,
         visibility: a.visibility,
+        editMode: normalizeArtifactEditMode(a.edit_mode),
+        editors: a.collaborators || [],
         version: a.version,
         tags: a.tags,
         createdAt: a.created_at,
@@ -3235,6 +3257,8 @@ router.get('/artifacts/:id', async (req: Request, res: Response) => {
         artifactType: artifact.artifact_type,
         createdByIdentityId: artifact.created_by_identity_id,
         collaborators: artifact.collaborators,
+        editMode: normalizeArtifactEditMode(artifact.edit_mode),
+        editors: artifact.collaborators || [],
         visibility: artifact.visibility,
         version: artifact.version,
         tags: artifact.tags,
@@ -3246,6 +3270,159 @@ router.get('/artifacts/:id', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to get artifact:', error);
     res.status(500).json(errorJson('Failed to get artifact', error));
+  }
+});
+
+/**
+ * PATCH /api/admin/artifacts/:id/permissions
+ * Update edit permissions for one artifact
+ */
+router.patch('/artifacts/:id/permissions', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { editMode } = req.body as {
+      editMode?: 'workspace' | 'editors';
+      editors?: string[];
+      collaborators?: string[];
+    };
+
+    if (editMode !== undefined && !['workspace', 'editors'].includes(editMode)) {
+      res.status(400).json({ error: 'editMode must be "workspace" or "editors"' });
+      return;
+    }
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as AdminAuthRequest;
+    const pcpUserId = authReq.pcpUserId;
+    const workspaceId = authReq.pcpWorkspaceId;
+
+    const { data: current, error: fetchError } = await supabase
+      .from('artifacts')
+      .select('id, edit_mode, collaborators')
+      .eq('id', id)
+      .eq('user_id', pcpUserId)
+      .eq('workspace_id', workspaceId)
+      .single();
+
+    if (fetchError || !current) {
+      res.status(404).json({ error: 'Artifact not found' });
+      return;
+    }
+
+    const normalizedMode = editMode ?? normalizeArtifactEditMode(current.edit_mode);
+    const body = req.body as { editors?: unknown; collaborators?: unknown };
+    const requestedEditorsRaw =
+      body.editors !== undefined
+        ? body.editors
+        : body.collaborators !== undefined
+          ? body.collaborators
+          : undefined;
+    const normalizedEditors =
+      requestedEditorsRaw !== undefined
+        ? normalizeArtifactEditors(requestedEditorsRaw)
+        : current.collaborators || [];
+
+    const nextEditors = normalizedMode === 'workspace' ? [] : normalizedEditors;
+    if (normalizedMode === 'editors' && nextEditors.length === 0) {
+      res.status(400).json({ error: 'editMode "editors" requires at least one editor' });
+      return;
+    }
+
+    const { data: updated, error: updateError } = await supabase
+      .from('artifacts')
+      .update({
+        edit_mode: normalizedMode,
+        collaborators: nextEditors,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .eq('user_id', pcpUserId)
+      .eq('workspace_id', workspaceId)
+      .select('id, edit_mode, collaborators, updated_at')
+      .single();
+
+    if (updateError || !updated) {
+      logger.error('Failed to update artifact permissions:', updateError);
+      res.status(500).json(errorJson('Failed to update artifact permissions', updateError));
+      return;
+    }
+
+    res.json({
+      success: true,
+      artifact: {
+        id: updated.id,
+        editMode: normalizeArtifactEditMode(updated.edit_mode),
+        editors: updated.collaborators || [],
+        updatedAt: updated.updated_at,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to update artifact permissions:', error);
+    res.status(500).json(errorJson('Failed to update artifact permissions', error));
+  }
+});
+
+/**
+ * PATCH /api/admin/artifacts/permissions
+ * Bulk update edit permissions for all artifacts in active workspace
+ */
+router.patch('/artifacts/permissions', async (req: Request, res: Response) => {
+  try {
+    const { editMode } = req.body as {
+      editMode?: 'workspace' | 'editors';
+      editors?: string[];
+      collaborators?: string[];
+    };
+
+    if (!editMode || !['workspace', 'editors'].includes(editMode)) {
+      res.status(400).json({ error: 'editMode is required and must be "workspace" or "editors"' });
+      return;
+    }
+
+    const body = req.body as { editors?: unknown; collaborators?: unknown };
+    const requestedEditorsRaw =
+      body.editors !== undefined
+        ? body.editors
+        : body.collaborators !== undefined
+          ? body.collaborators
+          : undefined;
+    const normalizedEditors = normalizeArtifactEditors(requestedEditorsRaw);
+    const nextEditors = editMode === 'workspace' ? [] : normalizedEditors;
+
+    if (editMode === 'editors' && nextEditors.length === 0) {
+      res.status(400).json({ error: 'editMode "editors" requires at least one editor' });
+      return;
+    }
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
+    const authReq = req as AdminAuthRequest;
+
+    const { data: updatedRows, error } = await supabase
+      .from('artifacts')
+      .update({
+        edit_mode: editMode,
+        collaborators: nextEditors,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
+      .select('id');
+
+    if (error) {
+      logger.error('Failed to bulk update artifact permissions:', error);
+      res.status(500).json(errorJson('Failed to bulk update artifact permissions', error));
+      return;
+    }
+
+    res.json({
+      success: true,
+      updatedCount: updatedRows?.length || 0,
+      editMode,
+      editors: nextEditors,
+    });
+  } catch (error) {
+    logger.error('Failed to bulk update artifact permissions:', error);
+    res.status(500).json(errorJson('Failed to bulk update artifact permissions', error));
   }
 });
 

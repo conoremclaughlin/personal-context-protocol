@@ -615,6 +615,7 @@ export type Database = {
           content_type: string | null;
           created_at: string | null;
           created_by_identity_id: string | null;
+          edit_mode: string;
           id: string;
           metadata: Json | null;
           tags: string[] | null;
@@ -633,6 +634,7 @@ export type Database = {
           content_type?: string | null;
           created_at?: string | null;
           created_by_identity_id?: string | null;
+          edit_mode?: string;
           id?: string;
           metadata?: Json | null;
           tags?: string[] | null;
@@ -651,6 +653,7 @@ export type Database = {
           content_type?: string | null;
           created_at?: string | null;
           created_by_identity_id?: string | null;
+          edit_mode?: string;
           id?: string;
           metadata?: Json | null;
           tags?: string[] | null;
