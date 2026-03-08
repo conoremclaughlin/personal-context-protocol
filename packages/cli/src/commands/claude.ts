@@ -2574,11 +2574,12 @@ async function ensurePcpSessionContext(
         ...interleavedCandidates.map((entry) => {
           if (entry.kind === 'pcp') {
             const session = entry.candidate;
-            const ownerPhase = session.ownerAgentId
+            const showOwner = Boolean(session.ownerAgentId && session.ownerAgentId !== agentId);
+            const ownerPhase = showOwner
               ? `${session.ownerAgentId} · ${session.phase || '-'}`
               : session.phase || '-';
             return {
-              type: session.ownerAgentId ? `pcp:${session.ownerAgentId}` : 'pcp',
+              type: showOwner ? `pcp:${session.ownerAgentId}` : 'pcp',
               choice: `pcp:${session.id.slice(0, 8)}`,
               updated: formatCandidateTimestamp(session.linkedLocalModified || session.startedAt),
               phase: ownerPhase,
@@ -2591,12 +2592,15 @@ async function ensurePcpSessionContext(
             };
           }
           const localSession = entry.candidate;
-          const ownerPhase = localSession.linkedPcpAgentId
+          const showOwner = Boolean(
+            localSession.linkedPcpAgentId && localSession.linkedPcpAgentId !== agentId
+          );
+          const ownerPhase = showOwner
             ? `${localSession.linkedPcpAgentId} · ${localSession.linkedPcpPhase || '-'}`
             : localSession.linkedPcpPhase || '-';
           return {
             type: localSession.linkedPcpSessionId
-              ? localSession.linkedPcpAgentId
+              ? showOwner
                 ? `local:${localSession.linkedPcpAgentId}`
                 : 'local+pcp'
               : 'local',
@@ -2687,7 +2691,8 @@ async function ensurePcpSessionContext(
       const linkedAt = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
       const ownerLabel = session.agentId || null;
-      const sourceLabel = ownerLabel ? `PCP/${ownerLabel}` : 'PCP';
+      const showOwner = Boolean(ownerLabel && ownerLabel !== agentId);
+      const sourceLabel = showOwner ? `PCP/${ownerLabel}` : 'PCP';
       const preview = pcpPreviewBySessionId.get(session.id);
       const phaseLabel = getSessionPhaseLabel(session);
       const pickerPreview = linkedPreviewText || preview || session.context || undefined;
@@ -2697,7 +2702,7 @@ async function ensurePcpSessionContext(
         session.studio?.branch ||
         '-';
       const stateTokens = [
-        ownerLabel ? `agent ${ownerLabel}` : null,
+        showOwner ? ownerLabel : null,
         phaseLabel || 'runtime:active',
         session.threadKey ? `thread ${truncateText(session.threadKey, 20)}` : null,
         linkedBackendSessionId ? `${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : null,
@@ -2725,14 +2730,15 @@ async function ensurePcpSessionContext(
       const backendLabel = localSession.backend[0].toUpperCase() + localSession.backend.slice(1);
       const linkedPcpSession = pcpSessionByBackendSessionId.get(localSession.sessionId);
       const ownerLabel = linkedPcpSession?.agentId || null;
+      const showOwner = Boolean(ownerLabel && ownerLabel !== agentId);
       const previewText = withAgentPreviewSpeaker(
         localSession.latestPrompt || localSession.firstPrompt,
         ownerLabel || agentId
       );
-      const sourceLabel = ownerLabel ? `${backendLabel}/${ownerLabel}` : backendLabel;
+      const sourceLabel = showOwner ? `${backendLabel}/${ownerLabel}` : backendLabel;
       const stateLabel = linkedPcpSession
-        ? ownerLabel
-          ? `agent ${ownerLabel} · linked pcp:${linkedPcpSession.id.slice(0, 8)}`
+        ? showOwner
+          ? `${ownerLabel} · linked pcp:${linkedPcpSession.id.slice(0, 8)}`
           : `linked pcp:${linkedPcpSession.id.slice(0, 8)}`
         : 'local';
       choiceEntries.push({
