@@ -695,8 +695,15 @@ export class ChannelGateway extends EventEmitter {
           if (content) {
             await this.sendTelegramMessage(conversationId, content, { format, replyToMessageId });
           }
-          await this.sendMediaAttachments('telegram', conversationId, media, { replyToMessageId });
-          // Log media metadata to activity stream
+          const mediaResult = await this.sendMediaAttachments('telegram', conversationId, media, {
+            replyToMessageId,
+          });
+          if (mediaResult.failed > 0 && mediaResult.sent === 0) {
+            throw new Error(
+              `All media attachments failed to send: ${mediaResult.errors.join('; ')}`
+            );
+          }
+          // Log media metadata to activity stream (only if at least one sent)
           await this.logOutgoingTelegram(
             conversationId,
             content
@@ -704,6 +711,12 @@ export class ChannelGateway extends EventEmitter {
               : `[${media.length} media attachment(s)]`,
             media
           );
+          if (mediaResult.failed > 0) {
+            logger.warn(
+              `${mediaResult.failed}/${media.length} media attachments failed on telegram`,
+              { errors: mediaResult.errors }
+            );
+          }
         }
         break;
 
@@ -715,7 +728,17 @@ export class ChannelGateway extends EventEmitter {
           await this.whatsappListener.sendMessage(conversationId, content);
         }
         if (media && media.length > 0) {
-          await this.sendMediaAttachments('whatsapp', conversationId, media);
+          const mediaResult = await this.sendMediaAttachments('whatsapp', conversationId, media);
+          if (mediaResult.failed > 0 && mediaResult.sent === 0) {
+            throw new Error(
+              `All media attachments failed to send: ${mediaResult.errors.join('; ')}`
+            );
+          } else if (mediaResult.failed > 0) {
+            logger.warn(
+              `${mediaResult.failed}/${media.length} media attachments failed on whatsapp`,
+              { errors: mediaResult.errors }
+            );
+          }
         }
         // Log outgoing WhatsApp message to activity stream
         {
@@ -749,7 +772,17 @@ export class ChannelGateway extends EventEmitter {
           await this.discordListener.sendMessage(conversationId, content);
         }
         if (media && media.length > 0) {
-          await this.sendMediaAttachments('discord', conversationId, media);
+          const mediaResult = await this.sendMediaAttachments('discord', conversationId, media);
+          if (mediaResult.failed > 0 && mediaResult.sent === 0) {
+            throw new Error(
+              `All media attachments failed to send: ${mediaResult.errors.join('; ')}`
+            );
+          } else if (mediaResult.failed > 0) {
+            logger.warn(
+              `${mediaResult.failed}/${media.length} media attachments failed on discord`,
+              { errors: mediaResult.errors }
+            );
+          }
         }
         // Log outgoing Discord message to activity stream
         {
@@ -1026,12 +1059,20 @@ export class ChannelGateway extends EventEmitter {
    * Routes each attachment to the appropriate channel-specific method.
    * Supports both local file paths and remote URLs.
    */
+  /**
+   * Send media attachments to a channel.
+   * Returns { sent, failed } counts so callers can report accurate status.
+   */
   private async sendMediaAttachments(
     channel: GatewayChannel,
     conversationId: string,
     media: OutboundMedia[],
     options?: { replyToMessageId?: string }
-  ): Promise<void> {
+  ): Promise<{ sent: number; failed: number; errors: string[] }> {
+    let sent = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
     for (const attachment of media) {
       let filePath = attachment.path;
       let tempCleanup: (() => Promise<void>) | null = null;
@@ -1043,16 +1084,19 @@ export class ChannelGateway extends EventEmitter {
           filePath = temp.path;
           tempCleanup = temp.cleanup;
         } catch (error) {
-          logger.error(`Failed to download media URL: ${attachment.url}`, error);
+          const msg = `Failed to download media URL: ${attachment.url}`;
+          logger.error(msg, error);
+          errors.push(msg);
+          failed++;
           continue;
         }
       }
 
       if (!filePath) {
-        logger.warn('Media attachment missing both path and url, skipping', {
-          channel,
-          attachment,
-        });
+        const msg = `Media attachment missing both path and url (type: ${attachment.type})`;
+        logger.warn(msg, { channel, attachment });
+        errors.push(msg);
+        failed++;
         continue;
       }
 
@@ -1064,9 +1108,17 @@ export class ChannelGateway extends EventEmitter {
           replyToMessageId: options?.replyToMessageId,
         };
 
+        let didSend = false;
+
         switch (channel) {
           case 'telegram':
-            if (!this.telegramListener) break;
+            if (!this.telegramListener) {
+              const msg = 'Telegram listener not available for media send';
+              logger.warn(msg);
+              errors.push(msg);
+              failed++;
+              continue;
+            }
             switch (attachment.type) {
               case 'image':
                 await this.telegramListener.sendPhoto(conversationId, filePath, mediaOpts);
@@ -1081,10 +1133,17 @@ export class ChannelGateway extends EventEmitter {
                 await this.telegramListener.sendDocument(conversationId, filePath, mediaOpts);
                 break;
             }
+            didSend = true;
             break;
 
           case 'whatsapp':
-            if (!this.whatsappListener) break;
+            if (!this.whatsappListener) {
+              const msg = 'WhatsApp listener not available for media send';
+              logger.warn(msg);
+              errors.push(msg);
+              failed++;
+              continue;
+            }
             switch (attachment.type) {
               case 'image':
                 await this.whatsappListener.sendImage(conversationId, filePath, mediaOpts);
@@ -1097,26 +1156,46 @@ export class ChannelGateway extends EventEmitter {
                 await this.whatsappListener.sendDocument(conversationId, filePath, mediaOpts);
                 break;
             }
+            didSend = true;
             break;
 
           case 'discord':
-            if (!this.discordListener) break;
+            if (!this.discordListener) {
+              const msg = 'Discord listener not available for media send';
+              logger.warn(msg);
+              errors.push(msg);
+              failed++;
+              continue;
+            }
             // Discord uses a unified file attachment API for all types
             await this.discordListener.sendFile(conversationId, filePath, mediaOpts);
+            didSend = true;
             break;
 
-          case 'slack':
-            // Slack file uploads can be added later
-            logger.warn('Slack media sending not yet implemented');
-            break;
+          case 'slack': {
+            const msg = 'Slack media sending not yet implemented';
+            logger.warn(msg);
+            errors.push(msg);
+            failed++;
+            continue;
+          }
         }
 
-        logger.info(`Sent ${attachment.type} to ${channel}:${conversationId}`, {
-          filename: attachment.filename,
-          source: tempCleanup ? 'url' : 'path',
-        });
+        if (didSend) {
+          sent++;
+          logger.info(`Sent ${attachment.type} to ${channel}:${conversationId}`, {
+            filename: attachment.filename || filePath,
+            source: tempCleanup ? 'url' : 'path',
+          });
+        }
       } catch (error) {
-        logger.error(`Failed to send ${attachment.type} to ${channel}:${conversationId}`, error);
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to send ${attachment.type} to ${channel}:${conversationId}`, {
+          error: msg,
+          filePath,
+        });
+        errors.push(`${attachment.type}: ${msg}`);
+        failed++;
       } finally {
         // Clean up temp file if we downloaded from URL
         if (tempCleanup) {
@@ -1124,6 +1203,8 @@ export class ChannelGateway extends EventEmitter {
         }
       }
     }
+
+    return { sent, failed, errors };
   }
 
   private async trySendTelegramVoiceReply(response: AgentResponse): Promise<boolean> {
