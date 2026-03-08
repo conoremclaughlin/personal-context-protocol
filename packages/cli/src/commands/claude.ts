@@ -57,6 +57,7 @@ interface BootstrapContextResult {
 
 interface PcpSessionSummary {
   id: string;
+  agentId?: string | null;
   studioId?: string | null;
   studio?: { branch?: string | null } | null;
   threadKey?: string | null;
@@ -109,6 +110,12 @@ function toEpochMs(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const ms = new Date(value).getTime();
   return Number.isFinite(ms) ? ms : undefined;
+}
+
+export function sortSessionEntriesByRecency<T extends { sortMs: number; key: string }>(
+  entries: T[]
+): T[] {
+  return [...entries].sort((a, b) => b.sortMs - a.sortMs || a.key.localeCompare(b.key));
 }
 
 function formatCandidateTimestamp(value: string | null | undefined): string {
@@ -211,7 +218,7 @@ export function renderSessionCandidatesTable(rows: SessionCandidateTableRow[]): 
     header: string;
     width: number;
   }> = [
-    { key: 'type', header: 'TYPE', width: 7 },
+    { key: 'type', header: 'TYPE', width: 11 },
     { key: 'choice', header: 'CHOICE', width: 14 },
     { key: 'updated', header: 'UPDATED', width: 18 },
     { key: 'phase', header: 'PHASE', width: 16 },
@@ -694,10 +701,14 @@ function formatSessionPreviewText(
   return `${speaker}: ${truncateText(summary.content, 110)}`;
 }
 
-function withAgentPreviewSpeaker(preview: string | undefined, agentId: string): string | undefined {
+function withAgentPreviewSpeaker(
+  preview: string | undefined,
+  assistantLabel?: string
+): string | undefined {
   if (!preview) return undefined;
-  if (/^assistant:\s*/i.test(preview)) {
-    return `${agentId}: ${preview.replace(/^assistant:\s*/i, '')}`;
+  const normalizedLabel = assistantLabel?.trim();
+  if (normalizedLabel && /^assistant:\s*/i.test(preview)) {
+    return `${normalizedLabel}: ${preview.replace(/^assistant:\s*/i, '')}`;
   }
   return preview;
 }
@@ -889,7 +900,7 @@ function findLatestPcpReplTranscriptForSession(
 
 function getPcpSessionPreviewLabel(
   session: PcpSessionSummary,
-  agentId: string,
+  assistantLabel: string,
   cwd = process.cwd()
 ): string | undefined {
   const transcriptPath = findLatestPcpReplTranscriptForSession(session.id, cwd);
@@ -898,7 +909,7 @@ function getPcpSessionPreviewLabel(
     const content = readFileSync(transcriptPath, 'utf-8');
     const summary = extractLatestPreviewFromPcpTranscriptJsonl(content);
     if (!summary) return undefined;
-    return formatSessionPreviewText(summary, { assistantLabel: agentId });
+    return formatSessionPreviewText(summary, { assistantLabel });
   } catch {
     return undefined;
   }
@@ -2280,7 +2291,7 @@ async function ensurePcpSessionContext(
   const existingSessionIds = new Set(activeSessions.map((session) => session.id));
   const pcpPreviewBySessionId = new Map<string, string>();
   for (const session of activeSessions) {
-    const preview = getPcpSessionPreviewLabel(session, agentId, cwd);
+    const preview = getPcpSessionPreviewLabel(session, session.agentId || agentId, cwd);
     if (preview) pcpPreviewBySessionId.set(session.id, preview);
   }
 
@@ -2463,11 +2474,15 @@ async function ensurePcpSessionContext(
         : undefined;
       const linkedPreviewText = withAgentPreviewSpeaker(
         linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
-        agentId
+        session.agentId || agentId
       );
+      const ownerAgentId = session.agentId || null;
+      const sortTimestamp = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
+      const sortMs = toEpochMs(sortTimestamp || session.startedAt) ?? 0;
       return {
         type: 'pcp' as const,
         id: session.id,
+        ownerAgentId,
         threadKey: session.threadKey || null,
         phase: getSessionPhaseLabel(session) || null,
         contextPreview: session.context || null,
@@ -2477,12 +2492,17 @@ async function ensurePcpSessionContext(
           linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified || null,
         linkedLocalPreview: linkedPreviewText || null,
         pcpPreview: pcpPreviewBySessionId.get(session.id) || null,
+        sortMs,
       };
     });
     const localCandidates = displayLocalBackendSessions.map((session) => {
       const linkedPcpSession = pcpSessionByBackendSessionId.get(session.sessionId);
       const preview =
-        withAgentPreviewSpeaker(session.latestPrompt || session.firstPrompt, agentId) || null;
+        withAgentPreviewSpeaker(
+          session.latestPrompt || session.firstPrompt,
+          linkedPcpSession?.agentId || agentId
+        ) || null;
+      const sortMs = toEpochMs(session.latestPromptAt || session.modified) ?? 0;
       return {
         type: 'local' as const,
         id: session.sessionId,
@@ -2490,10 +2510,26 @@ async function ensurePcpSessionContext(
         preview,
         gitBranch: session.gitBranch || null,
         linkedPcpSessionId: linkedPcpSession?.id || null,
+        linkedPcpAgentId: linkedPcpSession?.agentId || null,
         linkedPcpPhase: linkedPcpSession ? getSessionPhaseLabel(linkedPcpSession) || null : null,
         selectable: !linkedPcpSession,
+        sortMs,
       };
     });
+    const interleavedCandidates = sortSessionEntriesByRecency([
+      ...pcpCandidates.map((candidate) => ({
+        key: `pcp:${candidate.id}`,
+        kind: 'pcp' as const,
+        sortMs: candidate.sortMs,
+        candidate,
+      })),
+      ...localCandidates.map((candidate) => ({
+        key: `local:${candidate.id}`,
+        kind: 'local' as const,
+        sortMs: candidate.sortMs,
+        candidate,
+      })),
+    ]);
 
     if (options.listCandidatesJson) {
       console.log(
@@ -2513,7 +2549,10 @@ async function ensurePcpSessionContext(
               local: localCandidates.length,
               localSelectable: localCandidates.filter((candidate) => candidate.selectable).length,
             },
-            candidates: [{ type: 'new' as const }, ...pcpCandidates, ...localCandidates],
+            candidates: [
+              { type: 'new' as const },
+              ...interleavedCandidates.map((entry) => entry.candidate),
+            ],
           },
           null,
           2
@@ -2532,29 +2571,45 @@ async function ensurePcpSessionContext(
           link: '-',
           preview: pcpAvailable ? 'Start new session' : 'Start new backend session',
         },
-        ...pcpCandidates.map((session) => ({
-          type: 'pcp',
-          choice: `pcp:${session.id.slice(0, 8)}`,
-          updated: formatCandidateTimestamp(session.linkedLocalModified || session.startedAt),
-          phase: session.phase || '-',
-          thread: session.threadKey || '-',
-          link: session.backendSessionId
-            ? `${backendLabel} ${session.backendSessionId.slice(0, 8)}`
-            : '-',
-          preview:
-            session.linkedLocalPreview || session.pcpPreview || session.contextPreview || '-',
-        })),
-        ...localCandidates.map((localSession) => ({
-          type: localSession.linkedPcpSessionId ? 'local+pcp' : 'local',
-          choice: `local:${localSession.id.slice(0, 8)}`,
-          updated: formatCandidateTimestamp(localSession.modified),
-          phase: localSession.linkedPcpPhase || '-',
-          thread: '-',
-          link: localSession.linkedPcpSessionId
-            ? `pcp:${localSession.linkedPcpSessionId.slice(0, 8)}`
-            : localSession.gitBranch || '-',
-          preview: localSession.preview || '-',
-        })),
+        ...interleavedCandidates.map((entry) => {
+          if (entry.kind === 'pcp') {
+            const session = entry.candidate;
+            const ownerPhase = session.ownerAgentId
+              ? `${session.ownerAgentId} · ${session.phase || '-'}`
+              : session.phase || '-';
+            return {
+              type: session.ownerAgentId ? `pcp:${session.ownerAgentId}` : 'pcp',
+              choice: `pcp:${session.id.slice(0, 8)}`,
+              updated: formatCandidateTimestamp(session.linkedLocalModified || session.startedAt),
+              phase: ownerPhase,
+              thread: session.threadKey || '-',
+              link: session.backendSessionId
+                ? `${backendLabel} ${session.backendSessionId.slice(0, 8)}`
+                : '-',
+              preview:
+                session.linkedLocalPreview || session.pcpPreview || session.contextPreview || '-',
+            };
+          }
+          const localSession = entry.candidate;
+          const ownerPhase = localSession.linkedPcpAgentId
+            ? `${localSession.linkedPcpAgentId} · ${localSession.linkedPcpPhase || '-'}`
+            : localSession.linkedPcpPhase || '-';
+          return {
+            type: localSession.linkedPcpSessionId
+              ? localSession.linkedPcpAgentId
+                ? `local:${localSession.linkedPcpAgentId}`
+                : 'local+pcp'
+              : 'local',
+            choice: `local:${localSession.id.slice(0, 8)}`,
+            updated: formatCandidateTimestamp(localSession.modified),
+            phase: ownerPhase,
+            thread: '-',
+            link: localSession.linkedPcpSessionId
+              ? `pcp:${localSession.linkedPcpSessionId.slice(0, 8)}`
+              : localSession.gitBranch || '-',
+            preview: localSession.preview || '-',
+          };
+        }),
       ];
       const [header, divider, ...body] = renderSessionCandidatesTable(rows);
       if (header) console.log(chalk.bold(`  ${header}`));
@@ -2610,6 +2665,14 @@ async function ensurePcpSessionContext(
       },
     ];
 
+    const choiceEntries: Array<{
+      key: string;
+      sortMs: number;
+      value: string;
+      label: string;
+      sessionId: string;
+    }> = [];
+
     for (const session of activeSessions) {
       const value = `__pcp__:${session.id}`;
       const linkedBackendSessionId =
@@ -2619,10 +2682,12 @@ async function ensurePcpSessionContext(
         : undefined;
       const linkedPreviewText = withAgentPreviewSpeaker(
         linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
-        agentId
+        session.agentId || agentId
       );
       const linkedAt = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
+      const ownerLabel = session.agentId || null;
+      const sourceLabel = ownerLabel ? `PCP/${ownerLabel}` : 'PCP';
       const preview = pcpPreviewBySessionId.get(session.id);
       const phaseLabel = getSessionPhaseLabel(session);
       const pickerPreview = linkedPreviewText || preview || session.context || undefined;
@@ -2632,48 +2697,65 @@ async function ensurePcpSessionContext(
         session.studio?.branch ||
         '-';
       const stateTokens = [
+        ownerLabel ? `agent ${ownerLabel}` : null,
         phaseLabel || 'runtime:active',
         session.threadKey ? `thread ${truncateText(session.threadKey, 20)}` : null,
         linkedBackendSessionId ? `${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : null,
       ].filter(Boolean) as string[];
-      choices.push({
-        name: buildSessionPickerLabel({
+      choiceEntries.push({
+        key: value,
+        sortMs: toEpochMs(linkedAt || session.startedAt) ?? 0,
+        value,
+        sessionId: session.id,
+        label: buildSessionPickerLabel({
           metaLine: buildPickerMetaLine({
-            source: 'PCP',
+            source: sourceLabel,
             id: session.id.slice(0, 8),
             when: formatPickerTimestamp(linkedAt || session.startedAt),
             state: stateTokens.join(' · '),
             branch: pickerPreview || branchLabel,
           }),
         }),
-        value,
       });
-      sessionChoiceByValue.set(value, session.id);
     }
 
     for (const localSession of displayLocalBackendSessions) {
       const value = `__local__:${localSession.sessionId}`;
-      const previewText = withAgentPreviewSpeaker(
-        localSession.latestPrompt || localSession.firstPrompt,
-        agentId
-      );
       const previewAt = localSession.latestPromptAt || localSession.modified;
       const backendLabel = localSession.backend[0].toUpperCase() + localSession.backend.slice(1);
       const linkedPcpSession = pcpSessionByBackendSessionId.get(localSession.sessionId);
-      choices.push({
-        name: buildSessionPickerLabel({
+      const ownerLabel = linkedPcpSession?.agentId || null;
+      const previewText = withAgentPreviewSpeaker(
+        localSession.latestPrompt || localSession.firstPrompt,
+        ownerLabel || agentId
+      );
+      const sourceLabel = ownerLabel ? `${backendLabel}/${ownerLabel}` : backendLabel;
+      const stateLabel = linkedPcpSession
+        ? ownerLabel
+          ? `agent ${ownerLabel} · linked pcp:${linkedPcpSession.id.slice(0, 8)}`
+          : `linked pcp:${linkedPcpSession.id.slice(0, 8)}`
+        : 'local';
+      choiceEntries.push({
+        key: value,
+        sortMs: toEpochMs(previewAt) ?? 0,
+        value,
+        sessionId: localSession.sessionId,
+        label: buildSessionPickerLabel({
           metaLine: buildPickerMetaLine({
-            source: backendLabel,
+            source: sourceLabel,
             id: localSession.sessionId.slice(0, 8),
             when: formatPickerTimestamp(previewAt),
-            state: linkedPcpSession ? `linked pcp:${linkedPcpSession.id.slice(0, 8)}` : 'local',
+            state: stateLabel,
             branch: previewText || localSession.gitBranch || '-',
           }),
         }),
-        value,
       });
-      sessionChoiceByValue.set(value, localSession.sessionId);
     }
+
+    sortSessionEntriesByRecency(choiceEntries).forEach((entry) => {
+      choices.push({ name: entry.label, value: entry.value });
+      sessionChoiceByValue.set(entry.value, entry.sessionId);
+    });
 
     try {
       const { select } = await import('@inquirer/prompts');
