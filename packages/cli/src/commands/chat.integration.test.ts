@@ -1291,6 +1291,98 @@ describe('runChat integration', () => {
     expect(localToolCall).toBeTruthy();
   });
 
+  it('executes local pcp-tool blocks with gemini backend via sb runtime', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":2}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['run local gemini tool routing', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'gemini',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual(['--allowed-tools', '']);
+    const localToolCall = testState.pcpCalls.find(
+      (call) => call.tool === 'get_inbox' && call.args.limit === 2
+    );
+    expect(localToolCall).toBeTruthy();
+  });
+
+  it('executes local pcp-tool blocks with codex backend via sb runtime', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":3}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['run local codex tool routing', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual([]);
+    const localToolCall = testState.pcpCalls.find(
+      (call) => call.tool === 'get_inbox' && call.args.limit === 3
+    );
+    expect(localToolCall).toBeTruthy();
+  });
+
   it('does not pass unsupported --allowedTools passthrough to codex backend', async () => {
     testState.inputs = ['codex local turn', '/quit'];
 
