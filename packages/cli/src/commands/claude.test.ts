@@ -20,6 +20,7 @@ import {
   resolveBackendSessionSeedId,
   resolveStartedSessionFromList,
   sanitizeBackendExecutionArgs,
+  sortSessionEntriesByRecency,
   shouldRetryWithFreshBackendSession,
   shouldAutoResumeRuntimeSession,
 } from './claude.js';
@@ -111,6 +112,28 @@ describe('buildSessionPickerLabel', () => {
     expect(label).toContain('↳');
     expect(label).toContain('PCP');
     expect(label).toContain('c4ec2f5e');
+  });
+});
+
+describe('sortSessionEntriesByRecency', () => {
+  it('sorts newest-first regardless of source type', () => {
+    const sorted = sortSessionEntriesByRecency([
+      { key: 'pcp:old', sortMs: 10 },
+      { key: 'local:new', sortMs: 30 },
+      { key: 'pcp:mid', sortMs: 20 },
+    ]);
+
+    expect(sorted.map((entry) => entry.key)).toEqual(['local:new', 'pcp:mid', 'pcp:old']);
+  });
+
+  it('uses key as stable tiebreaker for deterministic ordering', () => {
+    const sorted = sortSessionEntriesByRecency([
+      { key: 'local:b', sortMs: 10 },
+      { key: 'pcp:a', sortMs: 10 },
+      { key: 'pcp:c', sortMs: 10 },
+    ]);
+
+    expect(sorted.map((entry) => entry.key)).toEqual(['local:b', 'pcp:a', 'pcp:c'].sort());
   });
 });
 
