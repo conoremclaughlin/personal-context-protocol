@@ -9,15 +9,17 @@ ALTER TABLE agent_identities
   ADD COLUMN IF NOT EXISTS studio_hint text DEFAULT 'home';
 
 -- Backfill: any identity that already has routes with studio_hint set,
--- inherit the most common one as their default.
+-- inherit the most recently updated one as their default.
 UPDATE agent_identities ai
-SET studio_hint = sub.most_common
+SET studio_hint = sub.latest_hint
 FROM (
-  SELECT cr.identity_id, cr.studio_hint AS most_common
+  SELECT DISTINCT ON (cr.identity_id)
+    cr.identity_id,
+    cr.studio_hint AS latest_hint
   FROM channel_routes cr
   WHERE cr.studio_hint IS NOT NULL
     AND cr.is_active = true
-  ORDER BY cr.updated_at DESC
+  ORDER BY cr.identity_id, cr.updated_at DESC
 ) sub
 WHERE ai.id = sub.identity_id
   AND ai.studio_hint = 'home';

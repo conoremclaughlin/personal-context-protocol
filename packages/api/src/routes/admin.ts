@@ -1621,7 +1621,8 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         status,
         run_count,
         max_runs,
-        identity_id
+        identity_id,
+        studio_hint
       `
       )
       .eq('user_id', authReq.pcpUserId)
@@ -1692,6 +1693,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         runCount: reminder.run_count,
         maxRuns: reminder.max_runs,
         identityId: reminder.identity_id,
+        studioHint: reminder.studio_hint ?? null,
       })),
     });
   } catch (error) {
@@ -2047,6 +2049,57 @@ router.patch('/routing/identities/:identityId', async (req: Request, res: Respon
   } catch (error) {
     logger.error('Failed to update identity studio_hint:', error);
     res.status(500).json(errorJson('Failed to update identity', error));
+  }
+});
+
+/**
+ * PATCH /api/admin/routing/reminders/:reminderId
+ * Update a reminder's studio_hint override.
+ */
+router.patch('/routing/reminders/:reminderId', async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AdminAuthRequest;
+    const { reminderId } = req.params;
+    const { studioHint } = req.body;
+
+    // studioHint can be a string (set override) or null (clear override, inherit from agent)
+    if (studioHint !== null && (typeof studioHint !== 'string' || !studioHint.trim())) {
+      res.status(400).json({ error: 'studioHint must be a non-empty string or null (to clear)' });
+      return;
+    }
+
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Verify reminder belongs to user
+    const { data: reminder, error: fetchError } = await supabase
+      .from('scheduled_reminders')
+      .select('id')
+      .eq('id', reminderId)
+      .eq('user_id', authReq.pcpUserId)
+      .single();
+
+    if (fetchError || !reminder) {
+      res.status(404).json({ error: 'Reminder not found' });
+      return;
+    }
+
+    const { error: updateError } = await supabase
+      .from('scheduled_reminders')
+      .update({ studio_hint: studioHint ? studioHint.trim() : null })
+      .eq('id', reminderId);
+
+    if (updateError) {
+      logger.error('Failed to update reminder studio_hint:', updateError);
+      res.status(500).json(errorJson('Failed to update reminder', updateError));
+      return;
+    }
+
+    res.json({ success: true, reminderId, studioHint: studioHint ? studioHint.trim() : null });
+  } catch (error) {
+    logger.error('Failed to update reminder studio_hint:', error);
+    res.status(500).json(errorJson('Failed to update reminder', error));
   }
 });
 
