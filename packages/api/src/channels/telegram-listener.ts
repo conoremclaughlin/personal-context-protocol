@@ -174,6 +174,7 @@ export class TelegramListener extends EventEmitter {
   private isRunning = false;
   private lastUpdateId = 0;
   private pollTimeout: NodeJS.Timeout | null = null;
+  private pollAbortController: AbortController | null = null;
   private messageCallback?: MessageCallback;
   private mediaGroupBuffer: MediaGroupBuffer | null = null;
   private authService: AuthorizationService;
@@ -254,6 +255,12 @@ export class TelegramListener extends EventEmitter {
       this.pollTimeout = null;
     }
 
+    // Abort any in-flight long-poll request to Telegram API
+    if (this.pollAbortController) {
+      this.pollAbortController.abort();
+      this.pollAbortController = null;
+    }
+
     this.mediaGroupBuffer?.destroy();
 
     this.emit('disconnected');
@@ -298,7 +305,17 @@ export class TelegramListener extends EventEmitter {
       allowed_updates: ['message', 'edited_message', 'my_chat_member', 'chat_member'],
     };
 
-    return this.apiCall<TelegramUpdate[]>('getUpdates', params);
+    // Use an AbortController so stop() can cancel the long-poll request
+    this.pollAbortController = new AbortController();
+    try {
+      return await this.apiCall<TelegramUpdate[]>(
+        'getUpdates',
+        params,
+        this.pollAbortController.signal
+      );
+    } finally {
+      this.pollAbortController = null;
+    }
   }
 
   /**
@@ -885,13 +902,18 @@ export class TelegramListener extends EventEmitter {
   /**
    * Make a Telegram API call
    */
-  private async apiCall<T>(method: string, params?: Record<string, unknown>): Promise<T> {
+  private async apiCall<T>(
+    method: string,
+    params?: Record<string, unknown>,
+    signal?: AbortSignal
+  ): Promise<T> {
     const url = `${TELEGRAM_API}/bot${this.token}/${method}`;
 
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: params ? JSON.stringify(params) : undefined,
+      signal,
     });
 
     const data = (await response.json()) as TelegramApiResponse<T>;
