@@ -299,71 +299,65 @@ export default function AgentRoutingPage() {
         <CardContent>
           {/* Default studio selector */}
           {data?.agent && (
-            <div className="mb-6 rounded-lg border border-indigo-100 bg-indigo-50/50 p-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-start gap-3">
-                  <Home className="mt-0.5 h-5 w-5 text-indigo-500 shrink-0" />
-                  <div>
-                    <div className="font-medium text-gray-900">Default studio</div>
-                    <p className="mt-0.5 text-sm text-gray-500">
-                      Used for all messages unless a specific route overrides it below.
-                    </p>
-                  </div>
-                </div>
-                <div className="shrink-0 ml-4">
-                  {editingHomeStudio ? (
-                    <div className="flex items-center gap-1.5">
-                      <select
-                        className="h-9 rounded-md border border-input bg-white px-3 text-sm font-medium"
-                        value={homeStudioValue}
-                        onChange={(event) => setHomeStudioValue(event.target.value)}
-                      >
-                        {studioOptions.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                        {!studioOptions.some((o) => o.value === 'home') && (
-                          <option value="home">home</option>
-                        )}
-                      </select>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9 w-9 p-0 border-green-200 hover:bg-green-50"
-                        disabled={updateHomeStudioMutation.isPending}
-                        onClick={() =>
-                          updateHomeStudioMutation.mutate({
-                            identityId: data.agent.id,
-                            studioHint: homeStudioValue,
-                          })
-                        }
-                      >
-                        <Check className="h-4 w-4 text-green-600" />
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-9 w-9 p-0"
-                        onClick={() => setEditingHomeStudio(false)}
-                      >
-                        <X className="h-4 w-4 text-gray-400" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <button
-                      className="flex items-center gap-2 rounded-md border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm hover:bg-gray-50 hover:border-gray-300 transition-colors cursor-pointer group"
-                      onClick={() => {
-                        setHomeStudioValue(data.agent.studioHint || 'home');
-                        setEditingHomeStudio(true);
-                      }}
+            <div className="mb-6 flex items-center justify-between border-b border-gray-100 pb-4">
+              <div className="flex items-center gap-2.5 text-sm text-gray-500">
+                <Home className="h-4 w-4 text-gray-400" />
+                <span>Default studio</span>
+                <span className="text-gray-300">&mdash;</span>
+                <span className="text-gray-400">used unless a route or reminder overrides it</span>
+              </div>
+              <div className="shrink-0 ml-4">
+                {editingHomeStudio ? (
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      className="h-8 rounded-md border border-input bg-background px-2.5 text-sm"
+                      value={homeStudioValue}
+                      onChange={(event) => setHomeStudioValue(event.target.value)}
                     >
-                      <GitBranch className="h-4 w-4 text-indigo-500" />
-                      {studioHintLabel(data.agent.studioHint, studios)}
-                      <Pencil className="h-3 w-3 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                    </button>
-                  )}
-                </div>
+                      {studioOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </option>
+                      ))}
+                      {!studioOptions.some((o) => o.value === 'home') && (
+                        <option value="home">home</option>
+                      )}
+                    </select>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      disabled={updateHomeStudioMutation.isPending}
+                      onClick={() =>
+                        updateHomeStudioMutation.mutate({
+                          identityId: data.agent.id,
+                          studioHint: homeStudioValue,
+                        })
+                      }
+                    >
+                      <Check className="h-4 w-4 text-green-600" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      onClick={() => setEditingHomeStudio(false)}
+                    >
+                      <X className="h-4 w-4 text-gray-400" />
+                    </Button>
+                  </div>
+                ) : (
+                  <button
+                    className="inline-flex items-center gap-2 rounded-md border border-gray-200 px-2.5 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors cursor-pointer"
+                    onClick={() => {
+                      setHomeStudioValue(data.agent.studioHint || 'home');
+                      setEditingHomeStudio(true);
+                    }}
+                  >
+                    {studioHintLabel(data.agent.studioHint, studios)}
+                    <Pencil className="h-3 w-3 text-gray-400" />
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -658,7 +652,7 @@ export default function AgentRoutingPage() {
                         </div>
                       ) : (
                         <button
-                          className="flex items-center gap-1 text-xs text-gray-700 hover:text-gray-900 group cursor-pointer"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-transparent px-2 py-0.5 text-xs text-gray-700 hover:border-gray-200 hover:bg-gray-50 transition-all cursor-pointer"
                           onClick={() => {
                             setReminderStudioValue(reminder.studioHint || '');
                             setEditingReminderId(reminder.id);
@@ -671,7 +665,7 @@ export default function AgentRoutingPage() {
                           ) : (
                             <span className="text-gray-400 italic">Inherits default</span>
                           )}
-                          <Pencil className="h-2.5 w-2.5 text-gray-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          <Pencil className="h-3 w-3 text-gray-400" />
                         </button>
                       )}
                     </div>
