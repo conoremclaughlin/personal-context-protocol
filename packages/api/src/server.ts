@@ -333,14 +333,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
 
     // Register the response callback so send_response MCP calls route through ChannelGateway
     setResponseCallback(async (response) => {
-      const channelResponse: ChannelResponse = {
-        channel: response.channel as ChannelType,
-        conversationId: response.conversationId,
-        content: response.content,
-        format: response.format,
-        replyToMessageId: response.replyToMessageId,
-      };
-      await channelGateway!.sendResponse(channelResponse);
+      await channelGateway!.sendResponse(response);
       logger.info(`Response routed via callback to ${response.channel}:${response.conversationId}`);
     });
     logger.info('Response callback registered for MCP send_response tool');

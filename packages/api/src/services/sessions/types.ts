@@ -138,6 +138,8 @@ export interface ChannelResponse {
   format?: 'text' | 'markdown' | 'code' | 'json';
   replyToMessageId?: string;
   metadata?: Record<string, unknown>;
+  /** Media attachments (images, videos, documents) to send alongside text */
+  media?: import('../../agent/types').OutboundMedia[];
 }
 
 export interface SessionResult {
