@@ -40,9 +40,13 @@ export async function runBackendTurn(request: BackendRunRequest): Promise<Backen
   let timeoutHandle: NodeJS.Timeout | null = null;
 
   return new Promise<BackendRunResult>((resolve) => {
+    // Strip CLAUDECODE to prevent nested-session detection when sb itself
+    // is running inside Claude Code (e.g., via PM2 or direct invocation).
+    // Same pattern as the API server runners (claude-runner, codex-runner, gemini-runner).
+    const { CLAUDECODE, ...cleanEnv } = process.env;
     const child = spawn(prepared.binary, prepared.args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, ...prepared.env },
+      env: { ...cleanEnv, ...prepared.env },
     });
 
     let stdout = '';

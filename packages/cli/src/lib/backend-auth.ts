@@ -30,9 +30,12 @@ async function runCommand(
   timeoutMs = AUTH_CHECK_TIMEOUT_MS
 ): Promise<CommandResult> {
   return await new Promise((resolve) => {
+    // Strip CLAUDECODE so `claude auth status` doesn't refuse to run
+    // when sb is itself running inside Claude Code.
+    const { CLAUDECODE, ...cleanEnv } = process.env;
     const child = spawn(binary, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: process.env,
+      env: cleanEnv,
     });
 
     let stdout = '';
