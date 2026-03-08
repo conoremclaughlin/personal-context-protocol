@@ -110,6 +110,13 @@ import {
 } from './user-identity-handlers';
 
 import {
+  handleSaveTeamConstitution,
+  handleGetTeamConstitution,
+  saveTeamConstitutionSchema,
+  getTeamConstitutionSchema,
+} from './team-constitution-handlers';
+
+import {
   handleCreateReminder,
   handleListReminders,
   handleUpdateReminder,
@@ -2577,9 +2584,9 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Save or update shared user-level documents. These are shared across all agents for a user.
 
-- userProfile: About-you document content (legacy alias: userProfileMd)
-- sharedValues: Shared values document content (legacy alias: sharedValuesMd)
-- process: Shared collaboration process document content (legacy alias: processMd)
+- userProfile: USER.md — about the organic human (background, preferences, relationship). This is the primary use of this tool.
+- sharedValues: [Prefer save_team_constitution] VALUES.md — shared principles (legacy path, still works)
+- process: [Prefer save_team_constitution] PROCESS.md — team operational process (legacy path, still works)
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: saveUserIdentitySchema,
@@ -2608,7 +2615,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'get_user_identity',
     {
-      description: `Get shared user-level documents (about-you, shared values, process).
+      description: `Get shared user-level documents. Returns USER.md (about the organic human), plus VALUES.md and PROCESS.md (prefer get_team_constitution for those).
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: getUserIdentitySchema,
@@ -2676,6 +2683,76 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleRestoreUserIdentity(args, dataComposer);
       } catch (error) {
         logger.error('Error in restore_user_identity:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // TEAM CONSTITUTION TOOLS (workspace-level VALUES.md, PROCESS.md)
+  // =====================================================
+
+  server.registerTool(
+    'save_team_constitution',
+    {
+      description: `Update team constitution documents. These are workspace-level shared documents that affect ALL SBs.
+
+- sharedValues: VALUES.md — shared principles, core truths, boundaries, identity philosophy
+- process: PROCESS.md — team operational process (sessions, memory, handoff, PR conventions)
+
+⚠️ CONSTITUTION-LEVEL: Changes are versioned and affect every SB's bootstrap context.
+Prefer this over save_user_identity for values/process updates.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: saveTeamConstitutionSchema,
+    },
+    async (args) => {
+      try {
+        return await handleSaveTeamConstitution(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in save_team_constitution:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_team_constitution',
+    {
+      description: `Get team constitution documents (VALUES.md, PROCESS.md) from workspace storage.
+
+Returns the canonical workspace-level versions. Falls back to user_identity if workspace columns are empty.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: getTeamConstitutionSchema,
+    },
+    async (args) => {
+      try {
+        return await handleGetTeamConstitution(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_team_constitution:', error);
         return {
           content: [
             {
