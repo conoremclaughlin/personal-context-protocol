@@ -17,6 +17,7 @@
     "uninstall:cli": "rm -f \"$HOME/.pcp/bin/sb\" \"$HOME/.local/bin/sb\" && echo \"Unlinked: $HOME/.pcp/bin/sb and $HOME/.local/bin/sb\"",
     "type-check": "tsc --noEmit",
     "test": "yarn workspace @personal-context/shared build && vitest run",
+    "test:smoke:live": "bash ./scripts/smoke-chat-live.sh",
     "test:watch": "vitest",
     "clean": "rm -rf dist"
   },
