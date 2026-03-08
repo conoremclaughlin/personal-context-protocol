@@ -1569,7 +1569,7 @@ router.get('/routing', async (req: Request, res: Response) => {
         name: identity.name,
         role: identity.role,
         backend: identity.backend,
-        studioHint: identity.studio_hint || 'home',
+        studioHint: identity.studio_hint || null,
       })),
       routes,
     });
@@ -1706,7 +1706,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         role: identity.role,
         description: identity.description,
         backend: identity.backend,
-        studioHint: identity.studio_hint || 'home',
+        studioHint: identity.studio_hint || null,
         updatedAt: identity.updated_at,
       },
       studios: (studiosData || []).map((s) => ({
