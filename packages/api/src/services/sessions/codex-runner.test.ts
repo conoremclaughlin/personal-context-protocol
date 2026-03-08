@@ -32,6 +32,11 @@ vi.mock('fs/promises', () => ({
   access: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('./resolve-binary.js', () => ({
+  resolveBinaryPath: vi.fn().mockResolvedValue('codex'),
+  buildSpawnPath: vi.fn().mockReturnValue(process.env.PATH || ''),
+}));
+
 vi.mock('../../utils/logger.js', () => ({
   logger: {
     info: vi.fn(),
