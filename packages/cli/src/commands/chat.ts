@@ -2594,7 +2594,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         .catch(() => undefined);
     }
 
-    const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
+    let prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
     const turnStartedAt = Date.now();
     const backendGate = toolPolicy.getBackendToolGate();
     const passthroughPlan = buildBackendToolPassthrough(
@@ -2668,7 +2668,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
     };
     process.on('SIGINT', onSigintDuringTurn);
-    const runResult = await runBackendTurn({
+    let runResult = await runBackendTurn({
       backend: runtime.backend,
       agentId,
       model: runtime.model,
@@ -2737,17 +2737,34 @@ export async function runChat(options: ChatOptions): Promise<void> {
         .catch(() => undefined);
     }
 
-    let responseText = runResult.stdout.trim();
-    if (!responseText && runResult.stderr.trim()) {
-      responseText = runResult.stderr.trim();
-    }
-    if (!responseText) {
-      responseText = '(no output)';
-    }
+    // ── Multi-turn tool loop ──
+    // When local tool routing is active, the backend may emit pcp-tool blocks.
+    // We execute them locally, then re-invoke the backend with the results so it
+    // can reason about them and potentially emit more tool calls. This continues
+    // until the backend produces no tool calls or we hit the iteration limit.
+    const MAX_TOOL_LOOP_ITERATIONS = 5;
+    let toolLoopIteration = 0;
+    let responseText = '';
+    let localToolCalls: ReturnType<typeof extractLocalToolCalls> = [];
+    let allToolResults: Array<{ tool: string; result: unknown; status: string }> = [];
 
-    const localToolCalls =
-      runtime.toolRouting === 'local' ? extractLocalToolCalls(responseText).slice(0, 5) : [];
-    if (localToolCalls.length > 0) {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      responseText = runResult.stdout.trim();
+      if (!responseText && runResult.stderr.trim()) {
+        responseText = runResult.stderr.trim();
+      }
+      if (!responseText) {
+        responseText = '(no output)';
+      }
+
+      localToolCalls =
+        runtime.toolRouting === 'local' ? extractLocalToolCalls(responseText).slice(0, 5) : [];
+
+      if (localToolCalls.length === 0) break;
+
+      // Execute tool calls through sb's policy pipeline
+      const iterationResults: typeof allToolResults = [];
       await executeToolCalls(localToolCalls, {
         policy: toolPolicy,
         callTool: (tool, args) => pcp.callTool(tool, args),
@@ -2806,6 +2823,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
               reason: result.reason,
             });
             ledger.addEntry('system', compactForLedger(msg, 400), 'local-tool');
+            iterationResults.push({
+              tool: result.tool,
+              result: result.reason,
+              status: result.status,
+            });
           } else if (result.status === 'executed' || result.status === 'approved') {
             const resultJson = JSON.stringify(result.result);
             printLine(chalk.cyan(`🛠 local tool ${result.tool} ${resultJson}`));
@@ -2821,6 +2843,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
               compactForLedger(`local tool ${result.tool} -> ${resultJson}`, 500),
               'local-tool'
             );
+            iterationResults.push({
+              tool: result.tool,
+              result: result.result,
+              status: result.status,
+            });
           } else if (result.status === 'error') {
             const msg = `Local tool error (${result.tool}): ${result.error}`;
             printLine(chalk.red(msg));
@@ -2832,9 +2859,70 @@ export async function runChat(options: ChatOptions): Promise<void> {
               error: result.error,
             });
             ledger.addEntry('system', compactForLedger(msg, 400), 'local-tool');
+            iterationResults.push({ tool: result.tool, result: result.error, status: 'error' });
           }
         },
       });
+
+      allToolResults.push(...iterationResults);
+      toolLoopIteration++;
+
+      // Check if we should continue the loop
+      const hasExecutedTools = iterationResults.some(
+        (r) => r.status === 'executed' || r.status === 'approved'
+      );
+      if (!hasExecutedTools || toolLoopIteration >= MAX_TOOL_LOOP_ITERATIONS) {
+        if (toolLoopIteration >= MAX_TOOL_LOOP_ITERATIONS) {
+          printLine(
+            chalk.dim(`(tool loop limit reached — ${MAX_TOOL_LOOP_ITERATIONS} iterations)`)
+          );
+        }
+        break;
+      }
+
+      // Build continuation prompt with tool results and re-invoke backend
+      const toolResultsSummary = iterationResults
+        .map((r) => {
+          const resultStr = typeof r.result === 'string' ? r.result : JSON.stringify(r.result);
+          return `Tool ${r.tool} (${r.status}): ${resultStr}`;
+        })
+        .join('\n\n');
+      const continuationPrompt = buildPromptEnvelope(
+        agentId,
+        runtime,
+        ledger,
+        `[Tool results from previous turn]\n${toolResultsSummary}\n\nContinue your response based on these tool results. If you need more tools, emit pcp-tool blocks. Otherwise, provide your final answer.`
+      );
+
+      // Show continuation indicator
+      printLine(
+        chalk.dim(
+          `  ↳ continuing with tool results (${toolLoopIteration}/${MAX_TOOL_LOOP_ITERATIONS})…`
+        )
+      );
+      const stopContinuation = inkRepl
+        ? (() => {
+            return () => {};
+          })()
+        : startWaitingIndicator(runtime.backend, {
+            statusLane,
+            logger: printLine,
+            renderAbovePrompt: true,
+          });
+
+      runResult = await runBackendTurn({
+        backend: runtime.backend,
+        agentId,
+        model: runtime.model,
+        prompt: continuationPrompt,
+        verbose: runtime.verbose,
+        passthroughArgs,
+        timeoutMs: runtime.backendTurnTimeoutMs,
+      }).finally(() => {
+        stopContinuation();
+      });
+
+      if (!runResult.success) break;
     }
 
     const assistantDisplayText =
@@ -2842,7 +2930,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         ? (() => {
             const stripped = stripLocalToolBlocks(responseText);
             if (stripped) return stripped;
-            if (localToolCalls.length > 0)
+            if (localToolCalls.length > 0 || allToolResults.length > 0)
               return '(local tool call emitted; see tool results above)';
             return responseText;
           })()
