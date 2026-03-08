@@ -153,18 +153,13 @@ export async function handleSaveTeamConstitution(args: unknown, dataComposer: Da
   if (existing) {
     await supabase.from('user_identity').update(identityUpdate).eq('id', existing.id);
   } else {
-    // No workspace-scoped user_identity row yet — try global
-    const { data: global } = await supabase
-      .from('user_identity')
-      .select('id')
-      .eq('user_id', user.id)
-      .is('workspace_id', null)
-      .single();
-
-    if (global) {
-      await supabase.from('user_identity').update(identityUpdate).eq('id', global.id);
-    }
-    // If no user_identity exists at all, skip — workspace is canonical
+    // No workspace-scoped row — insert one for history tracking
+    await supabase.from('user_identity').insert({
+      user_id: user.id,
+      workspace_id: workspaceId,
+      shared_values_md: params.sharedValues || null,
+      process_md: params.process || null,
+    });
   }
 
   const updated: string[] = [];
