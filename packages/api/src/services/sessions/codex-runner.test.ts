@@ -5,6 +5,11 @@ vi.mock('child_process', () => ({
   spawn: vi.fn(),
 }));
 
+vi.mock('./resolve-binary.js', () => ({
+  resolveBinaryPath: vi.fn().mockResolvedValue('codex'),
+  buildSpawnPath: vi.fn().mockReturnValue(process.env.PATH || ''),
+}));
+
 vi.mock('../../utils/logger.js', () => ({
   logger: {
     info: vi.fn(),
@@ -150,7 +155,7 @@ describe('CodexRunner', () => {
     const [, , options] = (spawn as Mock).mock.calls[0] as [
       string,
       string[],
-      { env?: Record<string, string> }
+      { env?: Record<string, string> },
     ];
     expect(options.env?.PCP_ACCESS_TOKEN).toBe('test-pcp-token');
   });
