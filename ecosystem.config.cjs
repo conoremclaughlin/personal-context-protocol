@@ -1,6 +1,12 @@
 /**
  * PM2 Ecosystem Configuration
  *
+ * ⚠️  DEPRECATED for local development — use `yarn dev` instead.
+ * `yarn dev` uses tsx --watch for hot reload and avoids PM2's issues with
+ * env caching, stale ports, and build staleness.
+ *
+ * This file is retained for production/CI use cases only.
+ *
  * This manages the PCP server processes:
  * 1. pcp     - Full PCP Server (MCP + ChannelGateway + SessionHost)
  * 2. web     - Next.js admin dashboard
@@ -12,13 +18,11 @@
  * - Heartbeat service for scheduled reminders
  * - Agent gateway for inter-agent triggers
  *
- * Commands:
+ * If you must use PM2 locally:
  *   pm2 start ecosystem.config.cjs    # Start all processes
  *   pm2 restart pcp                   # Restart PCP server
  *   pm2 logs                          # View all logs
- *   pm2 logs pcp                      # View PCP logs only
- *   pm2 stop all                      # Stop everything
- *   pm2 delete all                    # Clean up
+ *   pm2 delete all && pm2 start ...   # Full reset (avoids env caching)
  */
 
 const path = require('path');

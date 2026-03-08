@@ -389,7 +389,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
     //   1. reminder.studio_hint (direct override)
     //   2. channel_routes.studio_hint (matched by delivery channel)
     //   3. agent_identities.studio_hint (agent's home studio)
-    //   4. 'home' (hardcoded fallback)
+    //   4. null → resolveStudioId() uses its own cascade (agent studio → main)
     let reminderStudioHint: string | null = null;
 
     // Check reminder-level override first
@@ -437,10 +437,9 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       }
     }
 
-    // Final fallback
-    if (!reminderStudioHint) {
-      reminderStudioHint = 'home';
-    }
+    // No final fallback — leave null so resolveStudioId() uses its own
+    // cascade (agent's own studio → main studio) instead of searching
+    // for a studio literally named 'home' which doesn't exist.
 
     const reminderContent = `[HEARTBEAT REMINDER]
 Title: ${reminder.title}
