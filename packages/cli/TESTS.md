@@ -64,6 +64,30 @@ yarn workspace @personal-context/cli test -- src/commands/hooks.test.ts
 yarn workspace @personal-context/cli test -- src/lib/pcp-mcp.test.ts
 ```
 
+## Optional local smoke tests (not CI)
+
+For real-backend validation of `sb chat` local tool routing (`pcp-tool` → sb runtime execution),
+run:
+
+```bash
+yarn workspace @personal-context/cli test:smoke:live
+```
+
+The smoke runner:
+
+- requires a live PCP API server (`PCP_SERVER_URL`, default `http://localhost:3101`)
+- uses real backend CLIs (claude/codex/gemini) if installed
+- checks for `local tool get_inbox` in output as proof that tool execution happened in sb runtime
+
+Environment overrides:
+
+```bash
+SB_SMOKE_AGENT=lumen \
+SB_SMOKE_BACKENDS="claude codex gemini" \
+PCP_SERVER_URL=http://localhost:3101 \
+yarn workspace @personal-context/cli test:smoke:live
+```
+
 ## Logging
 
 - Use `--sb-debug` for runtime tracing.
