@@ -14,10 +14,14 @@ const testState = vi.hoisted(() => ({
   loadSkillInstructionImpl: vi.fn(),
 }));
 
-vi.mock('../backends/identity.js', () => ({
-  resolveAgentId: (agent?: string) => agent || 'lumen',
-  readIdentityJson: () => testState.identity,
-}));
+vi.mock('../backends/identity.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../backends/identity.js')>();
+  return {
+    ...original,
+    resolveAgentId: (agent?: string) => agent || 'lumen',
+    readIdentityJson: () => testState.identity,
+  };
+});
 
 vi.mock('../lib/pcp-client.js', () => ({
   PcpClient: class MockPcpClient {
@@ -1134,7 +1138,7 @@ describe('runChat integration', () => {
     expect(logText).toContain('Inbox auto-run disabled.');
   });
 
-  it('toggles tool routing via slash command', async () => {
+  it('toggles tool routing via slash command and auto-persists', async () => {
     testState.inputs = ['/tool-routing local', '/session', '/tool-routing backend', '/quit'];
 
     await runChat({
@@ -1144,9 +1148,14 @@ describe('runChat integration', () => {
     });
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(logText).toContain('Tool routing set to local.');
+    expect(logText).toContain('Tool routing set to local. (auto-saved)');
     expect(logText).toContain('routing=local');
-    expect(logText).toContain('Tool routing set to backend.');
+    expect(logText).toContain('Tool routing set to backend. (auto-saved)');
+
+    // Verify preferences were auto-persisted to .pcp/identity.json
+    const identityPath = join(testCwd, '.pcp', 'identity.json');
+    const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
+    expect(identity.runtime?.toolRouting).toBe('backend'); // last value set
   });
 
   it('toggles ui mode via slash command', async () => {
@@ -1673,6 +1682,101 @@ describe('runChat integration', () => {
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
     expect(logText).toContain('send_to_inbox');
   });
+
+  it('emits JSONL approval_request on stderr and executes tool when response arrives on stdin', async () => {
+    // Verify the JSONL wire protocol end-to-end through runChat:
+    // approval_request emitted on stderr → response piped to stdin → tool executes
+    let backendCallCount = 0;
+    testState.runBackendImpl.mockImplementation(async () => {
+      backendCallCount++;
+      if (backendCallCount === 1) {
+        return {
+          success: true,
+          stdout:
+            '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hi"}}\n```',
+          stderr: '',
+          exitCode: 0,
+          durationMs: 5,
+          command: 'mock',
+        };
+      }
+      return {
+        success: true,
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 3,
+        command: 'mock',
+      };
+    });
+
+    // Capture stderr writes and auto-respond to approval_request events via stdin
+    const stderrWrites: string[] = [];
+    const originalStderrWrite = process.stderr.write.bind(process.stderr);
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation((chunk: string | Uint8Array, ...rest: unknown[]) => {
+        const str = String(chunk);
+        stderrWrites.push(str);
+
+        // When we see an approval_request, respond immediately via stdin
+        for (const line of str.split('\n')) {
+          try {
+            const parsed = JSON.parse(line.trim()) as { type?: string; id?: string };
+            if (parsed.type === 'approval_request' && parsed.id) {
+              // Push the approval response to stdin so the channel picks it up
+              const response = JSON.stringify({
+                type: 'approval_response',
+                id: parsed.id,
+                decision: 'once',
+                by: 'test-harness',
+              });
+              process.stdin.push(response + '\n');
+            }
+          } catch {
+            // Not JSON — ignore
+          }
+        }
+
+        return originalStderrWrite(chunk, ...(rest as [BufferEncoding, (err?: Error) => void]));
+      });
+
+    testState.inputs = ['trigger tool', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      toolRouting: 'local',
+      approvalMode: 'jsonl',
+      pollSeconds: '999',
+    });
+
+    stderrSpy.mockRestore();
+
+    // Verify approval_request was emitted on stderr
+    const allStderr = stderrWrites.join('');
+    const approvalRequests = allStderr.split('\n').filter((line) => {
+      try {
+        return JSON.parse(line.trim()).type === 'approval_request';
+      } catch {
+        return false;
+      }
+    });
+    expect(approvalRequests.length).toBeGreaterThan(0);
+
+    const request = JSON.parse(approvalRequests[0]) as {
+      type: string;
+      tool: string;
+      id: string;
+      ts: string;
+    };
+    expect(request.type).toBe('approval_request');
+    expect(request.tool).toBe('send_to_inbox');
+    expect(request.id).toBeTruthy();
+
+    // send_to_inbox should have been executed after approval response was piped to stdin
+    expect(testState.pcpCalls.some((call) => call.tool === 'send_to_inbox')).toBe(true);
+  }, 10_000);
 
   it('applies default backend timeout for non-interactive turns', async () => {
     await runChat({

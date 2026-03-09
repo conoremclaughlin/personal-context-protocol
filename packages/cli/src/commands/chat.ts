@@ -3559,7 +3559,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
             break;
           }
           runtime.toolRouting = mode as 'backend' | 'local';
-          console.log(chalk.green(`Tool routing set to ${runtime.toolRouting}.`));
+          saveRuntimePreferences(process.cwd(), { toolRouting: runtime.toolRouting });
+          console.log(chalk.green(`Tool routing set to ${runtime.toolRouting}. (auto-saved)`));
           if (runtime.toolRouting === 'local') {
             console.log(
               chalk.dim(
@@ -3570,6 +3571,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           break;
         }
         case 'save-config': {
+          // Most preferences auto-persist on change, but /save-config captures the full snapshot
           const prefs: RuntimePreferences = {
             toolRouting: runtime.toolRouting,
             strictTools: runtime.strictTools,
@@ -3577,7 +3579,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           };
           const saved = saveRuntimePreferences(process.cwd(), prefs);
           if (saved) {
-            console.log(chalk.green('Runtime preferences saved to .pcp/identity.json:'));
+            console.log(chalk.green('All runtime preferences saved to .pcp/identity.json:'));
             console.log(chalk.dim(`  toolRouting: ${prefs.toolRouting}`));
             console.log(chalk.dim(`  strictTools: ${prefs.strictTools}`));
             if (prefs.approvalMode) {
