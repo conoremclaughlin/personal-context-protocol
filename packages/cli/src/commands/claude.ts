@@ -2344,7 +2344,9 @@ async function ensurePcpSessionContext(
     if (!backendSessionId || pcpSessionByBackendSessionId.has(backendSessionId)) continue;
     pcpSessionByBackendSessionId.set(backendSessionId, session);
   }
-  const displayLocalBackendSessions = localBackendSessions;
+  // Keep the picker de-duplicated: linked locals are rendered through the PCP row
+  // (with linked preview/timestamp), while untracked locals remain independently selectable.
+  const displayLocalBackendSessions = untrackedLocalBackendSessions;
   const existingSessionIds = new Set(activeSessions.map((session) => session.id));
   const pcpPreviewBySessionId = new Map<string, string>();
   for (const session of activeSessions) {
