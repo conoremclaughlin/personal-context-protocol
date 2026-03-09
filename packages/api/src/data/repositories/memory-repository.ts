@@ -572,17 +572,19 @@ export class MemoryRepository {
   }
 
   /**
-   * Get all active sessions for a user (without ended_at), ordered most recent first.
-   * Used by bootstrap to return all active sessions so the client can pick the right one.
+   * Get recent active sessions for a user (without ended_at), ordered most recent first.
+   * Used by bootstrap to return active sessions so the client can pick the right one.
+   * Capped to avoid bloating bootstrap response with zombie sessions.
    */
-  async getActiveSessions(userId: string, agentId?: string): Promise<Session[]> {
+  async getActiveSessions(userId: string, agentId?: string, limit = 10): Promise<Session[]> {
     let query = this.supabase
       .from('sessions')
       .select('*')
       .eq('user_id', userId)
       .is('ended_at', null)
       .neq('lifecycle', 'failed')
-      .order('started_at', { ascending: false });
+      .order('started_at', { ascending: false })
+      .limit(limit);
 
     if (agentId) {
       query = query.eq('agent_id', agentId);

@@ -1900,8 +1900,8 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
                 : null,
             },
 
-            // All active sessions — use studioId to pick the right one
-            // Match against .pcp/identity.json studioId/workspaceId in your local environment
+            // Recent active sessions (most recent 10) — use workspaceId to pick yours
+            // Match against .pcp/identity.json workspaceId in your local environment
             activeSessions: activeSessions.map((s) => ({
               id: s.id,
               agentId: s.agentId,
