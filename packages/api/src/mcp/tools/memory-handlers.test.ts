@@ -82,12 +82,22 @@ function createMockDataComposer() {
     create: vi.fn(),
   };
 
+  const mockActivityStreamRepo = {
+    logActivity: vi.fn().mockResolvedValue({
+      id: 'activity-123',
+      type: 'state_change',
+      agentId: 'wren',
+      createdAt: new Date('2026-02-10T10:00:00Z'),
+    }),
+  };
+
   return {
     getClient: vi.fn(),
     repositories: {
       memory: mockMemoryRepo,
       projects: mockProjectsRepo,
       projectTasks: mockProjectTasksRepo,
+      activityStream: mockActivityStreamRepo,
     },
   };
 }
@@ -439,6 +449,53 @@ describe('handleUpdateSessionPhase', () => {
         'user-123',
         'wren',
         undefined
+      );
+    });
+
+    it('should log state_change activity with before/after snapshots', async () => {
+      const before = {
+        ...mockSession,
+        currentPhase: 'investigating',
+        lifecycle: 'idle',
+        status: 'active',
+        backendSessionId: null,
+      };
+      const after = {
+        ...mockSession,
+        currentPhase: 'implementing',
+        lifecycle: 'running',
+        status: 'active',
+        backendSessionId: 'claude-abc123',
+      };
+      mockDataComposer.repositories.memory.getActiveSession.mockResolvedValue(mockSession);
+      mockDataComposer.repositories.memory.getSession.mockResolvedValue(before);
+      mockDataComposer.repositories.memory.updateSession.mockResolvedValue(after);
+
+      const result = await handleUpdateSessionPhase(
+        {
+          email: 'test@test.com',
+          phase: 'implementing',
+          lifecycle: 'running',
+          backendSessionId: 'claude-abc123',
+          agentId: 'wren',
+        },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.sessionTrace.changedFields).toEqual(
+        expect.arrayContaining(['currentPhase', 'lifecycle', 'backendSessionId'])
+      );
+
+      expect(mockDataComposer.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          agentId: 'wren',
+          type: 'state_change',
+          subtype: 'session_update',
+          sessionId: 'session-123',
+        })
       );
     });
 
