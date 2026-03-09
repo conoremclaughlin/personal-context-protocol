@@ -317,6 +317,7 @@ interface CodexSessionMetaLine {
     id?: string;
     cwd?: string;
     timestamp?: string;
+    originator?: string;
   };
 }
 
@@ -1507,6 +1508,7 @@ SELECT id, cwd, updated_at,
        git_branch
 FROM threads
 WHERE archived = 0
+  AND source = 'cli'
 ORDER BY updated_at DESC
 LIMIT 200;
 `;
@@ -1657,6 +1659,8 @@ function getCodexLocalSessionsFromJsonl(
       const sessionId = parsed.payload?.id?.trim();
       const sessionCwd = parsed.payload?.cwd?.trim();
       if (!sessionId || !sessionCwd) break;
+      const originator = parsed.payload?.originator?.trim();
+      if (originator && !originator.startsWith('codex_cli')) break;
 
       const normalizedSessionCwd = normalizePath(sessionCwd);
       if (!normalizedSessionCwd || normalizedSessionCwd !== normalizedCwd) break;

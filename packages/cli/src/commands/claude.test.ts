@@ -981,6 +981,7 @@ describe('getCodexLocalSessionsForProject', () => {
     mkdirSync(codexSessionsDir, { recursive: true });
 
     const matchingSessionId = '019a23ac-e563-7d53-8bf0-5a948546bf29';
+    const nonCliSessionId = '019a23ac-e563-7d53-8bf0-5a948546bf99';
     const nonMatchingSessionId = '019a23b9-b211-7972-b007-012a8bc1d6f2';
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${matchingSessionId}.jsonl`),
@@ -992,6 +993,7 @@ describe('getCodexLocalSessionsForProject', () => {
             id: matchingSessionId,
             cwd: projectPath,
             timestamp: '2026-03-02T11:44:41.000Z',
+            originator: 'codex_cli_rs',
           },
         }),
         JSON.stringify({
@@ -1004,6 +1006,19 @@ describe('getCodexLocalSessionsForProject', () => {
           },
         }),
       ].join('\n') + '\n'
+    );
+    writeFileSync(
+      join(codexSessionsDir, `rollout-2026-03-02T11-45-41-${nonCliSessionId}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-03-02T11:45:41.000Z',
+        type: 'session_meta',
+        payload: {
+          id: nonCliSessionId,
+          cwd: projectPath,
+          timestamp: '2026-03-02T11:45:41.000Z',
+          originator: 'codex_exec',
+        },
+      })}\n`
     );
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${nonMatchingSessionId}.jsonl`),
