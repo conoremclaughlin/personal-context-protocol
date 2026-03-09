@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   extractClaudeHistorySessionsForProject,
+  extractBackendSessionOverrideId,
   extractSessionFromStartSessionResponse,
   filterUntrackedLocalBackendSessions,
   filterPcpSessionsForContext,
@@ -65,6 +66,35 @@ describe('hasBackendSessionOverride', () => {
     expect(hasBackendSessionOverride('claude', ['-r'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['--resume'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['-r'])).toBe(true);
+  });
+});
+
+describe('extractBackendSessionOverrideId', () => {
+  it('extracts codex resume id from positional subcommand', () => {
+    expect(
+      extractBackendSessionOverrideId(
+        'codex',
+        [],
+        ['resume', '019c44fd-68f6-7332-9eda-2dc7c8afcedf']
+      )
+    ).toBe('019c44fd-68f6-7332-9eda-2dc7c8afcedf');
+  });
+
+  it('extracts codex resume id from passthrough subcommand', () => {
+    expect(extractBackendSessionOverrideId('codex', ['--full-auto', 'resume', '019c1234'])).toBe(
+      '019c1234'
+    );
+  });
+
+  it('extracts claude --resume id', () => {
+    expect(extractBackendSessionOverrideId('claude', ['--resume', 'ba549776-aaaa'])).toBe(
+      'ba549776-aaaa'
+    );
+  });
+
+  it('returns undefined when no explicit override id is present', () => {
+    expect(extractBackendSessionOverrideId('claude', ['--resume'])).toBeUndefined();
+    expect(extractBackendSessionOverrideId('codex', ['resume'])).toBeUndefined();
   });
 });
 

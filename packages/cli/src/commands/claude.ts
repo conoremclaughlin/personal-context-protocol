@@ -728,6 +728,19 @@ function withAgentPreviewSpeaker(
   return preview;
 }
 
+function withSessionFileSize(
+  preview: string | undefined,
+  fileSizeBytes: number | undefined
+): string | undefined {
+  const size = formatFileSize(fileSizeBytes);
+  if (!size) return preview;
+
+  const normalized = preview?.trim();
+  if (!normalized) return `(session) · ${size}`;
+  if (normalized.includes(size)) return normalized;
+  return `${normalized} · ${size}`;
+}
+
 function getSessionPhaseLabel(session: PcpSessionSummary): string | undefined {
   const currentPhase = (session.currentPhase || '').trim();
   if (currentPhase) return currentPhase;
@@ -1975,6 +1988,43 @@ export function hasBackendSessionOverride(
   return has('--resume') || has('-r') || has('--session-id');
 }
 
+export function extractBackendSessionOverrideId(
+  backend: string,
+  passthroughArgs: string[],
+  promptParts: string[] = []
+): string | undefined {
+  const readFlagValue = (flags: string[]): string | undefined => {
+    for (let i = 0; i < passthroughArgs.length; i += 1) {
+      const token = passthroughArgs[i]?.toLowerCase();
+      if (!token || !flags.includes(token)) continue;
+      const value = passthroughArgs[i + 1];
+      if (value && !value.startsWith('-')) return value;
+    }
+    return undefined;
+  };
+
+  if (backend === 'codex') {
+    if (promptParts[0]?.toLowerCase() === 'resume') {
+      const positional = promptParts[1];
+      if (positional && !positional.startsWith('-')) return positional;
+    }
+
+    const resumeIndex = passthroughArgs.findIndex((arg) => arg.toLowerCase() === 'resume');
+    if (resumeIndex >= 0) {
+      const value = passthroughArgs[resumeIndex + 1];
+      if (value && !value.startsWith('-')) return value;
+    }
+
+    return readFlagValue(['--resume', '-r', '--session-id']);
+  }
+
+  if (backend === 'claude') {
+    return readFlagValue(['--resume', '-r', '--session-id']);
+  }
+
+  return readFlagValue(['--resume', '-r', '--session-id']);
+}
+
 function extractActivityIdFromLogResult(result: unknown): string | undefined {
   if (!result || typeof result !== 'object') return undefined;
   const maybe = result as LogActivityResult;
@@ -2225,7 +2275,12 @@ async function ensurePcpSessionContext(
   backendSessionSeedId?: string;
   threadKey?: string;
 }> {
-  if (hasBackendSessionOverride(backend, passthroughArgs, promptParts)) return {};
+  const hasSessionOverride = hasBackendSessionOverride(backend, passthroughArgs, promptParts);
+  const overrideBackendSessionId = extractBackendSessionOverrideId(
+    backend,
+    passthroughArgs,
+    promptParts
+  );
 
   const config = getPcpConfig();
   const email = config?.email;
@@ -2246,6 +2301,8 @@ async function ensurePcpSessionContext(
     agentId,
     isTty: process.stdin.isTTY,
     explicitSelection,
+    hasSessionOverride,
+    overrideBackendSessionId: overrideBackendSessionId || null,
     selectionOverride: options.selectionOverride || null,
     localCount: localBackendSessions.length,
     knownCount: knownBackendSessionIds.size,
@@ -2544,6 +2601,61 @@ async function ensurePcpSessionContext(
     }
   };
 
+  if (hasSessionOverride) {
+    if (!overrideBackendSessionId) {
+      sbDebugLog('claude', 'ensure_context_override_without_explicit_id', {
+        backend,
+        agentId,
+      });
+      return {};
+    }
+
+    const matchedByBackendId =
+      pcpSessionByBackendSessionId.get(overrideBackendSessionId) ||
+      activeSessions.find(
+        (session) =>
+          session.id === overrideBackendSessionId ||
+          session.id.startsWith(overrideBackendSessionId) ||
+          getSessionBackendId(session) === overrideBackendSessionId
+      );
+
+    chosen = matchedByBackendId;
+    if (!chosen) {
+      chosen = await startNewPcpSession();
+      createdNewPcpSession = Boolean(chosen?.id);
+    }
+
+    if (chosen?.id) {
+      await persistBackendSessionLink({
+        pcpSessionId: chosen.id,
+        backendSessionId: overrideBackendSessionId,
+        backend,
+        agentId,
+        studioId,
+        identityId,
+        email,
+      });
+      sbDebugLog('claude', 'ensure_context_override_linked', {
+        backend,
+        agentId,
+        pcpSessionId: chosen.id,
+        backendSessionId: overrideBackendSessionId,
+        createdNewPcpSession,
+      });
+      return {
+        pcpSessionId: chosen.id,
+        ...(chosen.threadKey ? { threadKey: chosen.threadKey } : {}),
+      };
+    }
+
+    sbDebugLog('claude', 'ensure_context_override_link_failed', {
+      backend,
+      agentId,
+      backendSessionId: overrideBackendSessionId,
+    });
+    return {};
+  }
+
   const localBySessionId = new Map(
     localBackendSessions.map((session) => [session.sessionId, session])
   );
@@ -2554,9 +2666,12 @@ async function ensurePcpSessionContext(
       const linkedLocalSession = linkedBackendSessionId
         ? localBySessionId.get(linkedBackendSessionId)
         : undefined;
-      const linkedPreviewText = withAgentPreviewSpeaker(
-        linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
-        session.agentId || agentId
+      const linkedPreviewText = withSessionFileSize(
+        withAgentPreviewSpeaker(
+          linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
+          session.agentId || agentId
+        ),
+        linkedLocalSession?.fileSizeBytes
       );
       const ownerAgentId = session.agentId || null;
       const sortTimestamp = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
@@ -2573,23 +2688,29 @@ async function ensurePcpSessionContext(
         linkedLocalModified:
           linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified || null,
         linkedLocalPreview: linkedPreviewText || null,
+        linkedLocalFileSizeBytes: linkedLocalSession?.fileSizeBytes || null,
+        linkedLocalFileSize: formatFileSize(linkedLocalSession?.fileSizeBytes) || null,
         pcpPreview: pcpPreviewBySessionId.get(session.id) || null,
         sortMs,
       };
     });
     const localCandidates = displayLocalBackendSessions.map((session) => {
       const linkedPcpSession = pcpSessionByBackendSessionId.get(session.sessionId);
-      const preview =
+      const preview = withSessionFileSize(
         withAgentPreviewSpeaker(
           session.latestPrompt || session.firstPrompt,
           linkedPcpSession?.agentId || agentId
-        ) || null;
+        ),
+        session.fileSizeBytes
+      );
       const sortMs = toEpochMs(session.latestPromptAt || session.modified) ?? 0;
       return {
         type: 'local' as const,
         id: session.sessionId,
         modified: session.latestPromptAt || session.modified,
-        preview,
+        preview: preview || null,
+        fileSizeBytes: session.fileSizeBytes || null,
+        fileSize: formatFileSize(session.fileSizeBytes) || null,
         gitBranch: session.gitBranch || null,
         linkedPcpSessionId: linkedPcpSession?.id || null,
         linkedPcpAgentId: linkedPcpSession?.agentId || null,
@@ -2770,6 +2891,10 @@ async function ensurePcpSessionContext(
         linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
         session.agentId || agentId
       );
+      const linkedPreviewWithSize = withSessionFileSize(
+        linkedPreviewText,
+        linkedLocalSession?.fileSizeBytes
+      );
       const linkedAt = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
       const ownerLabel = session.agentId || null;
@@ -2777,7 +2902,7 @@ async function ensurePcpSessionContext(
       const sourceLabel = showOwner ? `PCP/${ownerLabel}` : 'PCP';
       const preview = pcpPreviewBySessionId.get(session.id);
       const phaseLabel = getSessionPhaseLabel(session);
-      const pickerPreview = linkedPreviewText || preview || session.context || undefined;
+      const pickerPreview = linkedPreviewWithSize || preview || session.context || undefined;
       const branchLabel =
         linkedLocalSession?.gitBranch ||
         runtimeBranchByPcpSessionId.get(session.id) ||
@@ -2813,9 +2938,12 @@ async function ensurePcpSessionContext(
       const linkedPcpSession = pcpSessionByBackendSessionId.get(localSession.sessionId);
       const ownerLabel = linkedPcpSession?.agentId || null;
       const showOwner = Boolean(ownerLabel && ownerLabel !== agentId);
-      const previewText = withAgentPreviewSpeaker(
-        localSession.latestPrompt || localSession.firstPrompt,
-        ownerLabel || agentId
+      const previewText = withSessionFileSize(
+        withAgentPreviewSpeaker(
+          localSession.latestPrompt || localSession.firstPrompt,
+          ownerLabel || agentId
+        ),
+        localSession.fileSizeBytes
       );
       const sourceLabel = showOwner ? `${backendLabel}/${ownerLabel}` : backendLabel;
       const stateLabel = linkedPcpSession
