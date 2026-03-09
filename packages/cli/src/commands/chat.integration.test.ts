@@ -1291,6 +1291,215 @@ describe('runChat integration', () => {
     expect(localToolCall).toBeTruthy();
   });
 
+  it('executes local pcp-tool blocks with gemini backend via sb runtime', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":2}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['run local gemini tool routing', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'gemini',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual(['--allowed-tools', '']);
+    const localToolCall = testState.pcpCalls.find(
+      (call) => call.tool === 'get_inbox' && call.args.limit === 2
+    );
+    expect(localToolCall).toBeTruthy();
+  });
+
+  it('executes local pcp-tool blocks with codex backend via sb runtime', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":3}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['run local codex tool routing', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual([]);
+    const localToolCall = testState.pcpCalls.find(
+      (call) => call.tool === 'get_inbox' && call.args.limit === 3
+    );
+    expect(localToolCall).toBeTruthy();
+  });
+
+  it('does not pass unsupported --allowedTools passthrough to codex backend', async () => {
+    testState.inputs = ['codex local turn', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual([]);
+  });
+
+  it('applies strict codex hardening args in local routing when --sb-strict-tools is set', async () => {
+    testState.inputs = ['codex strict local turn', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      sbStrictTools: true,
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+      prompt: string;
+    };
+    expect(backendRequest.passthroughArgs).toEqual([
+      '--color',
+      'never',
+      '--sandbox',
+      'read-only',
+      '--skip-git-repo-check',
+      '--config',
+      'features.apps=false',
+      '--config',
+      'mcp_servers.pcp.enabled=false',
+      '--config',
+      'mcp_servers.next-devtools.enabled=false',
+      '--config',
+      'mcp_servers.github.enabled=false',
+      '--config',
+      'mcp_servers.supabase.enabled=false',
+      '--config',
+      'mcp_servers={}',
+    ]);
+    expect(backendRequest.prompt).toContain('Strict tools mode: ON.');
+  });
+
+  it('handles non-interactive local tool blocks without readline crashes', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"wren","content":"ping"}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+
+    await expect(
+      runChat({
+        agent: 'lumen',
+        backend: 'claude',
+        nonInteractive: true,
+        message: 'one shot',
+        toolRouting: 'local',
+        pollSeconds: '999',
+      })
+    ).resolves.toBeUndefined();
+
+    // In non-interactive mode there is no readline prompt, so this tool call must be denied
+    // instead of crashing from an uninitialized readline reference.
+    expect(testState.pcpCalls.some((call) => call.tool === 'send_to_inbox')).toBe(false);
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Local tool denied (send_to_inbox)');
+  });
+
+  it('applies default backend timeout for non-interactive turns', async () => {
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      nonInteractive: true,
+      message: 'one shot timeout default',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      timeoutMs?: number;
+    };
+    expect(backendRequest.timeoutMs).toBe(120_000);
+  });
+
+  it('applies explicit --backend-timeout-seconds override', async () => {
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      nonInteractive: true,
+      message: 'one shot timeout override',
+      backendTimeoutSeconds: '7',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      timeoutMs?: number;
+    };
+    expect(backendRequest.timeoutMs).toBe(7_000);
+  });
+
   it('exits gracefully on double ctrl+c', async () => {
     testState.inputs = ['__ABORT__', '__ABORT__'];
 

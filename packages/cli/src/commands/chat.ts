@@ -15,6 +15,12 @@ import {
 import { isAbsolute, join } from 'path';
 import { readIdentityJson, resolveAgentId } from '../backends/identity.js';
 import { PcpClient } from '../lib/pcp-client.js';
+import { initSbDebug, sbDebugLog } from '../lib/sb-debug.js';
+import {
+  getBackendAuthStatus,
+  runBackendInteractiveLogin,
+  type BackendAuthBackend,
+} from '../lib/backend-auth.js';
 import { runBackendTurn } from '../repl/backend-runner.js';
 import { ContextLedger, estimateTokens } from '../repl/context-ledger.js';
 import { parseSlashCommand } from '../repl/slash.js';
@@ -72,7 +78,10 @@ type ChatOptions = {
   profile?: string;
   message?: string;
   nonInteractive?: boolean;
+  backendTimeoutSeconds?: string;
   tailTranscript?: string;
+  sbStrictTools?: boolean;
+  sbDebug?: boolean;
   verbose?: boolean;
   fullscreen?: boolean;
 };
@@ -113,6 +122,8 @@ interface ChatRuntime {
   transcriptPath: string;
   activeSkills: SkillInstruction[];
   bootstrapContext?: string;
+  strictTools: boolean;
+  backendTurnTimeoutMs?: number;
 }
 
 interface SessionSummary {
@@ -140,6 +151,167 @@ interface ActivitySummary {
   agentId?: string;
   sessionId?: string;
   createdAt?: string;
+}
+
+function isBackendAuthBackend(value: string): value is BackendAuthBackend {
+  return value === 'claude' || value === 'codex' || value === 'gemini';
+}
+
+async function ensureBackendAuthReady(
+  backend: string,
+  mode: { nonInteractive: boolean; hasMessage: boolean; verbose: boolean }
+): Promise<void> {
+  if (process.env.SB_SKIP_BACKEND_AUTH_CHECK === '1' || process.env.VITEST) {
+    return;
+  }
+  if (!isBackendAuthBackend(backend)) return;
+
+  const status = await getBackendAuthStatus(backend);
+  sbDebugLog('chat', 'backend_auth_status', {
+    backend,
+    authenticated: status.authenticated,
+    detail: status.detail,
+    canInteractiveLogin: status.canInteractiveLogin,
+    loginCommand: status.loginCommand || null,
+    mode,
+  });
+  if (status.authenticated) {
+    if (mode.verbose) {
+      console.log(chalk.dim(`Backend auth: ${backend} (${status.detail})`));
+    }
+    return;
+  }
+
+  const guidance = `Backend ${backend} is not authenticated (${status.detail}).`;
+  const loginHint =
+    status.loginCommand ||
+    (backend === 'gemini' ? 'Start `gemini` once and complete login in the Gemini CLI' : null);
+
+  if (mode.nonInteractive || mode.hasMessage) {
+    sbDebugLog('chat', 'backend_auth_required_non_interactive', {
+      backend,
+      detail: status.detail,
+      loginCommand: loginHint || null,
+      mode,
+    });
+    throw new Error(
+      `${guidance}${loginHint ? `\nRun: ${loginHint}` : '\nAuthenticate backend CLI and retry.'}`
+    );
+  }
+
+  console.log(chalk.yellow(`⚠ ${guidance}`));
+  if (!status.canInteractiveLogin || !status.loginCommand) {
+    if (loginHint) console.log(chalk.dim(`  Run: ${loginHint}`));
+    return;
+  }
+  if (!input.isTTY || !output.isTTY) {
+    console.log(chalk.dim(`  Run: ${status.loginCommand}`));
+    return;
+  }
+
+  const prompt = createInterface({ input, output });
+  try {
+    const answer = (
+      await prompt.question(chalk.cyan(`Run ${status.loginCommand} now? [Y/n] `))
+    ).trim();
+    if (answer && !['y', 'yes'].includes(answer.toLowerCase())) {
+      console.log(chalk.dim(`  Skipping login. Run manually: ${status.loginCommand}`));
+      return;
+    }
+  } finally {
+    prompt.close();
+  }
+
+  const exitCode = await runBackendInteractiveLogin(backend);
+  if (exitCode !== 0) {
+    throw new Error(
+      `Backend ${backend} login exited with code ${exitCode}. Run \`${status.loginCommand}\` and retry.`
+    );
+  }
+  const recheck = await getBackendAuthStatus(backend);
+  if (!recheck.authenticated) {
+    throw new Error(
+      `Backend ${backend} still appears unauthenticated (${recheck.detail}). Run \`${status.loginCommand}\` and retry.`
+    );
+  }
+  console.log(chalk.green(`✓ Backend ${backend} authenticated (${recheck.detail})`));
+}
+
+type BackendToolGateSnapshot = {
+  mode: ToolMode;
+  allowedTools: string[];
+  unresolvedPatterns: string[];
+};
+
+function buildBackendToolPassthrough(
+  backend: string,
+  toolRouting: 'backend' | 'local',
+  gate: BackendToolGateSnapshot,
+  strictTools: boolean
+): { passthroughArgs: string[]; warning?: string } {
+  const shouldDisableBackendTools = toolRouting !== 'backend' || gate.mode === 'off';
+
+  if (backend === 'claude') {
+    if (shouldDisableBackendTools) {
+      return { passthroughArgs: ['--allowedTools', ''] };
+    }
+    if (gate.mode === 'privileged') {
+      return { passthroughArgs: [] };
+    }
+    return { passthroughArgs: ['--allowedTools', gate.allowedTools.join(',')] };
+  }
+
+  if (backend === 'gemini') {
+    if (shouldDisableBackendTools) {
+      return { passthroughArgs: ['--allowed-tools', ''] };
+    }
+    if (gate.mode === 'privileged') {
+      return { passthroughArgs: [] };
+    }
+    return { passthroughArgs: ['--allowed-tools', gate.allowedTools.join(',')] };
+  }
+
+  if (backend === 'codex') {
+    if (toolRouting === 'local' && strictTools) {
+      return {
+        passthroughArgs: [
+          // Keep Codex execution deterministic in one-shot mode.
+          // NOTE: for Codex `exec`, these are subcommand options and therefore
+          // must be placed after `exec` (adapter handles ordering).
+          '--color',
+          'never',
+          '--sandbox',
+          'read-only',
+          '--skip-git-repo-check',
+          '--config',
+          'features.apps=false',
+          '--config',
+          'mcp_servers.pcp.enabled=false',
+          '--config',
+          'mcp_servers.next-devtools.enabled=false',
+          '--config',
+          'mcp_servers.github.enabled=false',
+          '--config',
+          'mcp_servers.supabase.enabled=false',
+          '--config',
+          'mcp_servers={}',
+        ],
+        warning:
+          'Codex strict-tools mode enabled: forcing read-only sandbox, no color UI, and disabling known backend MCP servers.',
+      };
+    }
+    if (shouldDisableBackendTools || gate.mode === 'backend') {
+      return {
+        passthroughArgs: [],
+        warning:
+          toolRouting === 'local'
+            ? 'Codex CLI has no allowlist passthrough flag; relying on sb local-tool routing prompt guard.'
+            : 'Codex CLI has no allowlist passthrough flag; backend tool gating is not enforced by CLI flags.',
+      };
+    }
+  }
+
+  return { passthroughArgs: [] };
 }
 
 interface DelegationState {
@@ -1559,6 +1731,15 @@ function buildPromptEnvelope(
     includeSources: true,
   });
 
+  const toolInstruction =
+    runtime.toolRouting === 'local'
+      ? 'Backend-native tool calling is disabled for this run. If you need PCP tool access, emit fenced blocks in this exact format: ```pcp-tool {"tool":"tool_name","args":{}} ``` and continue with your plain-text answer.'
+      : runtime.toolMode === 'off'
+        ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
+        : runtime.toolMode === 'privileged'
+          ? 'Backend-native tools are enabled and external actions are allowed when needed.'
+          : '';
+
   return [
     `You are ${agentId}.`,
     'You are running inside sb chat (first-class PCP REPL).',
@@ -1566,15 +1747,8 @@ function buildPromptEnvelope(
     `Current backend: ${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}.`,
     `Tool mode: ${runtime.toolMode}.`,
     `Tool routing: ${runtime.toolRouting}.`,
-    runtime.toolMode === 'off'
-      ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
-      : '',
-    runtime.toolMode === 'privileged'
-      ? 'Backend-native tools are enabled and external actions are allowed when needed.'
-      : '',
-    runtime.toolRouting === 'local'
-      ? 'Backend-native tool calling is disabled for this run. If you need PCP tool access, emit fenced blocks in this exact format: ```pcp-tool {"tool":"tool_name","args":{}} ``` and continue with your plain-text answer.'
-      : '',
+    runtime.strictTools ? 'Strict tools mode: ON.' : '',
+    toolInstruction,
     runtime.activeSkills.length > 0
       ? `Active skills: ${runtime.activeSkills.map((skill) => skill.name).join(', ')}`
       : '',
@@ -1598,6 +1772,16 @@ function buildPromptEnvelope(
 }
 
 export async function runChat(options: ChatOptions): Promise<void> {
+  const debugFile = initSbDebug({
+    enabled: options.sbDebug,
+    context: {
+      command: 'chat',
+      argv: process.argv.slice(2),
+      backend: options.backend,
+      agent: options.agent,
+    },
+  });
+
   if (options.tailTranscript) {
     await tailTranscript(options.tailTranscript);
     return;
@@ -1618,6 +1802,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
     options.maxContextTokens || String(initialBackendTokenWindow),
     10
   );
+  const parsedBackendTimeoutSeconds =
+    options.backendTimeoutSeconds !== undefined
+      ? Number.parseInt(options.backendTimeoutSeconds, 10)
+      : Number.NaN;
+  const backendTurnTimeoutMs =
+    Number.isFinite(parsedBackendTimeoutSeconds) && parsedBackendTimeoutSeconds > 0
+      ? parsedBackendTimeoutSeconds * 1000
+      : options.nonInteractive
+        ? 120_000
+        : undefined;
 
   const runtime: ChatRuntime = {
     backend: initialBackend,
@@ -1643,7 +1837,14 @@ export async function runChat(options: ChatOptions): Promise<void> {
     awayMode: false,
     transcriptPath: ensureRuntimeTranscriptPath(),
     activeSkills: [],
+    strictTools: options.sbStrictTools ?? false,
+    backendTurnTimeoutMs,
   };
+  await ensureBackendAuthReady(runtime.backend, {
+    nonInteractive: Boolean(options.nonInteractive),
+    hasMessage: Boolean(options.message?.trim()),
+    verbose: runtime.verbose,
+  });
   const approvalManager = new ApprovalRequestManager();
   const policyPathFromEnv = process.env.PCP_TOOL_POLICY_PATH?.trim();
   const toolPolicy = new ToolPolicyState(
@@ -2396,14 +2597,13 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
     const turnStartedAt = Date.now();
     const backendGate = toolPolicy.getBackendToolGate();
-    const passthroughArgs =
-      runtime.toolRouting !== 'backend'
-        ? ['--allowedTools', '']
-        : backendGate.mode === 'off'
-          ? ['--allowedTools', '']
-          : backendGate.mode === 'privileged'
-            ? []
-            : ['--allowedTools', backendGate.allowedTools.join(',')];
+    const passthroughPlan = buildBackendToolPassthrough(
+      runtime.backend,
+      runtime.toolRouting,
+      backendGate,
+      runtime.strictTools
+    );
+    const passthroughArgs = passthroughPlan.passthroughArgs;
 
     if (runtime.toolRouting === 'backend' && backendGate.mode === 'backend' && runtime.verbose) {
       printLine(
@@ -2416,6 +2616,22 @@ export async function runChat(options: ChatOptions): Promise<void> {
         )
       );
     }
+    if (passthroughPlan.warning && runtime.verbose) {
+      printLine(chalk.yellow(passthroughPlan.warning));
+    }
+    sbDebugLog(
+      'chat',
+      'backend_turn_start',
+      {
+        backend: runtime.backend,
+        sessionId: runtime.sessionId || null,
+        toolRouting: runtime.toolRouting,
+        toolMode: backendGate.mode,
+        passthroughArgs,
+        timeoutMs: runtime.backendTurnTimeoutMs ?? null,
+      },
+      debugFile ? { force: true, file: debugFile } : undefined
+    );
 
     // Ink handles waiting via its own component; legacy uses animated indicator
     const stopWaiting = inkRepl
@@ -2459,11 +2675,26 @@ export async function runChat(options: ChatOptions): Promise<void> {
       prompt,
       verbose: runtime.verbose,
       passthroughArgs,
+      timeoutMs: runtime.backendTurnTimeoutMs,
     }).finally(() => {
       process.off('SIGINT', onSigintDuringTurn);
       turnDurationSeconds = Math.max(0, Math.round((Date.now() - turnStartedAt) / 1000));
       stopWaiting();
     });
+    sbDebugLog(
+      'chat',
+      'backend_turn_result',
+      {
+        backend: runtime.backend,
+        sessionId: runtime.sessionId || null,
+        success: runResult.success,
+        exitCode: runResult.exitCode,
+        durationMs: runResult.durationMs,
+        command: runResult.command,
+        stderrPreview: runResult.stderr.slice(0, 500),
+      },
+      debugFile ? { force: true, file: debugFile } : undefined
+    );
 
     // Log backend CLI turn completion to activity stream
     if (runtime.sessionId) {
@@ -2663,6 +2894,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
   };
 
+  let rl: ReturnType<typeof createInterface> | null = null;
+
   let turnQueue: Promise<void> = Promise.resolve();
   let pendingTurns = 0;
   let lastStatusSummary = '';
@@ -2766,7 +2999,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
   // ── Mount the REPL input layer (Ink or legacy readline) ──
 
   let readlineClosed = false;
-  let rl: ReturnType<typeof createInterface> | null = null;
   let keepRunning = true;
   let lastUsageTotal: number | undefined;
   let lastCtrlCAt = 0;
@@ -4176,6 +4408,15 @@ export function registerChatCommand(program: Command): void {
       .option('--auto-run', 'Automatically execute backend turns for new inbox task messages')
       .option('--message <text>', 'Single-turn message for non-interactive mode')
       .option('--non-interactive', 'Run one turn and exit (requires --message)')
+      .option(
+        '--backend-timeout-seconds <n>',
+        'Backend turn timeout in seconds (default: 120 for --non-interactive, otherwise 1200)'
+      )
+      .option('--sb-debug', 'Enable sb debug logging for chat runtime')
+      .option(
+        '--sb-strict-tools',
+        'Harden backend-native tooling (Codex: disable MCP servers + force read-only sandbox in local routing)'
+      )
       .option(
         '--tail-transcript <pathOrSession>',
         'Tail transcript output by file path or session id'
