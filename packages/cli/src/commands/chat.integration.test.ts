@@ -1438,6 +1438,122 @@ describe('runChat integration', () => {
     expect(backendRequest.prompt).toContain('Strict tools mode: ON.');
   });
 
+  it('re-invokes backend with tool results in multi-turn loop', async () => {
+    let callCount = 0;
+    testState.runBackendImpl.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        // First call: backend emits a pcp-tool block
+        return {
+          success: true,
+          stdout:
+            '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":2}}\n```',
+          stderr: '',
+          exitCode: 0,
+          durationMs: 5,
+          command: 'mock',
+        };
+      }
+      // Second call: backend sees tool results and produces final answer
+      return {
+        success: true,
+        stdout: 'You have 2 unread messages from Myra about media testing.',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 5,
+        command: 'mock',
+      };
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [{ from: 'myra', subject: 'test' }], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+          case 'log_activity':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['check my inbox and summarize', '/quit'];
+    await runChat({
+      agent: 'wren',
+      backend: 'claude',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    // Backend should be called twice: initial turn + continuation with tool results
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(2);
+
+    // The continuation prompt should contain the tool results
+    const secondCall = testState.runBackendImpl.mock.calls[1][0] as { prompt: string };
+    expect(secondCall.prompt).toContain('Tool results from previous turn');
+    expect(secondCall.prompt).toContain('get_inbox');
+
+    // The tool should have been executed locally
+    const inboxCall = testState.pcpCalls.find((call) => call.tool === 'get_inbox');
+    expect(inboxCall).toBeTruthy();
+
+    // Final output should be the summary (no tool blocks)
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('2 unread messages from Myra');
+  });
+
+  it('stops tool loop at max iterations', async () => {
+    // Backend always emits a tool call — should stop at MAX_TOOL_LOOP_ITERATIONS (5)
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":1}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+          case 'log_activity':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['infinite tool loop test', '/quit'];
+    await runChat({
+      agent: 'wren',
+      backend: 'claude',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    // Should be called 5 times: 1 initial + 4 continuations. The 5th iteration
+    // increments toolLoopIteration to 5 which hits MAX_TOOL_LOOP_ITERATIONS (5)
+    // and breaks BEFORE making another backend call.
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(5);
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('tool loop limit reached');
+  });
+
   it('handles non-interactive local tool blocks without readline crashes', async () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
