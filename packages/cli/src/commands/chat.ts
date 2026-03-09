@@ -33,6 +33,12 @@ import { executeToolCalls, type ToolCallResult } from '../repl/tool-call-executo
 import { applyProfile, formatProfileList, isValidProfileId } from '../repl/tool-profiles.js';
 import { ApprovalRequestManager } from '../repl/approval-request.js';
 import {
+  type ApprovalChannel,
+  type ApprovalResponseDecision,
+  JsonlApprovalChannel,
+  AutoApprovalChannel,
+} from '../repl/approval-channel.js';
+import {
   parsePermissionGrant,
   applyPermissionGrant,
   buildPermissionGrantMetadata,
@@ -84,6 +90,7 @@ type ChatOptions = {
   sbDebug?: boolean;
   verbose?: boolean;
   fullscreen?: boolean;
+  approvalMode?: string;
 };
 
 interface InboxMessage {
@@ -124,6 +131,8 @@ interface ChatRuntime {
   bootstrapContext?: string;
   strictTools: boolean;
   backendTurnTimeoutMs?: number;
+  approvalMode: 'interactive' | 'jsonl' | 'auto-deny';
+  approvalChannel?: ApprovalChannel;
 }
 
 interface SessionSummary {
@@ -1609,10 +1618,22 @@ async function promptForToolApproval(
   sessionId: string | undefined,
   tool: string,
   reason: string,
-  inkRepl?: InkRepl | null
+  inkRepl?: InkRepl | null,
+  approvalChannel?: ApprovalChannel
 ): Promise<boolean> {
-  let answer: string;
-  if (inkRepl) {
+  let choice: import('../repl/tool-approval.js').ToolApprovalChoice;
+
+  if (approvalChannel) {
+    // JSONL or auto channel — structured approval protocol
+    const response = await approvalChannel.requestApproval({
+      tool,
+      args: {},
+      reason,
+      sessionId,
+    });
+    // Map channel response decision to tool approval choice
+    choice = response.decision as import('../repl/tool-approval.js').ToolApprovalChoice;
+  } else if (inkRepl) {
     // Render a visually distinct permission prompt in Ink
     inkRepl.addMessage(
       'system',
@@ -1624,14 +1645,16 @@ async function promptForToolApproval(
       ].join('\n'),
       { label: '🔐 permission' }
     );
-    answer = (await inkRepl.waitForInput()).trim();
+    const answer = (await inkRepl.waitForInput()).trim();
+    choice = parseToolApprovalInput(answer);
   } else if (rl) {
     console.log(chalk.yellow(`🔐 ${tool} — ${reason}`));
-    answer = (
+    const answer = (
       await rl.question(
         chalk.yellow(`Allow? [y] once, [s] session, [a] always, [d] deny, [n] cancel: `)
       )
     ).trim();
+    choice = parseToolApprovalInput(answer);
   } else {
     return false;
   }
@@ -1640,10 +1663,15 @@ async function promptForToolApproval(
     policy: toolPolicy,
     tool,
     sessionId,
-    choice: parseToolApprovalInput(answer),
+    choice,
   });
   if (result.message) {
-    if (inkRepl) {
+    if (approvalChannel) {
+      // In JSONL mode, emit a log line but don't use TUI
+      console.error(
+        result.approved ? `✅ ${tool}: ${result.message}` : `🚫 ${tool}: ${result.message}`
+      );
+    } else if (inkRepl) {
       const label = result.approved ? '✅ granted' : '🚫 denied';
       inkRepl.addMessage('grant', `${tool}: ${result.message}`, { label });
     } else {
@@ -1839,6 +1867,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
     activeSkills: [],
     strictTools: options.sbStrictTools ?? false,
     backendTurnTimeoutMs,
+    approvalMode:
+      options.approvalMode === 'jsonl'
+        ? 'jsonl'
+        : options.nonInteractive
+          ? 'auto-deny'
+          : 'interactive',
   };
   await ensureBackendAuthReady(runtime.backend, {
     nonInteractive: Boolean(options.nonInteractive),
@@ -1846,6 +1880,14 @@ export async function runChat(options: ChatOptions): Promise<void> {
     verbose: runtime.verbose,
   });
   const approvalManager = new ApprovalRequestManager();
+
+  // Initialize approval channel based on mode
+  if (runtime.approvalMode === 'jsonl') {
+    runtime.approvalChannel = new JsonlApprovalChannel(process.stderr, process.stdin);
+  } else if (runtime.approvalMode === 'auto-deny') {
+    runtime.approvalChannel = new AutoApprovalChannel('cancel');
+  }
+  // 'interactive' mode uses the existing TUI prompt (no channel needed)
   const policyPathFromEnv = process.env.PCP_TOOL_POLICY_PATH?.trim();
   const toolPolicy = new ToolPolicyState(
     runtime.toolMode,
@@ -2771,7 +2813,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
         sessionId: runtime.sessionId,
         promptForApproval: async (tool, reason) => {
           if (!runtime.awayMode) {
-            return promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl);
+            return promptForToolApproval(
+              rl,
+              toolPolicy,
+              runtime.sessionId,
+              tool,
+              reason,
+              inkRepl,
+              runtime.approvalChannel
+            );
           }
           // Remote approval: register request, send to inbox, wait for resolution
           const { request, promise } = approvalManager.register(tool, {}, reason);
@@ -2793,7 +2843,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
               chalk.yellow('Failed to send remote approval request — falling back to local prompt')
             );
             approvalManager.expire(request.id);
-            return promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl);
+            return promptForToolApproval(
+              rl,
+              toolPolicy,
+              runtime.sessionId,
+              tool,
+              reason,
+              inkRepl,
+              runtime.approvalChannel
+            );
           }
           const response = await promise;
           if (response.decision === 'approved') {
@@ -3814,7 +3872,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
               tool,
               sessionId: runtime.sessionId,
               prompt: (reason) =>
-                promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl),
+                promptForToolApproval(
+                  rl,
+                  toolPolicy,
+                  runtime.sessionId,
+                  tool,
+                  reason,
+                  inkRepl,
+                  runtime.approvalChannel
+                ),
             });
             if (!approved) {
               console.log(chalk.yellow(`Skipped ${tool}`));
@@ -3933,7 +3999,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
             tool,
             sessionId: runtime.sessionId,
             prompt: (reason) =>
-              promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl),
+              promptForToolApproval(
+                rl,
+                toolPolicy,
+                runtime.sessionId,
+                tool,
+                reason,
+                inkRepl,
+                runtime.approvalChannel
+              ),
           });
           if (!approved) {
             console.log(chalk.yellow(`Skipped ${tool}`));
@@ -4230,7 +4304,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 runtime.sessionId,
                 'send_to_inbox',
                 reason,
-                inkRepl
+                inkRepl,
+                runtime.approvalChannel
               ),
           });
           if (!approved) {
@@ -4445,6 +4520,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   // Cancel any pending remote approval requests
   approvalManager.cancelAll();
+  runtime.approvalChannel?.dispose();
 
   const summary = summarizeForSessionEnd(ledger);
   if (runtime.sessionId && !attachedToExistingSession) {
@@ -4508,6 +4584,11 @@ export function registerChatCommand(program: Command): void {
       .option(
         '--tail-transcript <pathOrSession>',
         'Tail transcript output by file path or session id'
+      )
+      .option(
+        '--approval-mode <mode>',
+        'Approval mode: interactive (TUI prompt), jsonl (structured I/O on stderr/stdin)',
+        'interactive'
       )
       .option('-v, --verbose', 'Verbose backend passthrough output')
       .option('--fullscreen', 'Fullscreen alternate buffer mode (app-controlled scrolling)')

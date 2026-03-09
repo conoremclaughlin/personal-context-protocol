@@ -1584,6 +1584,33 @@ describe('runChat integration', () => {
     expect(logText).toContain('Local tool denied (send_to_inbox)');
   });
 
+  it('auto-denies tool calls in non-interactive jsonl approval mode when no response arrives', async () => {
+    // In non-interactive mode with jsonl, tools should auto-deny (AutoApprovalChannel)
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hello"}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      nonInteractive: true,
+      message: 'test auto-deny',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    // send_to_inbox should have been denied (non-interactive auto-denies promptable tools)
+    expect(testState.pcpCalls.some((call) => call.tool === 'send_to_inbox')).toBe(false);
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('send_to_inbox');
+  });
+
   it('applies default backend timeout for non-interactive turns', async () => {
     await runChat({
       agent: 'lumen',
