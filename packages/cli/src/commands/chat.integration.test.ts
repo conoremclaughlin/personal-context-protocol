@@ -1584,6 +1584,69 @@ describe('runChat integration', () => {
     expect(logText).toContain('Local tool denied (send_to_inbox)');
   });
 
+  it('grants promptable tool via approval channel and executes in tool loop', async () => {
+    // Backend emits a tool call on first invocation, then plain text on follow-up
+    let backendCallCount = 0;
+    testState.runBackendImpl.mockImplementation(async () => {
+      backendCallCount++;
+      if (backendCallCount === 1) {
+        // First backend call (user message turn) — emit pcp-tool block
+        return {
+          success: true,
+          stdout:
+            '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":1}}\n```',
+          stderr: '',
+          exitCode: 0,
+          durationMs: 5,
+          command: 'mock',
+        };
+      }
+      // Follow-up after tool results — plain text
+      return {
+        success: true,
+        stdout: 'done processing',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 5,
+        command: 'mock',
+      };
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [{ id: 'm1', content: 'test message' }], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+          case 'log_activity':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    // /prompt marks get_inbox as requiring per-call approval
+    // approvalMode 'once' auto-approves via AutoApprovalChannel
+    testState.inputs = ['/prompt get_inbox', 'trigger tool call', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      toolRouting: 'local',
+      approvalMode: 'auto-approve',
+      pollSeconds: '999',
+    });
+
+    // get_inbox should have been executed after auto-approval
+    const inboxCall = testState.pcpCalls.find((call) => call.tool === 'get_inbox');
+    expect(inboxCall).toBeTruthy();
+  });
+
   it('auto-denies tool calls in non-interactive jsonl approval mode when no response arrives', async () => {
     // In non-interactive mode with jsonl, tools should auto-deny (AutoApprovalChannel)
     testState.runBackendImpl.mockResolvedValue({

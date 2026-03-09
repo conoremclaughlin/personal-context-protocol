@@ -136,7 +136,7 @@ interface ChatRuntime {
   bootstrapContext?: string;
   strictTools: boolean;
   backendTurnTimeoutMs?: number;
-  approvalMode: 'interactive' | 'jsonl' | 'auto-deny';
+  approvalMode: 'interactive' | 'jsonl' | 'auto-deny' | 'auto-approve';
   approvalChannel?: ApprovalChannel;
 }
 
@@ -1882,9 +1882,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
     approvalMode:
       options.approvalMode === 'jsonl' || persisted?.approvalMode === 'jsonl'
         ? 'jsonl'
-        : options.nonInteractive
-          ? 'auto-deny'
-          : 'interactive',
+        : options.approvalMode === 'auto-approve'
+          ? 'auto-approve'
+          : options.nonInteractive
+            ? 'auto-deny'
+            : 'interactive',
   };
   await ensureBackendAuthReady(runtime.backend, {
     nonInteractive: Boolean(options.nonInteractive),
@@ -1898,6 +1900,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
     runtime.approvalChannel = new JsonlApprovalChannel(process.stderr, process.stdin);
   } else if (runtime.approvalMode === 'auto-deny') {
     runtime.approvalChannel = new AutoApprovalChannel('cancel');
+  } else if (runtime.approvalMode === 'auto-approve') {
+    runtime.approvalChannel = new AutoApprovalChannel('once');
   }
   // 'interactive' mode uses the existing TUI prompt (no channel needed)
   const policyPathFromEnv = process.env.PCP_TOOL_POLICY_PATH?.trim();
@@ -3369,6 +3373,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/grant-session <tool>      Allow a tool for this PCP session only',
               '/allow <tool>               Persistently allow PCP tool',
               '/deny <tool>                Persistently deny PCP tool',
+              '/prompt <tool>              Require per-call approval for PCP tool',
               '/policy-scope [global|workspace|agent|studio] [id]  Set rule mutation scope',
               '/policy                     Show tool policy + storage path',
               '/mcp [servers|call ...]     List MCP servers or call PCP tool via /mcp call',
@@ -3788,6 +3793,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
           }
           toolPolicy.denyTool(tool);
           console.log(chalk.green(`Persistently denied ${tool}`));
+          break;
+        }
+        case 'prompt': {
+          const tool = slash.args[0];
+          if (!tool) {
+            console.log(chalk.yellow('Usage: /prompt <tool>'));
+            break;
+          }
+          toolPolicy.addPromptTool(tool);
+          console.log(chalk.green(`Tool ${tool} now requires per-call approval`));
           break;
         }
         case 'policy-scope': {
