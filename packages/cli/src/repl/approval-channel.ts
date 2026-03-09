@@ -49,6 +49,17 @@ export interface ApprovalResponseEvent {
   by?: string;
 }
 
+const VALID_DECISIONS: Set<string> = new Set(['once', 'session', 'always', 'deny', 'cancel']);
+
+function isApprovalResponse(obj: Record<string, unknown>): boolean {
+  return (
+    obj.type === 'approval_response' &&
+    typeof obj.id === 'string' &&
+    typeof obj.decision === 'string' &&
+    VALID_DECISIONS.has(obj.decision)
+  );
+}
+
 // ─── Channel interface ──────────────────────────────────────────
 
 export interface ApprovalChannel {
@@ -106,8 +117,9 @@ export class JsonlApprovalChannel implements ApprovalChannel {
           if (!trimmed) continue;
           try {
             const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-            if (parsed.type === 'approval_response' && typeof parsed.id === 'string') {
-              this.emitter.emit(`response:${parsed.id}`, parsed as ApprovalResponseEvent);
+            if (isApprovalResponse(parsed)) {
+              const response = parsed as unknown as ApprovalResponseEvent;
+              this.emitter.emit(`response:${response.id}`, response);
             }
           } catch {
             // Ignore non-JSON lines

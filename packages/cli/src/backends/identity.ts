@@ -19,7 +19,7 @@ export interface RuntimePreferences {
   toolRouting?: 'backend' | 'local';
   strictTools?: boolean;
   backendTimeoutSeconds?: number;
-  approvalMode?: 'interactive' | 'jsonl';
+  approvalMode?: 'interactive' | 'jsonl' | 'auto-approve';
 }
 
 export interface IdentityJson {

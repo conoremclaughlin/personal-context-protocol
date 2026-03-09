@@ -1738,7 +1738,10 @@ describe('runChat integration', () => {
           }
         }
 
-        return originalStderrWrite(chunk, ...(rest as [BufferEncoding, (err?: Error) => void]));
+        return originalStderrWrite(
+          chunk,
+          ...(rest as [BufferEncoding, (err?: Error | null) => void])
+        );
       });
 
     testState.inputs = ['trigger tool', '/quit'];
