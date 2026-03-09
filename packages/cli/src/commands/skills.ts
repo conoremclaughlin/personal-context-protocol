@@ -323,91 +323,79 @@ async function listCommand(): Promise<void> {
 }
 
 // ============================================================================
-// Sync Command
+// Sync Core (reusable by init)
 // ============================================================================
 
-interface SyncOptions {
-  all?: boolean;
+export interface SyncSkillsResult {
+  written: number;
+  linked: number;
+  skipped: number;
+  mcpAdded: string[];
+  serverUnreachable: boolean;
 }
 
-async function syncCommand(options: SyncOptions): Promise<void> {
-  const cwd = process.cwd();
-  console.log(chalk.bold('\nSyncing skills from PCP server...\n'));
+/**
+ * Sync skills from PCP server to local dirs + backend configs.
+ * Pure logic — no console output. Used by both `sb skills sync` and `sb init`.
+ */
+export async function syncSkills(
+  cwd: string,
+  options: { all?: boolean } = {}
+): Promise<SyncSkillsResult> {
+  const result: SyncSkillsResult = {
+    written: 0,
+    linked: 0,
+    skipped: 0,
+    mcpAdded: [],
+    serverUnreachable: false,
+  };
 
   // Fetch all skills from server
   let serverSkills: ServerSkill[];
   try {
-    const result = await callPcpTool<{ success: boolean; skills: ServerSkill[] }>(
+    const listResult = await callPcpTool<{ success: boolean; skills: ServerSkill[] }>(
       'list_skills',
       {}
     );
-    if (!result.success || !result.skills) {
-      console.error(chalk.red('Failed to fetch skills from PCP server.'));
-      process.exit(1);
-    }
-    serverSkills = result.skills;
+    if (!listResult.success || !listResult.skills) return result;
+    serverSkills = listResult.skills;
   } catch {
-    console.error(chalk.red('Cannot reach PCP server.'));
-    console.error(chalk.dim('Ensure the server is running (yarn dev) and try again.'));
-    process.exit(1);
+    result.serverUnreachable = true;
+    return result;
   }
 
   const mcpSkills = serverSkills.filter((s) => s.mcp);
-  if (mcpSkills.length === 0) {
-    console.log(chalk.dim('  No MCP-providing skills found on server.'));
-    return;
-  }
+  if (mcpSkills.length === 0) return result;
 
-  console.log(chalk.dim(`  Found ${mcpSkills.length} MCP-providing skill(s) on server\n`));
-
-  // ---- Step 1: Write canonical SKILL.md + symlink to backend dirs ----
-  // ~/.pcp/skills/<name>/SKILL.md is the single source of truth.
-  // ~/.claude/skills/<name> → ~/.pcp/skills/<name>  (symlink)
-  // ~/.codex/skills/<name>  → ~/.pcp/skills/<name>  (symlink)
-  // ~/.gemini/skills/<name> → ~/.pcp/skills/<name>  (symlink)
-
-  let written = 0;
-  let linked = 0;
-  let skipped = 0;
-
+  // Step 1: Write canonical SKILL.md + symlink to backend dirs
   for (const skill of mcpSkills) {
     let detail: GetSkillResponse;
     try {
       detail = await callPcpTool<GetSkillResponse>('get_skill', { skillName: skill.name });
-      if (!detail.success) {
-        console.log(chalk.yellow(`  ! ${skill.name}: failed to fetch details`));
-        continue;
-      }
+      if (!detail.success) continue;
     } catch {
-      console.log(chalk.yellow(`  ! ${skill.name}: failed to fetch details`));
       continue;
     }
 
     if (!detail.mcp && skill.mcp) detail.mcp = skill.mcp;
     const skillMd = buildSkillMd(detail);
 
-    // Write canonical copy
     if (writeCanonicalSkill(skill.name, skillMd)) {
-      written++;
-      console.log(chalk.green(`  + ${skill.name}`), chalk.dim('→ ~/.pcp/skills/'));
+      result.written++;
     } else {
-      skipped++;
+      result.skipped++;
     }
 
-    // Symlink from each backend dir
     for (const backendDir of BACKEND_SKILL_DIRS) {
-      const result = ensureSkillSymlink(backendDir, skill.name);
-      if (result === 'created' || result === 'updated') {
-        linked++;
-        const shortDir = backendDir.replace(homedir(), '~');
-        console.log(chalk.green(`  ↳ ${skill.name}`), chalk.dim(`→ ${shortDir}/ (symlink)`));
+      const linkResult = ensureSkillSymlink(backendDir, skill.name);
+      if (linkResult === 'created' || linkResult === 'updated') {
+        result.linked++;
       }
     }
   }
 
-  // ---- Step 2: Inject MCP servers into .mcp.json ----
+  // Step 2: Inject MCP servers into .mcp.json
   const mcpTargets: string[] = [cwd];
-
   if (options.all) {
     for (const wt of getWorktrees()) {
       if (wt !== cwd && existsSync(join(wt, '.mcp.json'))) {
@@ -419,31 +407,59 @@ async function syncCommand(options: SyncOptions): Promise<void> {
   for (const targetDir of mcpTargets) {
     const mcpPath = join(targetDir, '.mcp.json');
     if (!existsSync(mcpPath)) continue;
-
     const { added } = injectMcpServers(mcpPath, mcpSkills);
-    if (added.length > 0) {
-      const label = targetDir === cwd ? '.mcp.json' : `.mcp.json (${targetDir})`;
-      console.log(chalk.green(`  + ${added.join(', ')}`), chalk.dim(`→ ${label}`));
-    }
+    result.mcpAdded.push(...added);
   }
 
-  // ---- Step 3: Sync to Codex/Gemini backend configs (from .mcp.json) ----
+  // Step 3: Sync to Codex/Gemini backend configs
   const syncTargets = options.all ? getWorktrees() : [cwd];
   for (const targetDir of syncTargets) {
     if (!existsSync(join(targetDir, '.mcp.json'))) continue;
-    const result = syncMcpConfig(targetDir);
-    const synced: string[] = [];
-    if (result.codex) synced.push('.codex/config.toml');
-    if (result.gemini) synced.push('.gemini/settings.json');
-    if (synced.length > 0) {
-      const label = targetDir === cwd ? '' : ` (${targetDir})`;
-      console.log(chalk.green(`  + backend configs${label}:`), chalk.dim(synced.join(', ')));
-    }
+    syncMcpConfig(targetDir);
   }
 
-  // ---- Summary ----
-  if (written === 0 && linked === 0 && skipped > 0) {
-    console.log(chalk.dim(`\n  All skill(s) already up to date.`));
+  return result;
+}
+
+// ============================================================================
+// Sync Command
+// ============================================================================
+
+interface SyncOptions {
+  all?: boolean;
+}
+
+async function syncCommand(options: SyncOptions): Promise<void> {
+  const cwd = process.cwd();
+  console.log(chalk.bold('\nSyncing skills from PCP server...\n'));
+
+  const result = await syncSkills(cwd, options);
+
+  if (result.serverUnreachable) {
+    console.error(chalk.red('Cannot reach PCP server.'));
+    console.error(chalk.dim('Ensure the server is running (yarn dev) and try again.'));
+    process.exit(1);
+  }
+
+  if (result.written === 0 && result.linked === 0 && result.skipped === 0) {
+    console.log(chalk.dim('  No MCP-providing skills found on server.'));
+    return;
+  }
+
+  if (result.written > 0) {
+    console.log(chalk.green(`  ${result.written} skill(s) written to ~/.pcp/skills/`));
+  }
+  if (result.linked > 0) {
+    console.log(chalk.green(`  ${result.linked} symlink(s) created across backend dirs`));
+  }
+  if (result.mcpAdded.length > 0) {
+    console.log(
+      chalk.green(`  ${result.mcpAdded.length} MCP server(s) added to .mcp.json:`),
+      chalk.dim(result.mcpAdded.join(', '))
+    );
+  }
+  if (result.written === 0 && result.linked === 0 && result.skipped > 0) {
+    console.log(chalk.dim('  All skill(s) already up to date.'));
   }
 
   console.log(
