@@ -100,7 +100,18 @@ const updateInboxMessageSchema = userIdentifierBaseSchema.extend({
 });
 
 const getAgentStatusSchema = userIdentifierBaseSchema.extend({
-  agentId: z.string().describe('Agent ID to check status for'),
+  agentId: z
+    .string()
+    .optional()
+    .describe(
+      'Agent ID to check status for. If omitted, returns status for ALL registered agents.'
+    ),
+  threadKey: z
+    .string()
+    .optional()
+    .describe(
+      'Filter to agents currently working on this threadKey (e.g., "pr:204"). Only meaningful when checking current activity.'
+    ),
 });
 
 // ============== Handlers ==============
@@ -460,56 +471,160 @@ export async function handleGetAgentStatus(args: unknown, dataComposer: DataComp
   const supabase = dataComposer.getClient();
   const parsed = getAgentStatusSchema.parse(args);
   const resolved = await resolveUserOrThrow(parsed, dataComposer);
+  const userId = resolved.user.id;
 
-  const { agentId } = parsed;
-
-  // Get latest session for this agent
-  const { data: latestSession } = await supabase
-    .from('sessions')
-    .select('*')
-    .eq('user_id', resolved.user.id)
-    .eq('agent_id', agentId)
-    .order('started_at', { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  // Get unread message count
-  const { count: unreadCount } = await supabase
-    .from('agent_inbox')
-    .select('*', { count: 'exact', head: true })
-    .eq('recipient_user_id', resolved.user.id)
-    .eq('recipient_agent_id', agentId)
-    .eq('status', 'unread');
-
-  // Get urgent message count
-  const { count: urgentCount } = await supabase
-    .from('agent_inbox')
-    .select('*', { count: 'exact', head: true })
-    .eq('recipient_user_id', resolved.user.id)
-    .eq('recipient_agent_id', agentId)
-    .eq('status', 'unread')
-    .eq('priority', 'urgent');
-
-  // Get active workspaces for this agent
-  const { data: workspaces } = await supabase
-    .from('studios')
-    .select('id, branch, worktree_path, purpose, status, work_type, session_id, created_at')
-    .eq('user_id', resolved.user.id)
-    .eq('agent_id', agentId)
-    .in('status', ['active', 'idle'])
-    .order('created_at', { ascending: false });
-
-  // Determine agent status based on session
-  let agentStatus = 'inactive';
-  if (latestSession) {
-    if (!latestSession.ended_at) {
-      agentStatus = 'active';
-    } else {
-      const endedAt = new Date(latestSession.ended_at);
-      const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
-      agentStatus = endedAt > hourAgo ? 'recently_active' : 'inactive';
+  // If a specific agentId is given, return single-agent status
+  // If omitted, return status for all registered agents
+  const agentIds: string[] = [];
+  if (parsed.agentId) {
+    agentIds.push(parsed.agentId);
+  } else {
+    // Get all registered agent IDs from agent_identities
+    const { data: identities } = await supabase
+      .from('agent_identities')
+      .select('agent_id')
+      .eq('user_id', userId);
+    if (identities) {
+      for (const row of identities) {
+        if (row.agent_id && !agentIds.includes(row.agent_id)) {
+          agentIds.push(row.agent_id);
+        }
+      }
     }
   }
+
+  // Query currently-running activities (agent_spawn with status='running')
+  // These represent agents actively spinning on a task
+  let runningQuery = supabase
+    .from('activity_stream')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('type', 'agent_spawn')
+    .eq('status', 'running')
+    .order('created_at', { ascending: false });
+
+  if (parsed.threadKey) {
+    runningQuery = runningQuery.contains('payload', { threadKey: parsed.threadKey });
+  }
+
+  const { data: runningActivities } = await runningQuery;
+
+  // Build status for each agent
+  const agentStatuses = await Promise.all(
+    agentIds.map(async (agentId) => {
+      // Latest session
+      const { data: latestSession } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .order('started_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // Unread + urgent counts
+      const { count: unreadCount } = await supabase
+        .from('agent_inbox')
+        .select('*', { count: 'exact', head: true })
+        .eq('recipient_user_id', userId)
+        .eq('recipient_agent_id', agentId)
+        .eq('status', 'unread');
+
+      const { count: urgentCount } = await supabase
+        .from('agent_inbox')
+        .select('*', { count: 'exact', head: true })
+        .eq('recipient_user_id', userId)
+        .eq('recipient_agent_id', agentId)
+        .eq('status', 'unread')
+        .eq('priority', 'urgent');
+
+      // Active workspaces
+      const { data: workspaces } = await supabase
+        .from('studios')
+        .select('id, branch, worktree_path, purpose, status, work_type, session_id, created_at')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .in('status', ['active', 'idle'])
+        .order('created_at', { ascending: false });
+
+      // Current activity from running activities
+      const agentRunning = (runningActivities || []).filter((a) => a.agent_id === agentId);
+      const currentActivity = agentRunning.map((a) => {
+        const payload = (a.payload || {}) as Record<string, unknown>;
+        const startedAt = new Date(a.created_at);
+        const durationSoFarMs = Date.now() - startedAt.getTime();
+        return {
+          activityId: a.id,
+          threadKey: payload.threadKey || null,
+          backend: payload.backend || null,
+          triggeredBy: payload.triggeredBy || null,
+          sessionId: a.session_id,
+          startedAt: a.created_at,
+          durationSoFarMs,
+          durationSoFar: `${Math.round(durationSoFarMs / 1000)}s`,
+        };
+      });
+
+      // Determine status
+      let status = 'inactive';
+      if (currentActivity.length > 0) {
+        status = 'working';
+      } else if (latestSession && !latestSession.ended_at) {
+        status = 'active';
+      } else if (latestSession) {
+        const endedAt = new Date(latestSession.ended_at!);
+        const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+        status = endedAt > hourAgo ? 'recently_active' : 'inactive';
+      }
+
+      return {
+        agentId,
+        status,
+        currentActivity: currentActivity.length > 0 ? currentActivity : undefined,
+        inbox: {
+          unreadCount: unreadCount || 0,
+          urgentCount: urgentCount || 0,
+        },
+        lastSession: latestSession
+          ? {
+              id: latestSession.id,
+              claudeSessionId: latestSession.claude_session_id,
+              startedAt: latestSession.started_at,
+              endedAt: latestSession.ended_at,
+              summary: latestSession.summary,
+              workingDir: latestSession.working_dir,
+            }
+          : null,
+        workspaces: (workspaces || []).map((w) => ({
+          id: w.id,
+          branch: w.branch,
+          path: w.worktree_path,
+          purpose: w.purpose,
+          status: w.status,
+          workType: w.work_type,
+          hasLinkedSession: !!w.session_id,
+          createdAt: w.created_at,
+        })),
+      };
+    })
+  );
+
+  // If single agent was requested, return flat (backwards compatible)
+  if (parsed.agentId) {
+    const agent = agentStatuses[0];
+    return {
+      content: [
+        {
+          type: 'text' as const,
+          text: JSON.stringify({ success: true, ...agent }),
+        },
+      ],
+    };
+  }
+
+  // Multi-agent: return array with summary
+  const working = agentStatuses.filter((a) => a.status === 'working');
+  const active = agentStatuses.filter((a) => a.status === 'active');
 
   return {
     content: [
@@ -517,32 +632,14 @@ export async function handleGetAgentStatus(args: unknown, dataComposer: DataComp
         type: 'text' as const,
         text: JSON.stringify({
           success: true,
-          agentId,
-          status: agentStatus,
-          inbox: {
-            unreadCount: unreadCount || 0,
-            urgentCount: urgentCount || 0,
+          summary: {
+            total: agentStatuses.length,
+            working: working.length,
+            active: active.length,
+            inactive: agentStatuses.length - working.length - active.length,
           },
-          lastSession: latestSession
-            ? {
-                id: latestSession.id,
-                claudeSessionId: latestSession.claude_session_id,
-                startedAt: latestSession.started_at,
-                endedAt: latestSession.ended_at,
-                summary: latestSession.summary,
-                workingDir: latestSession.working_dir,
-              }
-            : null,
-          workspaces: (workspaces || []).map((w) => ({
-            id: w.id,
-            branch: w.branch,
-            path: w.worktree_path,
-            purpose: w.purpose,
-            status: w.status,
-            workType: w.work_type,
-            hasLinkedSession: !!w.session_id,
-            createdAt: w.created_at,
-          })),
+          ...(parsed.threadKey ? { threadKey: parsed.threadKey } : {}),
+          agents: agentStatuses,
         }),
       },
     ],
@@ -575,7 +672,7 @@ export const inboxToolDefinitions = [
   {
     name: 'get_agent_status',
     description:
-      'Get status of an agent: active/inactive, unread message count, last session info.',
+      'Get status of agents: who is currently working, on what threadKey, how long they\'ve been at it.\n\nCall with no args to see ALL agents. Pass agentId for a single agent. Pass threadKey to find who is working on a specific thread (e.g., "pr:204").\n\nStatuses:\n- working: actively spinning on a backend turn right now\n- active: has an open session but not currently in a backend turn\n- recently_active: session ended within the last hour\n- inactive: no recent activity\n\nWhen status is "working", currentActivity shows: threadKey, backend, triggeredBy, durationSoFar.',
     schema: getAgentStatusSchema,
     handler: handleGetAgentStatus,
   },

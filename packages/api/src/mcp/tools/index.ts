@@ -3456,9 +3456,12 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'get_agent_status',
     {
-      description: `Get status of an agent: whether active/inactive, unread message count, and last session info.
+      description: `Get status of agents: who is currently working, on what threadKey, how long they've been at it.
 
-Use to check if another agent is available before sending messages.
+Call with no args to see ALL agents. Pass agentId for a single agent. Pass threadKey to find who is working on a specific thread (e.g., "pr:204").
+
+Statuses: working (actively in a backend turn), active (open session), recently_active (ended <1hr ago), inactive.
+When status is "working", currentActivity shows: threadKey, backend, triggeredBy, durationSoFar.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: inboxToolDefinitions[3].schema,

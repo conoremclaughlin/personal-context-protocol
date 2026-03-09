@@ -95,6 +95,7 @@ export interface GetActivityOptions {
   platformChatId?: string;
   correlationId?: string;
   parentId?: string;
+  threadKey?: string;
   since?: Date;
   until?: Date;
   limit?: number;
@@ -279,6 +280,9 @@ export class ActivityStreamRepository {
     }
     if (options.parentId) {
       query = query.eq('parent_id', options.parentId);
+    }
+    if (options.threadKey) {
+      query = query.contains('payload', { threadKey: options.threadKey });
     }
     if (options.since) {
       query = query.gte('created_at', options.since.toISOString());
