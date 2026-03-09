@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   extractClaudeHistorySessionsForProject,
+  extractBackendSessionOverrideId,
   extractSessionFromStartSessionResponse,
   filterUntrackedLocalBackendSessions,
   filterPcpSessionsForContext,
@@ -65,6 +66,35 @@ describe('hasBackendSessionOverride', () => {
     expect(hasBackendSessionOverride('claude', ['-r'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['--resume'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['-r'])).toBe(true);
+  });
+});
+
+describe('extractBackendSessionOverrideId', () => {
+  it('extracts codex resume id from positional subcommand', () => {
+    expect(
+      extractBackendSessionOverrideId(
+        'codex',
+        [],
+        ['resume', '019c44fd-68f6-7332-9eda-2dc7c8afcedf']
+      )
+    ).toBe('019c44fd-68f6-7332-9eda-2dc7c8afcedf');
+  });
+
+  it('extracts codex resume id from passthrough subcommand', () => {
+    expect(extractBackendSessionOverrideId('codex', ['--full-auto', 'resume', '019c1234'])).toBe(
+      '019c1234'
+    );
+  });
+
+  it('extracts claude --resume id', () => {
+    expect(extractBackendSessionOverrideId('claude', ['--resume', 'ba549776-aaaa'])).toBe(
+      'ba549776-aaaa'
+    );
+  });
+
+  it('returns undefined when no explicit override id is present', () => {
+    expect(extractBackendSessionOverrideId('claude', ['--resume'])).toBeUndefined();
+    expect(extractBackendSessionOverrideId('codex', ['resume'])).toBeUndefined();
   });
 });
 
@@ -750,6 +780,49 @@ describe('resolveCapturedBackendSessionIdFromRuntime', () => {
     ).toBe('fallback-id');
   });
 
+  it('detects a brand-new local backend session even when pre-run snapshot is empty', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-empty-'));
+    const tempHome = join(tempRoot, 'home');
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(tempRepo, { recursive: true });
+
+    const projectDirName = tempRepo.replace(/[\\/]/g, '-');
+    const projectKeyDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectKeyDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const newSessionId = '10101010-1010-4010-8010-101010101010';
+      writeFileSync(
+        join(projectKeyDir, `${newSessionId}.jsonl`),
+        JSON.stringify({
+          type: 'progress',
+          sessionId: newSessionId,
+          timestamp: '2026-03-09T00:00:00.000Z',
+        }) + '\n'
+      );
+
+      const resolved = resolveCapturedBackendSessionIdFromRuntime({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-empty-snapshot',
+        knownLocalSessionSnapshot: new Map(),
+      });
+
+      expect(resolved).toBe(newSessionId);
+    } finally {
+      if (oldHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = oldHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to new local backend session for the project when runtime linkage is missing', () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-'));
     const tempHome = join(tempRoot, 'home');
@@ -951,6 +1024,7 @@ describe('getCodexLocalSessionsForProject', () => {
     mkdirSync(codexSessionsDir, { recursive: true });
 
     const matchingSessionId = '019a23ac-e563-7d53-8bf0-5a948546bf29';
+    const nonCliSessionId = '019a23ac-e563-7d53-8bf0-5a948546bf99';
     const nonMatchingSessionId = '019a23b9-b211-7972-b007-012a8bc1d6f2';
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${matchingSessionId}.jsonl`),
@@ -962,6 +1036,7 @@ describe('getCodexLocalSessionsForProject', () => {
             id: matchingSessionId,
             cwd: projectPath,
             timestamp: '2026-03-02T11:44:41.000Z',
+            originator: 'codex_cli_rs',
           },
         }),
         JSON.stringify({
@@ -974,6 +1049,19 @@ describe('getCodexLocalSessionsForProject', () => {
           },
         }),
       ].join('\n') + '\n'
+    );
+    writeFileSync(
+      join(codexSessionsDir, `rollout-2026-03-02T11-45-41-${nonCliSessionId}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-03-02T11:45:41.000Z',
+        type: 'session_meta',
+        payload: {
+          id: nonCliSessionId,
+          cwd: projectPath,
+          timestamp: '2026-03-02T11:45:41.000Z',
+          originator: 'codex_exec',
+        },
+      })}\n`
     );
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${nonMatchingSessionId}.jsonl`),
@@ -996,6 +1084,14 @@ describe('getCodexLocalSessionsForProject', () => {
       expect(sessions.map((session) => session.sessionId)).toEqual([matchingSessionId]);
       expect(sessions[0]?.latestPrompt).toBe('assistant: Most recent assistant reply');
       expect(sessions[0]?.transcriptPath).toContain(matchingSessionId);
+
+      const sessionsIncludingExec = getCodexLocalSessionsForProject(projectPath, 10, {
+        includeExecSources: true,
+      });
+      expect(sessionsIncludingExec.map((session) => session.sessionId)).toEqual([
+        nonCliSessionId,
+        matchingSessionId,
+      ]);
     } finally {
       process.env.HOME = originalHome;
       rmSync(tempHome, { recursive: true, force: true });

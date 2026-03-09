@@ -82,12 +82,22 @@ function createMockDataComposer() {
     create: vi.fn(),
   };
 
+  const mockActivityStreamRepo = {
+    logActivity: vi.fn().mockResolvedValue({
+      id: 'activity-123',
+      type: 'state_change',
+      agentId: 'wren',
+      createdAt: new Date('2026-02-10T10:00:00Z'),
+    }),
+  };
+
   return {
     getClient: vi.fn(),
     repositories: {
       memory: mockMemoryRepo,
       projects: mockProjectsRepo,
       projectTasks: mockProjectTasksRepo,
+      activityStream: mockActivityStreamRepo,
     },
   };
 }
@@ -442,6 +452,53 @@ describe('handleUpdateSessionPhase', () => {
       );
     });
 
+    it('should log state_change activity with before/after snapshots', async () => {
+      const before = {
+        ...mockSession,
+        currentPhase: 'investigating',
+        lifecycle: 'idle',
+        status: 'active',
+        backendSessionId: null,
+      };
+      const after = {
+        ...mockSession,
+        currentPhase: 'implementing',
+        lifecycle: 'running',
+        status: 'active',
+        backendSessionId: 'claude-abc123',
+      };
+      mockDataComposer.repositories.memory.getActiveSession.mockResolvedValue(mockSession);
+      mockDataComposer.repositories.memory.getSession.mockResolvedValue(before);
+      mockDataComposer.repositories.memory.updateSession.mockResolvedValue(after);
+
+      const result = await handleUpdateSessionPhase(
+        {
+          email: 'test@test.com',
+          phase: 'implementing',
+          lifecycle: 'running',
+          backendSessionId: 'claude-abc123',
+          agentId: 'wren',
+        },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.sessionTrace.changedFields).toEqual(
+        expect.arrayContaining(['currentPhase', 'lifecycle', 'backendSessionId'])
+      );
+
+      expect(mockDataComposer.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          agentId: 'wren',
+          type: 'state_change',
+          subtype: 'session_update',
+          sessionId: 'session-123',
+        })
+      );
+    });
+
     it('should resolve session by studioId when sessionId not provided', async () => {
       mockDataComposer.repositories.memory.getActiveSession.mockResolvedValue(mockSession);
       mockDataComposer.repositories.memory.updateSession.mockResolvedValue(mockUpdatedSession);
@@ -502,6 +559,7 @@ describe('handleUpdateSessionPhase', () => {
   describe('unified session fields', () => {
     it('should update backendSessionId', async () => {
       mockDataComposer.repositories.memory.getActiveSession.mockResolvedValue(mockSession);
+      mockDataComposer.repositories.memory.listSessions.mockResolvedValue([mockSession]);
       mockDataComposer.repositories.memory.updateSession.mockResolvedValue(mockSession);
 
       const result = await handleUpdateSessionPhase(
@@ -516,6 +574,46 @@ describe('handleUpdateSessionPhase', () => {
       expect(mockDataComposer.repositories.memory.updateSession).toHaveBeenCalledWith(
         'session-123',
         expect.objectContaining({ backendSessionId: 'claude-abc123' })
+      );
+    });
+
+    it('should report conflict when backendSessionId is already linked to another agent session', async () => {
+      const conflictSession = {
+        ...mockSession,
+        id: 'session-999',
+        agentId: 'myra',
+        backendSessionId: 'claude-abc123',
+      };
+      mockDataComposer.repositories.memory.getActiveSession.mockResolvedValue(mockSession);
+      mockDataComposer.repositories.memory.listSessions.mockResolvedValue([
+        conflictSession,
+        mockSession,
+      ]);
+      mockDataComposer.repositories.memory.updateSession.mockResolvedValue({
+        ...mockSession,
+        backendSessionId: 'claude-abc123',
+      });
+
+      const result = await handleUpdateSessionPhase(
+        { email: 'test@test.com', backendSessionId: 'claude-abc123', agentId: 'wren' },
+        mockDataComposer as never
+      );
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.success).toBe(true);
+      expect(parsed.sessionConflict).toEqual(
+        expect.objectContaining({
+          backendSessionId: 'claude-abc123',
+          conflictingSessionId: 'session-999',
+          conflictingAgentId: 'myra',
+        })
+      );
+      expect(mockDataComposer.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'state_change',
+          subtype: 'session_backend_conflict',
+          sessionId: 'session-123',
+        })
       );
     });
 

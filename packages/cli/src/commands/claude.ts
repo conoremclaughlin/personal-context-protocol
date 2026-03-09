@@ -41,6 +41,7 @@ export interface SbOptions {
   backend: string;
   sessionCandidates?: boolean;
   sessionCandidatesJson?: boolean;
+  sessionCandidatesAll?: boolean;
   sessionChoice?: string;
   dangerous?: boolean;
 }
@@ -82,6 +83,7 @@ interface BackendLocalSessionSummary {
   sessionId: string;
   projectPath: string;
   modified: string;
+  fileSizeBytes?: number;
   firstPrompt?: string;
   latestPrompt?: string;
   latestPromptAt?: string;
@@ -123,6 +125,20 @@ function formatCandidateTimestamp(value: string | null | undefined): string {
   const ms = Date.parse(value);
   if (!Number.isFinite(ms)) return '-';
   return new Date(ms).toLocaleString();
+}
+
+function formatFileSize(bytes: number | undefined): string | undefined {
+  if (bytes === undefined || !Number.isFinite(bytes) || bytes < 0) return undefined;
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB', 'TB'];
+  let size = bytes / 1024;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  const decimals = size >= 10 ? 1 : 2;
+  return `${size.toFixed(decimals)} ${units[unitIndex]}`;
 }
 
 function formatPickerTimestamp(value: string | null | undefined): string {
@@ -302,6 +318,7 @@ interface CodexSessionMetaLine {
     id?: string;
     cwd?: string;
     timestamp?: string;
+    originator?: string;
   };
 }
 
@@ -711,6 +728,19 @@ function withAgentPreviewSpeaker(
     return `${normalizedLabel}: ${preview.replace(/^assistant:\s*/i, '')}`;
   }
   return preview;
+}
+
+function withSessionFileSize(
+  preview: string | undefined,
+  fileSizeBytes: number | undefined
+): string | undefined {
+  const size = formatFileSize(fileSizeBytes);
+  if (!size) return preview;
+
+  const normalized = preview?.trim();
+  if (!normalized) return `(session) · ${size}`;
+  if (normalized.includes(size)) return normalized;
+  return `${normalized} · ${size}`;
 }
 
 function getSessionPhaseLabel(session: PcpSessionSummary): string | undefined {
@@ -1151,7 +1181,7 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     if (currentSessionId) return currentSessionId;
   }
 
-  if (knownLocalSessionSnapshot && knownLocalSessionSnapshot.size > 0) {
+  if (knownLocalSessionSnapshot) {
     const postRunLocalSessions = getBackendLocalSessionsForProject(backend, cwd, 50);
     const newLocalSession = postRunLocalSessions.find(
       (session) => !knownLocalSessionSnapshot.has(session.sessionId)
@@ -1232,6 +1262,20 @@ export function getClaudeLocalSessionsForProject(
   if (!normalizedCwd) return [];
 
   const results: BackendLocalSessionSummary[] = [];
+  const historyPath = join(homedir(), '.claude', 'history.jsonl');
+  let historySessions: BackendLocalSessionSummary[] = [];
+  let historySessionIds = new Set<string>();
+  if (existsSync(historyPath)) {
+    try {
+      historySessions = extractClaudeHistorySessionsForProject(
+        readFileSync(historyPath, 'utf-8'),
+        normalizedCwd
+      );
+      historySessionIds = new Set(historySessions.map((session) => session.sessionId));
+    } catch {
+      // Ignore unreadable history file.
+    }
+  }
   const normalizedDirName = normalizedCwd.replace(/[\\/]/g, '-');
   const projectDirCandidates = new Set<string>([
     join(claudeProjectsDir, normalizedDirName),
@@ -1256,7 +1300,10 @@ export function getClaudeLocalSessionsForProject(
         // with `No conversation found with session ID` when resumed.
         // Require explicit sessionId evidence in file contents before surfacing
         // as a local resumable candidate.
-        if (!isLikelyClaudeResumableSessionFile(filePath, sessionId)) {
+        if (
+          !isLikelyClaudeResumableSessionFile(filePath, sessionId) &&
+          !historySessionIds.has(sessionId)
+        ) {
           continue;
         }
 
@@ -1274,11 +1321,17 @@ export function getClaudeLocalSessionsForProject(
           // Best-effort preview extraction only.
         }
 
+        if (!latestPrompt) {
+          const size = formatFileSize(stats.size);
+          if (size) latestPrompt = `(session) · ${size}`;
+        }
+
         results.push({
           backend: 'claude',
           sessionId,
           projectPath: normalizedCwd,
           modified: stats.mtime.toISOString(),
+          fileSizeBytes: stats.size,
           latestPrompt,
           latestPromptAt,
           transcriptPath: filePath,
@@ -1291,18 +1344,7 @@ export function getClaudeLocalSessionsForProject(
 
   // Fallback path: some Claude installations persist session linkage in history.jsonl
   // even when per-project sessions-index files are missing/out-of-date.
-  const historyPath = join(homedir(), '.claude', 'history.jsonl');
-  if (existsSync(historyPath)) {
-    try {
-      const historySessions = extractClaudeHistorySessionsForProject(
-        readFileSync(historyPath, 'utf-8'),
-        normalizedCwd
-      );
-      results.push(...historySessions);
-    } catch {
-      // Ignore unreadable history file.
-    }
-  }
+  results.push(...historySessions);
 
   const dedupedBySessionId = new Map<string, BackendLocalSessionSummary>();
   for (const session of results) {
@@ -1435,13 +1477,18 @@ export function extractClaudeHistorySessionsForProject(
 
 export function getCodexLocalSessionsForProject(
   cwd = process.cwd(),
-  limit = 20
+  limit = 20,
+  options: {
+    includeExecSources?: boolean;
+  } = {}
 ): BackendLocalSessionSummary[] {
+  const includeExecSources = options.includeExecSources === true;
   const fallbackToJsonl = (reason: string): BackendLocalSessionSummary[] => {
-    const fallback = getCodexLocalSessionsFromJsonl(cwd, limit);
+    const fallback = getCodexLocalSessionsFromJsonl(cwd, limit, { includeExecSources });
     sbDebugLog('backend', 'codex_local_sessions_fallback_jsonl', {
       cwd,
       reason,
+      includeExecSources,
       returnedSessions: fallback.length,
       sessionIds: fallback.map((session) => session.sessionId),
     });
@@ -1467,6 +1514,7 @@ SELECT id, cwd, updated_at,
        git_branch
 FROM threads
 WHERE archived = 0
+  ${includeExecSources ? '' : "AND source = 'cli'"}
 ORDER BY updated_at DESC
 LIMIT 200;
 `;
@@ -1502,8 +1550,10 @@ LIMIT 200;
     let latestPrompt: string | undefined;
     let latestPromptAt: string | undefined;
     const transcriptPath = rolloutPath?.trim() || undefined;
+    let fileSizeBytes: number | undefined;
     if (transcriptPath && existsSync(transcriptPath)) {
       try {
+        fileSizeBytes = statSync(transcriptPath).size;
         const transcript = readFileSync(transcriptPath, 'utf-8');
         const preview = extractLatestPreviewFromCodexRolloutJsonl(transcript);
         if (preview) {
@@ -1515,11 +1565,17 @@ LIMIT 200;
       }
     }
 
+    if (!latestPrompt) {
+      const size = formatFileSize(fileSizeBytes);
+      if (size) latestPrompt = `(session) · ${size}`;
+    }
+
     sessions.push({
       backend: 'codex',
       sessionId,
       projectPath: sessionCwd,
       modified,
+      fileSizeBytes,
       firstPrompt: firstPrompt?.trim(),
       latestPrompt,
       latestPromptAt,
@@ -1531,6 +1587,7 @@ LIMIT 200;
   const scoped = sessions.slice(0, limit);
   sbDebugLog('backend', 'codex_local_sessions_loaded', {
     cwd: normalizedCwd,
+    includeExecSources,
     totalScopedSessions: sessions.length,
     returnedSessions: scoped.length,
     sessionIds: scoped.map((session) => session.sessionId),
@@ -1540,8 +1597,12 @@ LIMIT 200;
 
 function getCodexLocalSessionsFromJsonl(
   cwd = process.cwd(),
-  limit = 20
+  limit = 20,
+  options: {
+    includeExecSources?: boolean;
+  } = {}
 ): BackendLocalSessionSummary[] {
+  const includeExecSources = options.includeExecSources === true;
   const codexSessionsDir = join(homedir(), '.codex', 'sessions');
   if (!existsSync(codexSessionsDir)) return [];
 
@@ -1609,6 +1670,8 @@ function getCodexLocalSessionsFromJsonl(
       const sessionId = parsed.payload?.id?.trim();
       const sessionCwd = parsed.payload?.cwd?.trim();
       if (!sessionId || !sessionCwd) break;
+      const originator = parsed.payload?.originator?.trim();
+      if (!includeExecSources && originator && !originator.startsWith('codex_cli')) break;
 
       const normalizedSessionCwd = normalizePath(sessionCwd);
       if (!normalizedSessionCwd || normalizedSessionCwd !== normalizedCwd) break;
@@ -1620,8 +1683,19 @@ function getCodexLocalSessionsFromJsonl(
         modified: parsed.payload?.timestamp || parsed.timestamp || sessionFile.modified,
         latestPrompt: latestPreview ? formatSessionPreviewText(latestPreview) : undefined,
         latestPromptAt: latestPreview?.ts,
+        fileSizeBytes: (() => {
+          try {
+            return statSync(sessionFile.path).size;
+          } catch {
+            return undefined;
+          }
+        })(),
         transcriptPath: sessionFile.path,
       };
+      if (!matched.latestPrompt) {
+        const size = formatFileSize(matched.fileSizeBytes);
+        if (size) matched.latestPrompt = `(session) · ${size}`;
+      }
       break;
     }
 
@@ -1720,6 +1794,13 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
       if (!parsed.sessionId) continue;
       const modified = parsed.lastUpdated || parsed.startTime;
       if (!modified) continue;
+      const fileSizeBytes = (() => {
+        try {
+          return statSync(sessionPath).size;
+        } catch {
+          return undefined;
+        }
+      })();
 
       const firstUserMessage = (parsed.messages || []).find((message) => message.type === 'user');
       const latestMessage = [...(parsed.messages || [])]
@@ -1737,14 +1818,21 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
               content: latestMessage.content,
             })
           : undefined;
+      const latestPromptWithFallback =
+        latestPrompt ||
+        (() => {
+          const size = formatFileSize(fileSizeBytes);
+          return size ? `(session) · ${size}` : undefined;
+        })();
 
       sessions.push({
         backend: 'gemini',
         sessionId: parsed.sessionId,
         projectPath,
         modified,
+        fileSizeBytes,
         firstPrompt,
-        latestPrompt,
+        latestPrompt: latestPromptWithFallback,
         transcriptPath: sessionPath,
       });
     } catch {
@@ -1790,10 +1878,17 @@ export function getGeminiLocalSessionsForProject(
 export function getBackendLocalSessionsForProject(
   backend: string,
   cwd = process.cwd(),
-  limit = 20
+  limit = 20,
+  options: {
+    includeAllSources?: boolean;
+  } = {}
 ): BackendLocalSessionSummary[] {
   if (backend === 'claude') return getClaudeLocalSessionsForProject(cwd, limit);
-  if (backend === 'codex') return getCodexLocalSessionsForProject(cwd, limit);
+  if (backend === 'codex') {
+    return getCodexLocalSessionsForProject(cwd, limit, {
+      includeExecSources: options.includeAllSources,
+    });
+  }
   if (backend === 'gemini') return getGeminiLocalSessionsForProject(cwd, limit);
   return [];
 }
@@ -1913,6 +2008,43 @@ export function hasBackendSessionOverride(
   }
 
   return has('--resume') || has('-r') || has('--session-id');
+}
+
+export function extractBackendSessionOverrideId(
+  backend: string,
+  passthroughArgs: string[],
+  promptParts: string[] = []
+): string | undefined {
+  const readFlagValue = (flags: string[]): string | undefined => {
+    for (let i = 0; i < passthroughArgs.length; i += 1) {
+      const token = passthroughArgs[i]?.toLowerCase();
+      if (!token || !flags.includes(token)) continue;
+      const value = passthroughArgs[i + 1];
+      if (value && !value.startsWith('-')) return value;
+    }
+    return undefined;
+  };
+
+  if (backend === 'codex') {
+    if (promptParts[0]?.toLowerCase() === 'resume') {
+      const positional = promptParts[1];
+      if (positional && !positional.startsWith('-')) return positional;
+    }
+
+    const resumeIndex = passthroughArgs.findIndex((arg) => arg.toLowerCase() === 'resume');
+    if (resumeIndex >= 0) {
+      const value = passthroughArgs[resumeIndex + 1];
+      if (value && !value.startsWith('-')) return value;
+    }
+
+    return readFlagValue(['--resume', '-r', '--session-id']);
+  }
+
+  if (backend === 'claude') {
+    return readFlagValue(['--resume', '-r', '--session-id']);
+  }
+
+  return readFlagValue(['--resume', '-r', '--session-id']);
 }
 
 function extractActivityIdFromLogResult(result: unknown): string | undefined {
@@ -2112,7 +2244,14 @@ async function persistBackendSessionLink(options: {
   });
 
   try {
-    await callPcpTool('update_session_phase', {
+    const updateResult = await callPcpTool<{
+      sessionConflict?: {
+        backendSessionId?: string;
+        conflictingSessionId?: string;
+        conflictingAgentId?: string;
+      };
+      sessionTrace?: { changedFields?: string[] };
+    }>('update_session_phase', {
       email: options.email,
       agentId: options.agentId,
       sessionId: options.pcpSessionId,
@@ -2120,6 +2259,22 @@ async function persistBackendSessionLink(options: {
       status: 'active',
       workingDir: process.cwd(),
     });
+
+    if (updateResult?.sessionConflict) {
+      sbDebugLog('claude', 'persist_backend_link_conflict_warning', {
+        backend: options.backend,
+        agentId: options.agentId,
+        pcpSessionId: options.pcpSessionId,
+        backendSessionId: options.backendSessionId,
+        conflict: updateResult.sessionConflict,
+      });
+    }
+    if (updateResult?.sessionTrace?.changedFields?.length) {
+      sbDebugLog('claude', 'persist_backend_link_session_trace', {
+        pcpSessionId: options.pcpSessionId,
+        changedFields: updateResult.sessionTrace.changedFields,
+      });
+    }
   } catch {
     // Best-effort linkage update only.
   }
@@ -2134,6 +2289,7 @@ async function ensurePcpSessionContext(
   options: {
     listCandidates?: boolean;
     listCandidatesJson?: boolean;
+    listCandidatesAll?: boolean;
     selectionOverride?: string;
   } = {}
 ): Promise<{
@@ -2142,7 +2298,12 @@ async function ensurePcpSessionContext(
   backendSessionSeedId?: string;
   threadKey?: string;
 }> {
-  if (hasBackendSessionOverride(backend, passthroughArgs, promptParts)) return {};
+  const hasSessionOverride = hasBackendSessionOverride(backend, passthroughArgs, promptParts);
+  const overrideBackendSessionId = extractBackendSessionOverrideId(
+    backend,
+    passthroughArgs,
+    promptParts
+  );
 
   const config = getPcpConfig();
   const email = config?.email;
@@ -2151,7 +2312,9 @@ async function ensurePcpSessionContext(
   const currentGitBranch = getCurrentGitBranch(cwd);
   const localSessionLimit = options.listCandidates || options.listCandidatesJson ? 120 : 40;
   const pcpSessionLimit = options.listCandidates || options.listCandidatesJson ? 80 : 40;
-  const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, localSessionLimit);
+  const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, localSessionLimit, {
+    includeAllSources: options.listCandidatesAll,
+  });
   const localBackendSessionIds = new Set(localBackendSessions.map((session) => session.sessionId));
   const knownBackendSessionIds =
     backend === 'claude' ? getKnownClaudeSessionIds() : localBackendSessionIds;
@@ -2163,6 +2326,9 @@ async function ensurePcpSessionContext(
     agentId,
     isTty: process.stdin.isTTY,
     explicitSelection,
+    hasSessionOverride,
+    overrideBackendSessionId: overrideBackendSessionId || null,
+    listCandidatesAll: options.listCandidatesAll || false,
     selectionOverride: options.selectionOverride || null,
     localCount: localBackendSessions.length,
     knownCount: knownBackendSessionIds.size,
@@ -2284,10 +2450,9 @@ async function ensurePcpSessionContext(
     if (!backendSessionId || pcpSessionByBackendSessionId.has(backendSessionId)) continue;
     pcpSessionByBackendSessionId.set(backendSessionId, session);
   }
-  const displayLocalBackendSessions =
-    options.listCandidates || options.listCandidatesJson
-      ? localBackendSessions
-      : untrackedLocalBackendSessions;
+  // Keep the picker de-duplicated: linked locals are rendered through the PCP row
+  // (with linked preview/timestamp), while untracked locals remain independently selectable.
+  const displayLocalBackendSessions = untrackedLocalBackendSessions;
   const existingSessionIds = new Set(activeSessions.map((session) => session.id));
   const pcpPreviewBySessionId = new Map<string, string>();
   for (const session of activeSessions) {
@@ -2462,6 +2627,61 @@ async function ensurePcpSessionContext(
     }
   };
 
+  if (hasSessionOverride) {
+    if (!overrideBackendSessionId) {
+      sbDebugLog('claude', 'ensure_context_override_without_explicit_id', {
+        backend,
+        agentId,
+      });
+      return {};
+    }
+
+    const matchedByBackendId =
+      pcpSessionByBackendSessionId.get(overrideBackendSessionId) ||
+      activeSessions.find(
+        (session) =>
+          session.id === overrideBackendSessionId ||
+          session.id.startsWith(overrideBackendSessionId) ||
+          getSessionBackendId(session) === overrideBackendSessionId
+      );
+
+    chosen = matchedByBackendId;
+    if (!chosen) {
+      chosen = await startNewPcpSession();
+      createdNewPcpSession = Boolean(chosen?.id);
+    }
+
+    if (chosen?.id) {
+      await persistBackendSessionLink({
+        pcpSessionId: chosen.id,
+        backendSessionId: overrideBackendSessionId,
+        backend,
+        agentId,
+        studioId,
+        identityId,
+        email,
+      });
+      sbDebugLog('claude', 'ensure_context_override_linked', {
+        backend,
+        agentId,
+        pcpSessionId: chosen.id,
+        backendSessionId: overrideBackendSessionId,
+        createdNewPcpSession,
+      });
+      return {
+        pcpSessionId: chosen.id,
+        ...(chosen.threadKey ? { threadKey: chosen.threadKey } : {}),
+      };
+    }
+
+    sbDebugLog('claude', 'ensure_context_override_link_failed', {
+      backend,
+      agentId,
+      backendSessionId: overrideBackendSessionId,
+    });
+    return {};
+  }
+
   const localBySessionId = new Map(
     localBackendSessions.map((session) => [session.sessionId, session])
   );
@@ -2472,9 +2692,12 @@ async function ensurePcpSessionContext(
       const linkedLocalSession = linkedBackendSessionId
         ? localBySessionId.get(linkedBackendSessionId)
         : undefined;
-      const linkedPreviewText = withAgentPreviewSpeaker(
-        linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
-        session.agentId || agentId
+      const linkedPreviewText = withSessionFileSize(
+        withAgentPreviewSpeaker(
+          linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
+          session.agentId || agentId
+        ),
+        linkedLocalSession?.fileSizeBytes
       );
       const ownerAgentId = session.agentId || null;
       const sortTimestamp = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
@@ -2491,23 +2714,29 @@ async function ensurePcpSessionContext(
         linkedLocalModified:
           linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified || null,
         linkedLocalPreview: linkedPreviewText || null,
+        linkedLocalFileSizeBytes: linkedLocalSession?.fileSizeBytes || null,
+        linkedLocalFileSize: formatFileSize(linkedLocalSession?.fileSizeBytes) || null,
         pcpPreview: pcpPreviewBySessionId.get(session.id) || null,
         sortMs,
       };
     });
     const localCandidates = displayLocalBackendSessions.map((session) => {
       const linkedPcpSession = pcpSessionByBackendSessionId.get(session.sessionId);
-      const preview =
+      const preview = withSessionFileSize(
         withAgentPreviewSpeaker(
           session.latestPrompt || session.firstPrompt,
           linkedPcpSession?.agentId || agentId
-        ) || null;
+        ),
+        session.fileSizeBytes
+      );
       const sortMs = toEpochMs(session.latestPromptAt || session.modified) ?? 0;
       return {
         type: 'local' as const,
         id: session.sessionId,
         modified: session.latestPromptAt || session.modified,
-        preview,
+        preview: preview || null,
+        fileSizeBytes: session.fileSizeBytes || null,
+        fileSize: formatFileSize(session.fileSizeBytes) || null,
         gitBranch: session.gitBranch || null,
         linkedPcpSessionId: linkedPcpSession?.id || null,
         linkedPcpAgentId: linkedPcpSession?.agentId || null,
@@ -2574,11 +2803,12 @@ async function ensurePcpSessionContext(
         ...interleavedCandidates.map((entry) => {
           if (entry.kind === 'pcp') {
             const session = entry.candidate;
-            const ownerPhase = session.ownerAgentId
+            const showOwner = Boolean(session.ownerAgentId && session.ownerAgentId !== agentId);
+            const ownerPhase = showOwner
               ? `${session.ownerAgentId} · ${session.phase || '-'}`
               : session.phase || '-';
             return {
-              type: session.ownerAgentId ? `pcp:${session.ownerAgentId}` : 'pcp',
+              type: showOwner ? `pcp:${session.ownerAgentId}` : 'pcp',
               choice: `pcp:${session.id.slice(0, 8)}`,
               updated: formatCandidateTimestamp(session.linkedLocalModified || session.startedAt),
               phase: ownerPhase,
@@ -2591,12 +2821,15 @@ async function ensurePcpSessionContext(
             };
           }
           const localSession = entry.candidate;
-          const ownerPhase = localSession.linkedPcpAgentId
+          const showOwner = Boolean(
+            localSession.linkedPcpAgentId && localSession.linkedPcpAgentId !== agentId
+          );
+          const ownerPhase = showOwner
             ? `${localSession.linkedPcpAgentId} · ${localSession.linkedPcpPhase || '-'}`
             : localSession.linkedPcpPhase || '-';
           return {
             type: localSession.linkedPcpSessionId
-              ? localSession.linkedPcpAgentId
+              ? showOwner
                 ? `local:${localSession.linkedPcpAgentId}`
                 : 'local+pcp'
               : 'local',
@@ -2684,20 +2917,25 @@ async function ensurePcpSessionContext(
         linkedLocalSession?.latestPrompt || linkedLocalSession?.firstPrompt,
         session.agentId || agentId
       );
+      const linkedPreviewWithSize = withSessionFileSize(
+        linkedPreviewText,
+        linkedLocalSession?.fileSizeBytes
+      );
       const linkedAt = linkedLocalSession?.latestPromptAt || linkedLocalSession?.modified;
       const backendLabel = backend[0].toUpperCase() + backend.slice(1);
       const ownerLabel = session.agentId || null;
-      const sourceLabel = ownerLabel ? `PCP/${ownerLabel}` : 'PCP';
+      const showOwner = Boolean(ownerLabel && ownerLabel !== agentId);
+      const sourceLabel = showOwner ? `PCP/${ownerLabel}` : 'PCP';
       const preview = pcpPreviewBySessionId.get(session.id);
       const phaseLabel = getSessionPhaseLabel(session);
-      const pickerPreview = linkedPreviewText || preview || session.context || undefined;
+      const pickerPreview = linkedPreviewWithSize || preview || session.context || undefined;
       const branchLabel =
         linkedLocalSession?.gitBranch ||
         runtimeBranchByPcpSessionId.get(session.id) ||
         session.studio?.branch ||
         '-';
       const stateTokens = [
-        ownerLabel ? `agent ${ownerLabel}` : null,
+        showOwner ? ownerLabel : null,
         phaseLabel || 'runtime:active',
         session.threadKey ? `thread ${truncateText(session.threadKey, 20)}` : null,
         linkedBackendSessionId ? `${backendLabel} ${linkedBackendSessionId.slice(0, 8)}` : null,
@@ -2725,14 +2963,18 @@ async function ensurePcpSessionContext(
       const backendLabel = localSession.backend[0].toUpperCase() + localSession.backend.slice(1);
       const linkedPcpSession = pcpSessionByBackendSessionId.get(localSession.sessionId);
       const ownerLabel = linkedPcpSession?.agentId || null;
-      const previewText = withAgentPreviewSpeaker(
-        localSession.latestPrompt || localSession.firstPrompt,
-        ownerLabel || agentId
+      const showOwner = Boolean(ownerLabel && ownerLabel !== agentId);
+      const previewText = withSessionFileSize(
+        withAgentPreviewSpeaker(
+          localSession.latestPrompt || localSession.firstPrompt,
+          ownerLabel || agentId
+        ),
+        localSession.fileSizeBytes
       );
-      const sourceLabel = ownerLabel ? `${backendLabel}/${ownerLabel}` : backendLabel;
+      const sourceLabel = showOwner ? `${backendLabel}/${ownerLabel}` : backendLabel;
       const stateLabel = linkedPcpSession
-        ? ownerLabel
-          ? `agent ${ownerLabel} · linked pcp:${linkedPcpSession.id.slice(0, 8)}`
+        ? showOwner
+          ? `${ownerLabel} · linked pcp:${linkedPcpSession.id.slice(0, 8)}`
           : `linked pcp:${linkedPcpSession.id.slice(0, 8)}`
         : 'local';
       choiceEntries.push({
@@ -2945,6 +3187,7 @@ export async function runClaude(
         {
           listCandidates: options.sessionCandidates || options.sessionCandidatesJson,
           listCandidatesJson: options.sessionCandidatesJson,
+          listCandidatesAll: options.sessionCandidatesAll,
           selectionOverride: options.sessionChoice,
         }
       )
@@ -3153,6 +3396,7 @@ export async function runClaudeInteractive(
         {
           listCandidates: options.sessionCandidates || options.sessionCandidatesJson,
           listCandidatesJson: options.sessionCandidatesJson,
+          listCandidatesAll: options.sessionCandidatesAll,
           selectionOverride: options.sessionChoice,
         }
       )

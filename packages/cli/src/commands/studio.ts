@@ -273,6 +273,17 @@ interface InteractiveResult {
   name: string;
   branch: string;
   configDirs: string[];
+  inheritClaudePermissions: boolean;
+}
+
+interface HooksInstallSummary {
+  backend: string;
+  result: 'installed' | 'already-installed' | 'conflict';
+}
+
+interface StudioCreateResult {
+  hooks: HooksInstallSummary[];
+  copiedClaudePermissions: boolean;
 }
 
 function slugifyStudioNameForBranch(name: string): string {
@@ -310,7 +321,7 @@ function isPromptCancelError(err: unknown): boolean {
  * Returns the resolved name, branch, and config dirs to copy.
  */
 async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<InteractiveResult> {
-  const { input, checkbox } = await import('@inquirer/prompts');
+  const { input, checkbox, confirm } = await import('@inquirer/prompts');
 
   // Step 1: Studio name
   const name = await input({
@@ -342,7 +353,17 @@ async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<Int
     });
   }
 
-  return { name, branch, configDirs };
+  // Step 4: Claude permission inheritance from source settings
+  let inheritClaudePermissions = true;
+  const sourceClaudeSettings = join(gitRoot, '.claude', 'settings.local.json');
+  if (existsSync(sourceClaudeSettings)) {
+    inheritClaudePermissions = await confirm({
+      message: 'Inherit Claude permissions from source .claude/settings.local.json?',
+      default: true,
+    });
+  }
+
+  return { name, branch, configDirs, inheritClaudePermissions };
 }
 
 /**
@@ -369,6 +390,54 @@ function copyConfigDirs(sourceRoot: string, wsPath: string, dirs: string[]): voi
       cpSync(source, target, { recursive: true });
     }
   }
+}
+
+function copyClaudePermissionsFromSource(sourceRoot: string, wsPath: string): boolean {
+  const sourceSettingsPath = join(sourceRoot, '.claude', 'settings.local.json');
+  if (!existsSync(sourceSettingsPath)) return false;
+
+  let sourceSettings: Record<string, unknown>;
+  try {
+    sourceSettings = JSON.parse(readFileSync(sourceSettingsPath, 'utf-8')) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    return false;
+  }
+
+  if (!('permissions' in sourceSettings)) return false;
+
+  const targetClaudeDir = join(wsPath, '.claude');
+  const targetSettingsPath = join(targetClaudeDir, 'settings.local.json');
+  mkdirSync(targetClaudeDir, { recursive: true });
+
+  let targetSettings: Record<string, unknown> = {};
+  if (existsSync(targetSettingsPath)) {
+    try {
+      targetSettings = JSON.parse(readFileSync(targetSettingsPath, 'utf-8')) as Record<
+        string,
+        unknown
+      >;
+    } catch {
+      targetSettings = {};
+    }
+  }
+
+  const merged = {
+    ...targetSettings,
+    permissions: sourceSettings.permissions,
+  };
+  writeFileSync(targetSettingsPath, JSON.stringify(merged, null, 2) + '\n');
+  return true;
+}
+
+function installHooksForAllBackends(wsPath: string): HooksInstallSummary[] {
+  const backends = ['claude-code', 'codex', 'gemini'] as const;
+  return backends.map((backendName) => {
+    const { result, backend } = installHooks(wsPath, { backend: backendName });
+    return { backend: backend.name, result };
+  });
 }
 
 function resolveCopySourceRoot(gitRoot: string, copyFrom?: string): string {
@@ -698,6 +767,7 @@ async function createStudio(
     copyConfig?: boolean;
     configDirs?: string;
     copyFrom?: string;
+    inheritClaudePermissions?: boolean;
   },
   overrides?: { branch?: string; configDirsList?: string[] }
 ): Promise<void> {
@@ -710,7 +780,7 @@ async function createStudio(
     const branch = overrides?.branch || options.branch || getDefaultStudioMainBranch(agentId, name);
 
     spinner.text = 'Creating studio...';
-    await createStudioInner(name, options, overrides);
+    const createResult = await createStudioInner(name, options, overrides);
 
     // Read back what was created for display
     const configDirsList =
@@ -732,7 +802,11 @@ async function createStudio(
       const copySourceRoot = resolveCopySourceRoot(gitRoot, options.copyFrom);
       console.log(chalk.dim('  Source: ') + copySourceRoot);
     }
-    console.log(chalk.dim('  Hooks:  ') + 'installed');
+    const hookSummary = createResult.hooks.map((h) => `${h.backend}:${h.result}`).join(', ');
+    console.log(chalk.dim('  Hooks:  ') + hookSummary);
+    if (createResult.copiedClaudePermissions) {
+      console.log(chalk.dim('  Claude: ') + 'permissions inherited from source settings');
+    }
     console.log('');
     console.log(chalk.cyan('To start working:'));
     console.log(chalk.dim(`  cd ${wsPath} && sb`));
@@ -754,7 +828,7 @@ const DEFAULT_STUDIO_SET: Array<{ suffix: string; template: string; purpose: str
 
 async function setupStudios(
   agentId: string,
-  options: { backend?: string; copyFrom?: string }
+  options: { backend?: string; copyFrom?: string; inheritClaudePermissions?: boolean }
 ): Promise<void> {
   console.log(chalk.bold(`\nSetting up studios for ${chalk.cyan(agentId)}...\n`));
 
@@ -779,6 +853,7 @@ async function setupStudios(
         template: studio.template,
         backend: options.backend,
         copyFrom: options.copyFrom,
+        inheritClaudePermissions: options.inheritClaudePermissions,
       });
       spinner.succeed(`Created: ${name}`);
       results.push({ name, status: 'created', path: wsPath });
@@ -827,9 +902,10 @@ async function createStudioInner(
     copyConfig?: boolean;
     configDirs?: string;
     copyFrom?: string;
+    inheritClaudePermissions?: boolean;
   },
   overrides?: { branch?: string; configDirsList?: string[] }
-): Promise<void> {
+): Promise<StudioCreateResult> {
   const agentId = options.agent || resolveAgentId() || 'sb';
   const gitRoot = findGitRoot();
   const copySourceRoot = resolveCopySourceRoot(gitRoot, options.copyFrom);
@@ -913,8 +989,19 @@ async function createStudioInner(
     writeFileSync(join(pcpDir, 'ROLE.md'), roleContent);
   }
 
-  // Install hooks
-  installHooks(wsPath);
+  // Install hooks for all backends (claude, codex, gemini) in every studio.
+  const hookResults = installHooksForAllBackends(wsPath);
+
+  // Optionally carry over Claude permissions from source settings.
+  const copiedClaudePermissions =
+    options.inheritClaudePermissions !== false
+      ? copyClaudePermissionsFromSource(copySourceRoot, wsPath)
+      : false;
+
+  return {
+    hooks: hookResults,
+    copiedClaudePermissions,
+  };
 }
 
 async function renameStudio(from: string, to: string): Promise<void> {
@@ -1356,6 +1443,8 @@ export {
   resolveRoleTemplate,
   listRoleTemplates,
   isValidTemplateName,
+  copyClaudePermissionsFromSource,
+  installHooksForAllBackends,
   BUILTIN_ROLE_TEMPLATES,
   getDefaultStudioMainBranch,
   planStudioHomeBranchRename,
@@ -1399,6 +1488,10 @@ export function registerStudioCommands(program: Command): void {
       '--copy-from <source>',
       'Copy bootstrap files (.mcp.json, .env.local) and config dirs from source studio/path (default: main worktree)'
     )
+    .option(
+      '--no-inherit-claude-permissions',
+      'Do not copy .claude/settings.local.json permissions from the source worktree'
+    )
     .action(async (name: string | undefined, options) => {
       if (!name && process.stdin.isTTY) {
         // Interactive mode: prompt for all values
@@ -1407,10 +1500,14 @@ export function registerStudioCommands(program: Command): void {
           const copySourceRoot = resolveCopySourceRoot(gitRoot, options.copyFrom);
           const agentId = options.agent || resolveAgentId() || 'sb';
           const result = await runInteractiveFlow(agentId, copySourceRoot);
-          return createStudio(result.name, options, {
-            branch: result.branch,
-            configDirsList: result.configDirs,
-          });
+          return createStudio(
+            result.name,
+            { ...options, inheritClaudePermissions: result.inheritClaudePermissions },
+            {
+              branch: result.branch,
+              configDirsList: result.configDirs,
+            }
+          );
         } catch (err) {
           if (isPromptCancelError(err)) {
             console.log(chalk.yellow('\nStudio creation canceled.'));
@@ -1461,6 +1558,10 @@ export function registerStudioCommands(program: Command): void {
     .option(
       '--copy-from <source>',
       'Copy bootstrap files from source studio/path (default: main worktree)'
+    )
+    .option(
+      '--no-inherit-claude-permissions',
+      'Do not copy .claude/settings.local.json permissions from the source worktree'
     )
     .action(setupStudios);
 

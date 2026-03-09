@@ -71,6 +71,12 @@ describe('extractArgs', () => {
     expect(result.sbOptions.sessionCandidatesJson).toBe(true);
   });
 
+  it('parses session-candidates-all debug flag', () => {
+    const result = extractArgs(['--session-candidates-json', '--session-candidates-all']);
+    expect(result.sbOptions.sessionCandidatesJson).toBe(true);
+    expect(result.sbOptions.sessionCandidatesAll).toBe(true);
+  });
+
   it('parses sb-specific verbose flag', () => {
     const result = extractArgs(['--sb-verbose', 'hello']);
     expect(result.sbOptions.verbose).toBe(true);

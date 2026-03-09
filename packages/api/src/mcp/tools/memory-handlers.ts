@@ -13,7 +13,7 @@ import { logger } from '../../utils/logger';
 import { userIdentifierBaseSchema, resolveUserOrThrow } from '../../services/user-resolver';
 import { setSessionContext, pinSessionAgent, getRequestContext } from '../../utils/request-context';
 import { getEffectiveAgentId } from '../../auth/enforce-identity';
-import type { MemorySource, Salience } from '../../data/models/memory';
+import type { MemorySource, Salience, Session } from '../../data/models/memory';
 import { getCloudSkillsService } from '../../skills/cloud-service';
 
 // Helper to safely read a file, returning null if it doesn't exist
@@ -1188,6 +1188,63 @@ function isSignificantPhaseTransition(phase: string): boolean {
   return phase.startsWith('blocked:') || phase.startsWith('waiting:') || phase === 'complete';
 }
 
+type SessionTraceField =
+  | 'agentId'
+  | 'currentPhase'
+  | 'lifecycle'
+  | 'status'
+  | 'backendSessionId'
+  | 'workingDir'
+  | 'context';
+
+interface SessionTraceSnapshot {
+  agentId: string | null;
+  currentPhase: string | null;
+  lifecycle: string | null;
+  status: string | null;
+  backendSessionId: string | null;
+  workingDir: string | null;
+  context: string | null;
+}
+
+const SESSION_TRACE_FIELDS: SessionTraceField[] = [
+  'agentId',
+  'currentPhase',
+  'lifecycle',
+  'status',
+  'backendSessionId',
+  'workingDir',
+  'context',
+];
+
+function normalizeTraceString(value: string | null | undefined, truncateAt = 240): string | null {
+  if (value === undefined || value === null) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return trimmed.length > truncateAt ? `${trimmed.slice(0, truncateAt)}…` : trimmed;
+}
+
+function toSessionTraceSnapshot(session: Session | null | undefined): SessionTraceSnapshot {
+  return {
+    agentId: normalizeTraceString(session?.agentId),
+    currentPhase: normalizeTraceString(session?.currentPhase),
+    lifecycle: normalizeTraceString(session?.lifecycle),
+    status: normalizeTraceString(session?.status),
+    backendSessionId: normalizeTraceString(session?.backendSessionId || session?.claudeSessionId),
+    workingDir: normalizeTraceString(session?.workingDir),
+    context: normalizeTraceString(session?.context),
+  };
+}
+
+function buildSessionTraceDiff(before: Session | null | undefined, after: Session) {
+  const beforeSnapshot = toSessionTraceSnapshot(before);
+  const afterSnapshot = toSessionTraceSnapshot(after);
+  const changedFields = SESSION_TRACE_FIELDS.filter(
+    (field) => beforeSnapshot[field] !== afterSnapshot[field]
+  );
+  return { beforeSnapshot, afterSnapshot, changedFields };
+}
+
 export async function handleUpdateSessionPhase(args: unknown, dataComposer: DataComposer) {
   const params = updateSessionPhaseSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
@@ -1243,6 +1300,16 @@ export async function handleUpdateSessionPhase(args: unknown, dataComposer: Data
       };
     }
     sessionId = session.id;
+  }
+
+  let beforeSession: Session | null = null;
+  try {
+    beforeSession = await dataComposer.repositories.memory.getSession(sessionId);
+  } catch (error) {
+    logger.warn('Failed to load pre-update session snapshot for tracing', {
+      sessionId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   // Build update object
@@ -1328,6 +1395,125 @@ export async function handleUpdateSessionPhase(args: unknown, dataComposer: Data
       currentPhase: updated.currentPhase || null,
     },
   };
+
+  const activityStreamRepo = dataComposer.repositories.activityStream;
+  if (params.backendSessionId) {
+    const backendSessionId = params.backendSessionId.trim();
+    if (backendSessionId) {
+      try {
+        const scan = await dataComposer.repositories.memory.listSessions(user.id, { limit: 200 });
+        const others = Array.isArray(scan) ? scan : [];
+        const conflict = others.find((session) => {
+          if (session.id === sessionId) return false;
+          const linked = (session.backendSessionId || session.claudeSessionId || '').trim();
+          return linked === backendSessionId;
+        });
+
+        if (
+          conflict &&
+          conflict.agentId &&
+          conflict.agentId !== (updated.agentId || params.agentId)
+        ) {
+          logger.warn('Session backendSessionId ownership conflict detected', {
+            sessionId,
+            agentId: updated.agentId || params.agentId || null,
+            backendSessionId,
+            conflictingSessionId: conflict.id,
+            conflictingAgentId: conflict.agentId,
+          });
+
+          result.sessionConflict = {
+            backendSessionId,
+            conflictingSessionId: conflict.id,
+            conflictingAgentId: conflict.agentId,
+          };
+
+          if (activityStreamRepo?.logActivity) {
+            try {
+              await activityStreamRepo.logActivity({
+                userId: user.id,
+                agentId:
+                  getEffectiveAgentId(params.agentId) ??
+                  params.agentId ??
+                  updated.agentId ??
+                  'unknown',
+                type: 'state_change',
+                subtype: 'session_backend_conflict',
+                sessionId,
+                status: 'completed',
+                content: `Session ${sessionId.slice(0, 8)} backendSessionId ${backendSessionId.slice(0, 8)} already linked to ${conflict.agentId}:${conflict.id.slice(0, 8)}`,
+                payload: {
+                  backendSessionId,
+                  targetSessionId: sessionId,
+                  targetAgentId: updated.agentId || params.agentId || null,
+                  conflictingSessionId: conflict.id,
+                  conflictingAgentId: conflict.agentId,
+                },
+              });
+            } catch (error) {
+              logger.warn('Failed to log session backend conflict activity', {
+                sessionId,
+                backendSessionId,
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
+        }
+      } catch (error) {
+        logger.warn('Failed to scan sessions for backendSessionId conflicts', {
+          sessionId,
+          backendSessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
+
+  const trace = buildSessionTraceDiff(beforeSession, updated);
+  if (trace.changedFields.length > 0) {
+    if (activityStreamRepo?.logActivity) {
+      const effectiveAgentId =
+        getEffectiveAgentId(params.agentId) ??
+        params.agentId ??
+        updated.agentId ??
+        beforeSession?.agentId ??
+        'unknown';
+      try {
+        await activityStreamRepo.logActivity({
+          userId: user.id,
+          agentId: effectiveAgentId,
+          type: 'state_change',
+          subtype: 'session_update',
+          sessionId,
+          status: 'completed',
+          content: `Session ${sessionId.slice(0, 8)} updated (${trace.changedFields.join(', ')})`,
+          payload: {
+            sessionId,
+            changedFields: trace.changedFields,
+            before: trace.beforeSnapshot,
+            after: trace.afterSnapshot,
+            requestedByAgentId: params.agentId || null,
+            updateRequest: {
+              phase: params.phase || null,
+              lifecycle: params.lifecycle || null,
+              status: params.status || null,
+              backendSessionId: params.backendSessionId || null,
+              contextProvided: params.context !== undefined,
+              workingDirProvided: params.workingDir !== undefined,
+            },
+          },
+        });
+        result.sessionTrace = {
+          changedFields: trace.changedFields,
+        };
+      } catch (error) {
+        logger.warn('Failed to log session state_change activity', {
+          sessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  }
 
   // Auto-create memory for significant phase transitions
   if (params.phase && isSignificantPhaseTransition(params.phase)) {
