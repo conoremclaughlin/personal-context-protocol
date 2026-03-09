@@ -41,6 +41,7 @@ export interface SbOptions {
   backend: string;
   sessionCandidates?: boolean;
   sessionCandidatesJson?: boolean;
+  sessionCandidatesAll?: boolean;
   sessionChoice?: string;
   dangerous?: boolean;
 }
@@ -1476,13 +1477,18 @@ export function extractClaudeHistorySessionsForProject(
 
 export function getCodexLocalSessionsForProject(
   cwd = process.cwd(),
-  limit = 20
+  limit = 20,
+  options: {
+    includeExecSources?: boolean;
+  } = {}
 ): BackendLocalSessionSummary[] {
+  const includeExecSources = options.includeExecSources === true;
   const fallbackToJsonl = (reason: string): BackendLocalSessionSummary[] => {
-    const fallback = getCodexLocalSessionsFromJsonl(cwd, limit);
+    const fallback = getCodexLocalSessionsFromJsonl(cwd, limit, { includeExecSources });
     sbDebugLog('backend', 'codex_local_sessions_fallback_jsonl', {
       cwd,
       reason,
+      includeExecSources,
       returnedSessions: fallback.length,
       sessionIds: fallback.map((session) => session.sessionId),
     });
@@ -1508,7 +1514,7 @@ SELECT id, cwd, updated_at,
        git_branch
 FROM threads
 WHERE archived = 0
-  AND source = 'cli'
+  ${includeExecSources ? '' : "AND source = 'cli'"}
 ORDER BY updated_at DESC
 LIMIT 200;
 `;
@@ -1581,6 +1587,7 @@ LIMIT 200;
   const scoped = sessions.slice(0, limit);
   sbDebugLog('backend', 'codex_local_sessions_loaded', {
     cwd: normalizedCwd,
+    includeExecSources,
     totalScopedSessions: sessions.length,
     returnedSessions: scoped.length,
     sessionIds: scoped.map((session) => session.sessionId),
@@ -1590,8 +1597,12 @@ LIMIT 200;
 
 function getCodexLocalSessionsFromJsonl(
   cwd = process.cwd(),
-  limit = 20
+  limit = 20,
+  options: {
+    includeExecSources?: boolean;
+  } = {}
 ): BackendLocalSessionSummary[] {
+  const includeExecSources = options.includeExecSources === true;
   const codexSessionsDir = join(homedir(), '.codex', 'sessions');
   if (!existsSync(codexSessionsDir)) return [];
 
@@ -1660,7 +1671,7 @@ function getCodexLocalSessionsFromJsonl(
       const sessionCwd = parsed.payload?.cwd?.trim();
       if (!sessionId || !sessionCwd) break;
       const originator = parsed.payload?.originator?.trim();
-      if (originator && !originator.startsWith('codex_cli')) break;
+      if (!includeExecSources && originator && !originator.startsWith('codex_cli')) break;
 
       const normalizedSessionCwd = normalizePath(sessionCwd);
       if (!normalizedSessionCwd || normalizedSessionCwd !== normalizedCwd) break;
@@ -1867,10 +1878,17 @@ export function getGeminiLocalSessionsForProject(
 export function getBackendLocalSessionsForProject(
   backend: string,
   cwd = process.cwd(),
-  limit = 20
+  limit = 20,
+  options: {
+    includeAllSources?: boolean;
+  } = {}
 ): BackendLocalSessionSummary[] {
   if (backend === 'claude') return getClaudeLocalSessionsForProject(cwd, limit);
-  if (backend === 'codex') return getCodexLocalSessionsForProject(cwd, limit);
+  if (backend === 'codex') {
+    return getCodexLocalSessionsForProject(cwd, limit, {
+      includeExecSources: options.includeAllSources,
+    });
+  }
   if (backend === 'gemini') return getGeminiLocalSessionsForProject(cwd, limit);
   return [];
 }
@@ -2271,6 +2289,7 @@ async function ensurePcpSessionContext(
   options: {
     listCandidates?: boolean;
     listCandidatesJson?: boolean;
+    listCandidatesAll?: boolean;
     selectionOverride?: string;
   } = {}
 ): Promise<{
@@ -2293,7 +2312,9 @@ async function ensurePcpSessionContext(
   const currentGitBranch = getCurrentGitBranch(cwd);
   const localSessionLimit = options.listCandidates || options.listCandidatesJson ? 120 : 40;
   const pcpSessionLimit = options.listCandidates || options.listCandidatesJson ? 80 : 40;
-  const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, localSessionLimit);
+  const localBackendSessions = getBackendLocalSessionsForProject(backend, cwd, localSessionLimit, {
+    includeAllSources: options.listCandidatesAll,
+  });
   const localBackendSessionIds = new Set(localBackendSessions.map((session) => session.sessionId));
   const knownBackendSessionIds =
     backend === 'claude' ? getKnownClaudeSessionIds() : localBackendSessionIds;
@@ -2307,6 +2328,7 @@ async function ensurePcpSessionContext(
     explicitSelection,
     hasSessionOverride,
     overrideBackendSessionId: overrideBackendSessionId || null,
+    listCandidatesAll: options.listCandidatesAll || false,
     selectionOverride: options.selectionOverride || null,
     localCount: localBackendSessions.length,
     knownCount: knownBackendSessionIds.size,
@@ -3165,6 +3187,7 @@ export async function runClaude(
         {
           listCandidates: options.sessionCandidates || options.sessionCandidatesJson,
           listCandidatesJson: options.sessionCandidatesJson,
+          listCandidatesAll: options.sessionCandidatesAll,
           selectionOverride: options.sessionChoice,
         }
       )
@@ -3373,6 +3396,7 @@ export async function runClaudeInteractive(
         {
           listCandidates: options.sessionCandidates || options.sessionCandidatesJson,
           listCandidatesJson: options.sessionCandidatesJson,
+          listCandidatesAll: options.sessionCandidatesAll,
           selectionOverride: options.sessionChoice,
         }
       )

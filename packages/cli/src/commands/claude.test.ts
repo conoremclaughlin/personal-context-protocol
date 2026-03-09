@@ -1041,6 +1041,14 @@ describe('getCodexLocalSessionsForProject', () => {
       expect(sessions.map((session) => session.sessionId)).toEqual([matchingSessionId]);
       expect(sessions[0]?.latestPrompt).toBe('assistant: Most recent assistant reply');
       expect(sessions[0]?.transcriptPath).toContain(matchingSessionId);
+
+      const sessionsIncludingExec = getCodexLocalSessionsForProject(projectPath, 10, {
+        includeExecSources: true,
+      });
+      expect(sessionsIncludingExec.map((session) => session.sessionId)).toEqual([
+        nonCliSessionId,
+        matchingSessionId,
+      ]);
     } finally {
       process.env.HOME = originalHome;
       rmSync(tempHome, { recursive: true, force: true });
