@@ -273,6 +273,7 @@ interface InteractiveResult {
   name: string;
   branch: string;
   configDirs: string[];
+  inheritClaudePermissions: boolean;
 }
 
 interface HooksInstallSummary {
@@ -320,7 +321,7 @@ function isPromptCancelError(err: unknown): boolean {
  * Returns the resolved name, branch, and config dirs to copy.
  */
 async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<InteractiveResult> {
-  const { input, checkbox } = await import('@inquirer/prompts');
+  const { input, checkbox, confirm } = await import('@inquirer/prompts');
 
   // Step 1: Studio name
   const name = await input({
@@ -352,7 +353,17 @@ async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<Int
     });
   }
 
-  return { name, branch, configDirs };
+  // Step 4: Claude permission inheritance from source settings
+  let inheritClaudePermissions = true;
+  const sourceClaudeSettings = join(gitRoot, '.claude', 'settings.local.json');
+  if (existsSync(sourceClaudeSettings)) {
+    inheritClaudePermissions = await confirm({
+      message: 'Inherit Claude permissions from source .claude/settings.local.json?',
+      default: true,
+    });
+  }
+
+  return { name, branch, configDirs, inheritClaudePermissions };
 }
 
 /**
@@ -1488,10 +1499,14 @@ export function registerStudioCommands(program: Command): void {
           const copySourceRoot = resolveCopySourceRoot(gitRoot, options.copyFrom);
           const agentId = options.agent || resolveAgentId() || 'sb';
           const result = await runInteractiveFlow(agentId, copySourceRoot);
-          return createStudio(result.name, options, {
-            branch: result.branch,
-            configDirsList: result.configDirs,
-          });
+          return createStudio(
+            result.name,
+            { ...options, inheritClaudePermissions: result.inheritClaudePermissions },
+            {
+              branch: result.branch,
+              configDirsList: result.configDirs,
+            }
+          );
         } catch (err) {
           if (isPromptCancelError(err)) {
             console.log(chalk.yellow('\nStudio creation canceled.'));
