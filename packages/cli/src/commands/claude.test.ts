@@ -780,6 +780,49 @@ describe('resolveCapturedBackendSessionIdFromRuntime', () => {
     ).toBe('fallback-id');
   });
 
+  it('detects a brand-new local backend session even when pre-run snapshot is empty', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-empty-'));
+    const tempHome = join(tempRoot, 'home');
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(tempRepo, { recursive: true });
+
+    const projectDirName = tempRepo.replace(/[\\/]/g, '-');
+    const projectKeyDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectKeyDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const newSessionId = '10101010-1010-4010-8010-101010101010';
+      writeFileSync(
+        join(projectKeyDir, `${newSessionId}.jsonl`),
+        JSON.stringify({
+          type: 'progress',
+          sessionId: newSessionId,
+          timestamp: '2026-03-09T00:00:00.000Z',
+        }) + '\n'
+      );
+
+      const resolved = resolveCapturedBackendSessionIdFromRuntime({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-empty-snapshot',
+        knownLocalSessionSnapshot: new Map(),
+      });
+
+      expect(resolved).toBe(newSessionId);
+    } finally {
+      if (oldHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = oldHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to new local backend session for the project when runtime linkage is missing', () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-'));
     const tempHome = join(tempRoot, 'home');

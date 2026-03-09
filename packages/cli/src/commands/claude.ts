@@ -1181,7 +1181,7 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     if (currentSessionId) return currentSessionId;
   }
 
-  if (knownLocalSessionSnapshot && knownLocalSessionSnapshot.size > 0) {
+  if (knownLocalSessionSnapshot) {
     const postRunLocalSessions = getBackendLocalSessionsForProject(backend, cwd, 50);
     const newLocalSession = postRunLocalSessions.find(
       (session) => !knownLocalSessionSnapshot.has(session.sessionId)
