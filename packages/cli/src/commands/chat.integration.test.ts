@@ -1215,6 +1215,7 @@ describe('runChat integration', () => {
     await runChat({
       agent: 'lumen',
       backend: 'claude',
+      toolRouting: 'backend',
       pollSeconds: '999',
     });
 

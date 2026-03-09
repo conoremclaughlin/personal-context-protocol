@@ -1819,7 +1819,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     verbose: options.verbose ?? false,
     toolMode:
       options.tools === 'off' ? 'off' : options.tools === 'privileged' ? 'privileged' : 'backend',
-    toolRouting: options.toolRouting === 'local' ? 'local' : 'backend',
+    toolRouting: options.toolRouting === 'backend' ? 'backend' : 'local',
     uiMode: options.ui === 'scroll' ? 'scroll' : 'live',
     threadKey: options.threadKey,
     workspaceId: identity?.workspaceId,
@@ -4474,8 +4474,8 @@ export function registerChatCommand(program: Command): void {
       .option('-m, --model <model>', 'Model override for backend')
       .option(
         '--tool-routing <mode>',
-        'Tool routing mode: backend (native backend tools) or local (pcp-tool blocks handled by sb chat)',
-        'backend'
+        'Tool routing mode: local (pcp-tool blocks handled by sb) or backend (native backend tools)',
+        'local'
       )
       .option('--ui <mode>', 'UI mode: live (default) or scroll status rendering', 'live')
       .option('--thread-key <key>', 'Thread key for PCP session routing')
