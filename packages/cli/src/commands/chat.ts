@@ -13,7 +13,12 @@ import {
   watchFile,
 } from 'fs';
 import { isAbsolute, join } from 'path';
-import { readIdentityJson, resolveAgentId } from '../backends/identity.js';
+import {
+  readIdentityJson,
+  resolveAgentId,
+  saveRuntimePreferences,
+  type RuntimePreferences,
+} from '../backends/identity.js';
 import { PcpClient } from '../lib/pcp-client.js';
 import { initSbDebug, sbDebugLog } from '../lib/sb-debug.js';
 import {
@@ -1841,13 +1846,20 @@ export async function runChat(options: ChatOptions): Promise<void> {
         ? 120_000
         : undefined;
 
+  // Persisted runtime preferences from .pcp/identity.json — CLI flags override these
+  const persisted = identity?.runtime;
+
   const runtime: ChatRuntime = {
     backend: initialBackend,
     model: options.model,
     verbose: options.verbose ?? false,
     toolMode:
       options.tools === 'off' ? 'off' : options.tools === 'privileged' ? 'privileged' : 'backend',
-    toolRouting: options.toolRouting === 'backend' ? 'backend' : 'local',
+    toolRouting: options.toolRouting
+      ? options.toolRouting === 'backend'
+        ? 'backend'
+        : 'local'
+      : persisted?.toolRouting || 'local',
     uiMode: options.ui === 'scroll' ? 'scroll' : 'live',
     threadKey: options.threadKey,
     workspaceId: identity?.workspaceId,
@@ -1865,10 +1877,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
     awayMode: false,
     transcriptPath: ensureRuntimeTranscriptPath(),
     activeSkills: [],
-    strictTools: options.sbStrictTools ?? false,
+    strictTools: options.sbStrictTools ?? persisted?.strictTools ?? false,
     backendTurnTimeoutMs,
     approvalMode:
-      options.approvalMode === 'jsonl'
+      options.approvalMode === 'jsonl' || persisted?.approvalMode === 'jsonl'
         ? 'jsonl'
         : options.nonInteractive
           ? 'auto-deny'
@@ -3323,7 +3335,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           '',
           chalk.bold('Quick commands'),
           chalk.dim(
-            '/help  /mcp  /capabilities  /skills  /profile  /policy  /away  /tool-routing  /ui  /trim  /quit'
+            '/help  /mcp  /capabilities  /skills  /profile  /policy  /away  /tool-routing  /save-config  /ui  /trim  /quit'
           ),
           '',
         ].join('\n')
@@ -3348,6 +3360,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/autorun [on|off]          Toggle inbox auto-run execution',
               '/away [on|off]             Toggle remote approval mode (approvals via inbox)',
               '/tool-routing [backend|local]  Toggle backend tools vs local pcp-tool routing',
+              '/save-config                  Save current runtime preferences to .pcp/identity.json',
               '/ui [scroll|live]          Set status rendering mode',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
@@ -3548,6 +3561,25 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 'Local routing active: backend-native tools disabled; use pcp-tool blocks for local execution.'
               )
             );
+          }
+          break;
+        }
+        case 'save-config': {
+          const prefs: RuntimePreferences = {
+            toolRouting: runtime.toolRouting,
+            strictTools: runtime.strictTools,
+            approvalMode: runtime.approvalMode === 'auto-deny' ? undefined : runtime.approvalMode,
+          };
+          const saved = saveRuntimePreferences(process.cwd(), prefs);
+          if (saved) {
+            console.log(chalk.green('Runtime preferences saved to .pcp/identity.json:'));
+            console.log(chalk.dim(`  toolRouting: ${prefs.toolRouting}`));
+            console.log(chalk.dim(`  strictTools: ${prefs.strictTools}`));
+            if (prefs.approvalMode) {
+              console.log(chalk.dim(`  approvalMode: ${prefs.approvalMode}`));
+            }
+          } else {
+            console.log(chalk.yellow('Failed to save runtime preferences.'));
           }
           break;
         }
