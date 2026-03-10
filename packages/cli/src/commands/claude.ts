@@ -1135,6 +1135,7 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
   studioId?: string;
   knownLocalSessionSnapshot?: Map<string, string>;
   fallbackBackendSessionId?: string;
+  ignoredBackendSessionIds?: Iterable<string>;
 }): string | undefined {
   const {
     cwd = process.cwd(),
@@ -1145,18 +1146,48 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     studioId,
     knownLocalSessionSnapshot,
     fallbackBackendSessionId,
+    ignoredBackendSessionIds,
   } = options;
+
+  const ignoredSessionIds = new Set(
+    Array.from(ignoredBackendSessionIds || [])
+      .map((value) => value.trim())
+      .filter(Boolean)
+  );
+  const isIgnored = (value: string | undefined): boolean =>
+    Boolean(value && ignoredSessionIds.has(value));
 
   const resolveFromRecord = (
     record?: { backendSessionId?: string; backendSessionIds?: string[] } | null
   ): string | undefined => {
     if (!record) return undefined;
-    if (record.backendSessionId) return record.backendSessionId;
+    if (record.backendSessionId && !isIgnored(record.backendSessionId)) {
+      return record.backendSessionId;
+    }
     const last = record.backendSessionIds?.at(-1);
-    return typeof last === 'string' && last.trim() ? last : undefined;
+    return typeof last === 'string' && last.trim() && !isIgnored(last.trim())
+      ? last.trim()
+      : undefined;
   };
 
   if (!pcpSessionId) return fallbackBackendSessionId;
+
+  if (knownLocalSessionSnapshot) {
+    const postRunLocalSessions = getBackendLocalSessionsForProject(backend, cwd, 50);
+    const newLocalSession = postRunLocalSessions.find(
+      (session) =>
+        !knownLocalSessionSnapshot.has(session.sessionId) && !isIgnored(session.sessionId)
+    );
+    if (newLocalSession?.sessionId) return newLocalSession.sessionId;
+
+    const updatedExistingSession = postRunLocalSessions.find((session) => {
+      const previousModified = knownLocalSessionSnapshot.get(session.sessionId);
+      if (!previousModified) return false;
+      if (isIgnored(session.sessionId)) return false;
+      return previousModified !== session.modified;
+    });
+    if (updatedExistingSession?.sessionId) return updatedExistingSession.sessionId;
+  }
 
   const scopedRecords = listRuntimeSessions(cwd, backend).filter(
     (record) =>
@@ -1181,22 +1212,12 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
     if (currentSessionId) return currentSessionId;
   }
 
-  if (knownLocalSessionSnapshot) {
-    const postRunLocalSessions = getBackendLocalSessionsForProject(backend, cwd, 50);
-    const newLocalSession = postRunLocalSessions.find(
-      (session) => !knownLocalSessionSnapshot.has(session.sessionId)
-    );
-    if (newLocalSession?.sessionId) return newLocalSession.sessionId;
-
-    const updatedExistingSession = postRunLocalSessions.find((session) => {
-      const previousModified = knownLocalSessionSnapshot.get(session.sessionId);
-      if (!previousModified) return false;
-      return previousModified !== session.modified;
-    });
-    if (updatedExistingSession?.sessionId) return updatedExistingSession.sessionId;
-  }
-
-  return resolveFromRecord(scopedRecords[0]) || fallbackBackendSessionId;
+  return (
+    resolveFromRecord(scopedRecords[0]) ||
+    (fallbackBackendSessionId && !isIgnored(fallbackBackendSessionId)
+      ? fallbackBackendSessionId
+      : undefined)
+  );
 }
 
 export async function resolveCapturedBackendSessionIdWithRetry(options: {
@@ -1208,6 +1229,7 @@ export async function resolveCapturedBackendSessionIdWithRetry(options: {
   studioId?: string;
   knownLocalSessionSnapshot?: Map<string, string>;
   fallbackBackendSessionId?: string;
+  ignoredBackendSessionIds?: Iterable<string>;
   attempts?: number;
   intervalMs?: number;
 }): Promise<string | undefined> {
@@ -3483,6 +3505,7 @@ export async function runClaudeInteractive(
   let attemptBackendSessionId = sessionContext.backendSessionId;
   let attemptBackendSessionSeedId = sessionContext.backendSessionSeedId;
   let finalCapturedBackendSessionId = sessionContext.backendSessionId;
+  const ignoredBackendSessionIds = new Set<string>();
 
   const runAttempt = async (): Promise<{ code: number | null; stderrText: string }> => {
     const prepared = adapter.prepare({
@@ -3549,6 +3572,7 @@ export async function runClaudeInteractive(
           studioId,
           knownLocalSessionSnapshot,
           fallbackBackendSessionId: finalCapturedBackendSessionId,
+          ignoredBackendSessionIds,
         });
 
         await logBackendExecutionResult({
@@ -3589,6 +3613,13 @@ export async function runClaudeInteractive(
 
     if (shouldRetry) {
       if (attemptBackendSessionId) {
+        ignoredBackendSessionIds.add(attemptBackendSessionId);
+        sbDebugLog('claude', 'interactive_retry_ignore_backend_session', {
+          backend: options.backend,
+          agentId,
+          pcpSessionId: sessionContext.pcpSessionId || null,
+          staleBackendSessionId: attemptBackendSessionId,
+        });
         console.log(
           chalk.yellow(
             `\nLinked Claude session ${attemptBackendSessionId.slice(0, 8)} failed to resume; retrying once with a fresh backend session.`
@@ -3597,7 +3628,8 @@ export async function runClaudeInteractive(
       }
       attempt += 1;
       attemptBackendSessionId = undefined;
-      attemptBackendSessionSeedId = undefined;
+      attemptBackendSessionSeedId = sessionContext.pcpSessionId;
+      finalCapturedBackendSessionId = undefined;
       continue;
     }
 
