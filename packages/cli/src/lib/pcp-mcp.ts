@@ -26,6 +26,29 @@ export function getPcpServerUrl(): string {
   return process.env.PCP_SERVER_URL || 'http://localhost:3001';
 }
 
+function formatPcpFetchFailure(url: string, error: unknown): string {
+  const base =
+    error instanceof Error ? error.message.trim() || error.name : String(error || 'fetch failed');
+  const err = error as { cause?: unknown } | undefined;
+  const cause = err?.cause as
+    | { code?: string; errno?: string | number; address?: string; port?: number; message?: string }
+    | undefined;
+  const causeParts: string[] = [];
+  if (typeof cause?.code === 'string' && cause.code.trim()) causeParts.push(cause.code.trim());
+  if (cause?.errno !== undefined && cause.errno !== null)
+    causeParts.push(`errno=${String(cause.errno)}`);
+  if (typeof cause?.address === 'string' && cause.address.trim())
+    causeParts.push(`address=${cause.address.trim()}`);
+  if (typeof cause?.port === 'number' && Number.isFinite(cause.port))
+    causeParts.push(`port=${cause.port}`);
+  if (typeof cause?.message === 'string' && cause.message.trim() && cause.message.trim() !== base) {
+    causeParts.push(cause.message.trim());
+  }
+
+  const causeSuffix = causeParts.length > 0 ? ` (${causeParts.join(', ')})` : '';
+  return `PCP fetch failed for ${url}: ${base}${causeSuffix}`;
+}
+
 export async function callPcpTool<T = Record<string, unknown>>(
   tool: string,
   args: Record<string, unknown>,
@@ -69,12 +92,19 @@ export async function callPcpTool<T = Record<string, unknown>>(
       ...(options?.timeoutMs ? { signal: AbortSignal.timeout(options.timeoutMs) } : {}),
     });
   } catch (error) {
+    const diagnostic = formatPcpFetchFailure(url, error);
     sbDebugLog('pcp-mcp', 'call_fetch_error', {
       tool,
       serverUrl,
+      url,
       error: error instanceof Error ? error.message : String(error),
+      diagnostic,
+      cause:
+        error && typeof error === 'object' && 'cause' in error
+          ? String((error as { cause?: unknown }).cause)
+          : null,
     });
-    throw error;
+    throw new Error(`${diagnostic}. Ensure PCP server is running and PCP_SERVER_URL is correct.`);
   }
 
   if (!response.ok) {

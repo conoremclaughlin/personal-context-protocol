@@ -698,6 +698,85 @@ function extractMessageText(value: unknown): string | undefined {
   return undefined;
 }
 
+function normalizePreviewLeafText(value: string): string | undefined {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (!compact) return undefined;
+  if (/^<(local-command|tool[_-]?result|tool[_-]?use|bash-command)[^>]*>/i.test(compact)) {
+    return undefined;
+  }
+  return compact;
+}
+
+function extractPreviewText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return normalizePreviewLeafText(value);
+  }
+  if (Array.isArray(value)) {
+    const chunks: string[] = [];
+    for (const item of value) {
+      const chunk = extractPreviewText(item);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const textLikeKeys = ['text', 'message', 'content', 'output', 'input'];
+    const chunks: string[] = [];
+    for (const key of textLikeKeys) {
+      const chunk = extractPreviewText(record[key]);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+  return undefined;
+}
+
+function extractClaudePreviewText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return normalizePreviewLeafText(value);
+  }
+
+  if (Array.isArray(value)) {
+    const chunks: string[] = [];
+    for (const item of value) {
+      const chunk = extractClaudePreviewText(item);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const blockType = typeof record.type === 'string' ? record.type.toLowerCase() : '';
+    if (
+      blockType === 'tool_result' ||
+      blockType === 'tool_use' ||
+      blockType === 'server_tool_use'
+    ) {
+      return undefined;
+    }
+
+    if (blockType === 'text' || blockType === 'input_text' || blockType === 'output_text') {
+      return extractClaudePreviewText(record.text);
+    }
+
+    const textLikeKeys = ['text', 'message', 'content', 'output', 'input'];
+    const chunks: string[] = [];
+    for (const key of textLikeKeys) {
+      const chunk = extractClaudePreviewText(record[key]);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+
+  return undefined;
+}
+
 function roleFromUnknown(value: unknown): SessionPreviewSummary['role'] | undefined {
   if (value === 'user') return 'user';
   if (value === 'assistant' || value === 'model') return 'assistant';
@@ -730,7 +809,7 @@ function withAgentPreviewSpeaker(
   return preview;
 }
 
-function withSessionFileSize(
+export function withSessionFileSize(
   preview: string | undefined,
   fileSizeBytes: number | undefined
 ): string | undefined {
@@ -738,9 +817,9 @@ function withSessionFileSize(
   if (!size) return preview;
 
   const normalized = preview?.trim();
-  if (!normalized) return `(session) · ${size}`;
+  if (!normalized) return `${size} · (session)`;
   if (normalized.includes(size)) return normalized;
-  return `${normalized} · ${size}`;
+  return `${size} · ${normalized}`;
 }
 
 function getSessionPhaseLabel(session: PcpSessionSummary): string | undefined {
@@ -780,7 +859,7 @@ function extractLatestPreviewFromCodexRolloutJsonl(
 
       const role = roleFromUnknown(payload.role);
       if (!role || role === 'inbox') continue;
-      const content = extractMessageText(payload.content);
+      const content = extractPreviewText(payload.content);
       if (!content) continue;
       latest = { role, content, ts };
       continue;
@@ -793,10 +872,10 @@ function extractLatestPreviewFromCodexRolloutJsonl(
           : undefined;
       if (!payload) continue;
       if (payload.type === 'user_message') {
-        const content = extractMessageText(payload.message);
+        const content = extractPreviewText(payload.message);
         if (content) latest = { role: 'user', content, ts };
       } else if (payload.type === 'agent_message') {
-        const content = extractMessageText(payload.message);
+        const content = extractPreviewText(payload.message);
         if (content) latest = { role: 'assistant', content, ts };
       }
     }
@@ -804,7 +883,7 @@ function extractLatestPreviewFromCodexRolloutJsonl(
   return latest;
 }
 
-function extractLatestPreviewFromPcpTranscriptJsonl(
+export function extractLatestPreviewFromPcpTranscriptJsonl(
   jsonl: string
 ): SessionPreviewSummary | undefined {
   const events = parseJsonl(jsonl);
@@ -812,7 +891,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
   for (const event of events) {
     const type = typeof event.type === 'string' ? event.type : '';
     if (type === 'user') {
-      const content = extractMessageText(event.content);
+      const content = extractPreviewText(event.content);
       if (!content) continue;
       latest = {
         role: 'user',
@@ -822,7 +901,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
       continue;
     }
     if (type === 'assistant') {
-      const content = extractMessageText(event.content);
+      const content = extractPreviewText(event.content);
       if (!content) continue;
       latest = {
         role: 'assistant',
@@ -832,7 +911,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
       continue;
     }
     if (type === 'inbox') {
-      const content = extractMessageText(event.rendered) || extractMessageText(event.content);
+      const content = extractPreviewText(event.rendered) || extractPreviewText(event.content);
       if (!content) continue;
       latest = {
         role: 'inbox',
@@ -844,7 +923,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
   return latest;
 }
 
-function extractLatestPreviewFromClaudeSessionJsonl(
+export function extractLatestPreviewFromClaudeSessionJsonl(
   jsonl: string
 ): SessionPreviewSummary | undefined {
   const events = parseJsonl(jsonl);
@@ -859,7 +938,7 @@ function extractLatestPreviewFromClaudeSessionJsonl(
     const role = roleFromUnknown(message?.role || event.role || event.type);
     if (!role || role === 'inbox') continue;
 
-    const content = extractMessageText(message?.content || event.content || message);
+    const content = extractClaudePreviewText(message?.content || event.content || message);
     if (!content) continue;
     latest = { role, content, ts };
   }
@@ -1199,6 +1278,33 @@ export function resolveCapturedBackendSessionIdFromRuntime(options: {
   return resolveFromRecord(scopedRecords[0]) || fallbackBackendSessionId;
 }
 
+export async function resolveCapturedBackendSessionIdWithRetry(options: {
+  cwd?: string;
+  backend: string;
+  pcpSessionId?: string;
+  runtimeLinkId?: string;
+  agentId?: string;
+  studioId?: string;
+  knownLocalSessionSnapshot?: Map<string, string>;
+  fallbackBackendSessionId?: string;
+  attempts?: number;
+  intervalMs?: number;
+}): Promise<string | undefined> {
+  const attempts = Math.max(1, options.attempts ?? 20);
+  const intervalMs = Math.max(10, options.intervalMs ?? 100);
+
+  let resolved = resolveCapturedBackendSessionIdFromRuntime(options);
+  if (resolved) return resolved;
+
+  for (let attempt = 1; attempt < attempts; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    resolved = resolveCapturedBackendSessionIdFromRuntime(options);
+    if (resolved) return resolved;
+  }
+
+  return resolved;
+}
+
 export function extractSessionFromStartSessionResponse(
   payload: unknown
 ): PcpSessionSummary | undefined {
@@ -1322,8 +1428,7 @@ export function getClaudeLocalSessionsForProject(
         }
 
         if (!latestPrompt) {
-          const size = formatFileSize(stats.size);
-          if (size) latestPrompt = `(session) · ${size}`;
+          latestPrompt = withSessionFileSize(undefined, stats.size);
         }
 
         results.push({
@@ -1566,8 +1671,7 @@ LIMIT 200;
     }
 
     if (!latestPrompt) {
-      const size = formatFileSize(fileSizeBytes);
-      if (size) latestPrompt = `(session) · ${size}`;
+      latestPrompt = withSessionFileSize(undefined, fileSizeBytes);
     }
 
     sessions.push({
@@ -1693,8 +1797,7 @@ function getCodexLocalSessionsFromJsonl(
         transcriptPath: sessionFile.path,
       };
       if (!matched.latestPrompt) {
-        const size = formatFileSize(matched.fileSizeBytes);
-        if (size) matched.latestPrompt = `(session) · ${size}`;
+        matched.latestPrompt = withSessionFileSize(undefined, matched.fileSizeBytes);
       }
       break;
     }
@@ -1803,9 +1906,10 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
       })();
 
       const firstUserMessage = (parsed.messages || []).find((message) => message.type === 'user');
-      const latestMessage = [...(parsed.messages || [])]
-        .reverse()
-        .find((message) => Boolean(message?.content?.trim()));
+      const latestMessage = [...(parsed.messages || [])].reverse().find((message) => {
+        if (typeof message?.content !== 'string') return false;
+        return Boolean(extractPreviewText(message.content));
+      });
       const firstPrompt =
         parsed.summary ||
         (typeof firstUserMessage?.content === 'string'
@@ -1813,17 +1917,17 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
           : undefined);
       const latestPrompt =
         latestMessage && typeof latestMessage.content === 'string'
-          ? formatSessionPreviewText({
-              role: latestMessage.type === 'user' ? 'user' : 'assistant',
-              content: latestMessage.content,
-            })
+          ? (() => {
+              const content = extractPreviewText(latestMessage.content);
+              if (!content) return undefined;
+              return formatSessionPreviewText({
+                role: latestMessage.type === 'user' ? 'user' : 'assistant',
+                content,
+              });
+            })()
           : undefined;
       const latestPromptWithFallback =
-        latestPrompt ||
-        (() => {
-          const size = formatFileSize(fileSizeBytes);
-          return size ? `(session) · ${size}` : undefined;
-        })();
+        latestPrompt || withSessionFileSize(undefined, fileSizeBytes);
 
       sessions.push({
         backend: 'gemini',
@@ -1894,7 +1998,9 @@ export function getBackendLocalSessionsForProject(
 }
 
 function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
+  const serverUrl = getPcpServerUrl();
   console.log(chalk.yellow(`\n⚠ PCP session service unavailable (${reason}).`));
+  console.log(chalk.yellow(`  PCP_SERVER_URL: ${serverUrl}`));
   const mcpPath = join(cwd, '.mcp.json');
   if (!existsSync(mcpPath)) {
     console.log(chalk.yellow('  .mcp.json not found in this repo.'));
@@ -1911,6 +2017,7 @@ function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
     }
   }
   console.log(chalk.dim('  To reconnect PCP features:'));
+  console.log(chalk.dim(`    curl -sS ${serverUrl.replace(/\/+$/, '')}/health`));
   console.log(chalk.dim('    sb auth login'));
   console.log(chalk.dim('    sb init'));
   console.log(chalk.dim('    sb status'));
@@ -3333,7 +3440,7 @@ export async function runClaude(
       if (parsedSessionId) capturedBackendSessionId = parsedSessionId;
     }
     if (!capturedBackendSessionId) {
-      capturedBackendSessionId = resolveCapturedBackendSessionIdFromRuntime({
+      capturedBackendSessionId = await resolveCapturedBackendSessionIdWithRetry({
         backend: options.backend,
         pcpSessionId: sessionContext.pcpSessionId,
         runtimeLinkId,
@@ -3511,7 +3618,7 @@ export async function runClaudeInteractive(
 
       child.on('close', async (code) => {
         prepared.cleanup();
-        finalCapturedBackendSessionId = resolveCapturedBackendSessionIdFromRuntime({
+        finalCapturedBackendSessionId = await resolveCapturedBackendSessionIdWithRetry({
           backend: options.backend,
           pcpSessionId: sessionContext.pcpSessionId,
           runtimeLinkId,
