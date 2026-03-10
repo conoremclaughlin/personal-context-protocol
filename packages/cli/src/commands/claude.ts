@@ -1211,8 +1211,8 @@ export async function resolveCapturedBackendSessionIdWithRetry(options: {
   attempts?: number;
   intervalMs?: number;
 }): Promise<string | undefined> {
-  const attempts = Math.max(1, options.attempts ?? 6);
-  const intervalMs = Math.max(10, options.intervalMs ?? 75);
+  const attempts = Math.max(1, options.attempts ?? 20);
+  const intervalMs = Math.max(10, options.intervalMs ?? 100);
 
   let resolved = resolveCapturedBackendSessionIdFromRuntime(options);
   if (resolved) return resolved;

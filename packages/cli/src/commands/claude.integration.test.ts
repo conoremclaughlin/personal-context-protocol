@@ -10,7 +10,7 @@ import {
 } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { runClaude, type SbOptions } from './claude.js';
+import { getBackendLocalSessionsForProject, runClaude, type SbOptions } from './claude.js';
 
 const cleanupPaths: string[] = [];
 
@@ -211,6 +211,191 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CLAUDE_SESSION_ID || '
 
       if (oldFakeSessionId === undefined) delete process.env.FAKE_CLAUDE_SESSION_ID;
       else process.env.FAKE_CLAUDE_SESSION_ID = oldFakeSessionId;
+    }
+  });
+
+  it('reconciles delayed local transcript backend session id after close', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'sb-claude-int-delayed-'));
+    cleanupPaths.push(root);
+
+    const homeDir = join(root, 'home');
+    const repoDir = join(root, 'repo');
+    const binDir = join(root, 'bin');
+    mkdirSync(homeDir, { recursive: true });
+    mkdirSync(repoDir, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(join(homeDir, '.pcp'), { recursive: true });
+    mkdirSync(join(repoDir, '.pcp'), { recursive: true });
+
+    writeFileSync(
+      join(homeDir, '.pcp', 'config.json'),
+      JSON.stringify({ email: 'integration@example.com' }, null, 2)
+    );
+    writeFileSync(
+      join(repoDir, '.pcp', 'identity.json'),
+      JSON.stringify({ studioId: 'studio-test' }, null, 2)
+    );
+
+    const fakeClaudeArgsPath = join(root, 'fake-claude-args-delayed.json');
+    const fakeClaudePath = join(binDir, 'claude');
+    const delayedSessionId = '30303030-3030-4030-8030-303030303030';
+    writeFileSync(
+      fakeClaudePath,
+      `#!/usr/bin/env node
+const { writeFileSync } = require('fs');
+const { spawn } = require('child_process');
+writeFileSync(process.env.FAKE_CLAUDE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
+const writer = spawn(
+  process.execPath,
+  [
+    '-e',
+    "const fs=require('fs');const path=require('path');const out=process.env.DELAYED_TRANSCRIPT_PATH;const sessionId=process.env.DELAYED_SESSION_ID;const delayMs=Number(process.env.DELAYED_TRANSCRIPT_DELAY_MS||'120');setTimeout(()=>{fs.mkdirSync(path.dirname(out),{recursive:true});fs.writeFileSync(out,JSON.stringify({type:'progress',sessionId,timestamp:new Date().toISOString()})+'\\\\n');}, delayMs);"
+  ],
+  { detached: true, stdio: 'ignore', env: process.env }
+);
+writer.unref();
+console.log('fake-claude-run-complete');
+`
+    );
+    chmodSync(fakeClaudePath, 0o755);
+
+    const pcpToolCalls: Array<{
+      name: string;
+      args: Record<string, unknown>;
+      headers: Record<string, string>;
+    }> = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: unknown, init?: { body?: unknown; headers?: unknown }) => {
+        const body = JSON.parse(String(init?.body || '{}')) as {
+          id?: number;
+          params?: { name?: string; arguments?: Record<string, unknown> };
+        };
+        const toolName = body.params?.name || '';
+        const toolArgs = body.params?.arguments || {};
+        const rawHeaders = (init?.headers || {}) as Record<string, unknown>;
+        const normalizedHeaders = Object.fromEntries(
+          Object.entries(rawHeaders).map(([key, value]) => [key.toLowerCase(), String(value)])
+        );
+        pcpToolCalls.push({ name: toolName, args: toolArgs, headers: normalizedHeaders });
+
+        let payload: Record<string, unknown> = { success: true };
+        if (toolName === 'list_sessions') {
+          payload = { sessions: [] };
+        } else if (toolName === 'start_session') {
+          payload = {
+            session: {
+              id: String(toolArgs.sessionId || 'generated-session-id'),
+              startedAt: new Date().toISOString(),
+              backend: 'claude',
+            },
+          };
+        }
+
+        return new Response(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: body.id ?? 1,
+            result: {
+              content: [{ type: 'text', text: JSON.stringify(payload) }],
+            },
+          }),
+          {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          }
+        );
+      })
+    );
+
+    const oldHome = process.env.HOME;
+    const oldPath = process.env.PATH;
+    const oldPcpUrl = process.env.PCP_SERVER_URL;
+    const oldArgsPath = process.env.FAKE_CLAUDE_ARGS_PATH;
+    const oldDelayedTranscriptPath = process.env.DELAYED_TRANSCRIPT_PATH;
+    const oldDelayedSessionId = process.env.DELAYED_SESSION_ID;
+    const oldDelayedTranscriptDelayMs = process.env.DELAYED_TRANSCRIPT_DELAY_MS;
+    const oldCwd = process.cwd();
+
+    process.env.HOME = homeDir;
+    process.env.PATH = `${binDir}:${oldPath || ''}`;
+    process.env.PCP_SERVER_URL = 'http://pcp.test.local';
+    process.env.FAKE_CLAUDE_ARGS_PATH = fakeClaudeArgsPath;
+    process.env.DELAYED_SESSION_ID = delayedSessionId;
+    process.env.DELAYED_TRANSCRIPT_DELAY_MS = '120';
+    process.chdir(repoDir);
+    const runtimeRepoDir = process.cwd();
+    const claudeProjectDir = join(
+      homeDir,
+      '.claude',
+      'projects',
+      runtimeRepoDir.replace(/[\\/]/g, '-')
+    );
+    mkdirSync(claudeProjectDir, { recursive: true });
+    const delayedTranscriptPath = join(claudeProjectDir, `${delayedSessionId}.jsonl`);
+    process.env.DELAYED_TRANSCRIPT_PATH = delayedTranscriptPath;
+
+    try {
+      const options: SbOptions = {
+        agent: 'wren',
+        model: undefined,
+        session: true,
+        verbose: false,
+        backend: 'claude',
+      };
+
+      await runClaude(
+        'hello delayed integration',
+        ['hello', 'delayed', 'integration'],
+        options,
+        []
+      );
+      await waitForFile(fakeClaudeArgsPath);
+      await waitForFile(delayedTranscriptPath);
+      const observedLocalSessions = getBackendLocalSessionsForProject('claude', repoDir, 20).map(
+        (session) => session.sessionId
+      );
+      expect(observedLocalSessions).toContain(delayedSessionId);
+
+      const runtimePath = join(repoDir, '.pcp', 'runtime', 'sessions.json');
+      await waitForFile(runtimePath);
+      const runtimeState = JSON.parse(readFileSync(runtimePath, 'utf-8')) as {
+        sessions?: Array<{ pcpSessionId?: string; backendSessionId?: string }>;
+      };
+      expect(runtimeState.sessions?.[0]?.pcpSessionId).toBeTruthy();
+      const persistedBackendSessionId = await waitForRuntimeBackendSessionId(runtimePath, 5_000);
+      expect(persistedBackendSessionId).toBe(delayedSessionId);
+
+      const phaseUpdatesWithBackendId = pcpToolCalls
+        .filter((call) => call.name === 'update_session_phase')
+        .some((call) => call.args.backendSessionId === delayedSessionId);
+      expect(phaseUpdatesWithBackendId).toBe(true);
+    } finally {
+      process.chdir(oldCwd);
+
+      if (oldHome === undefined) delete process.env.HOME;
+      else process.env.HOME = oldHome;
+
+      if (oldPath === undefined) delete process.env.PATH;
+      else process.env.PATH = oldPath;
+
+      if (oldPcpUrl === undefined) delete process.env.PCP_SERVER_URL;
+      else process.env.PCP_SERVER_URL = oldPcpUrl;
+
+      if (oldArgsPath === undefined) delete process.env.FAKE_CLAUDE_ARGS_PATH;
+      else process.env.FAKE_CLAUDE_ARGS_PATH = oldArgsPath;
+
+      if (oldDelayedTranscriptPath === undefined) delete process.env.DELAYED_TRANSCRIPT_PATH;
+      else process.env.DELAYED_TRANSCRIPT_PATH = oldDelayedTranscriptPath;
+
+      if (oldDelayedSessionId === undefined) delete process.env.DELAYED_SESSION_ID;
+      else process.env.DELAYED_SESSION_ID = oldDelayedSessionId;
+
+      if (oldDelayedTranscriptDelayMs === undefined) {
+        delete process.env.DELAYED_TRANSCRIPT_DELAY_MS;
+      } else {
+        process.env.DELAYED_TRANSCRIPT_DELAY_MS = oldDelayedTranscriptDelayMs;
+      }
     }
   });
 
