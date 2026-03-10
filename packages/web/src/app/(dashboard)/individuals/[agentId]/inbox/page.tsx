@@ -457,9 +457,18 @@ export default function InboxPage() {
 
   const stats = data?.stats;
   const threads = data?.threads || [];
-  const groupThreads = data?.groupThreads || [];
   const flatMessages = data?.flatMessages || [];
   const pagination = data?.pagination;
+
+  // Apply status/type filters to group threads client-side (they're always fetched in full)
+  const groupThreads = (data?.groupThreads || []).filter((gt) => {
+    if (statusFilter === 'unread' && gt.unreadCount === 0) return false;
+    if (statusFilter === 'read' && gt.unreadCount > 0) return false;
+    // 'acknowledged' and 'completed' don't map to thread concepts — hide group threads
+    if (statusFilter === 'acknowledged' || statusFilter === 'completed') return false;
+    if (typeFilter && !gt.messages.some((m) => m.messageType === typeFilter)) return false;
+    return true;
+  });
 
   const threadGroupKey = (t: ThreadGroup) => `${t.threadKey}|${t.counterpart}`;
   const selectedThread = activeThread
