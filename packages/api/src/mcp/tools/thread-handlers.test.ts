@@ -498,10 +498,21 @@ describe('handleSendToInbox - thread routing', () => {
     // Should trigger lumen and aster (not wren — sender)
     expect(mockGateway.dispatchTrigger).toHaveBeenCalledTimes(2);
     expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
-      expect.objectContaining({ toAgentId: 'lumen', threadKey: 'spec:test' })
+      expect.objectContaining({
+        toAgentId: 'lumen',
+        threadKey: 'spec:test',
+        threadMessageId: 'tmsg-123',
+      })
     );
     expect(mockGateway.dispatchTrigger).toHaveBeenCalledWith(
-      expect.objectContaining({ toAgentId: 'aster', threadKey: 'spec:test' })
+      expect.objectContaining({
+        toAgentId: 'aster',
+        threadKey: 'spec:test',
+        threadMessageId: 'tmsg-123',
+      })
+    );
+    expect(mockGateway.dispatchTrigger).not.toHaveBeenCalledWith(
+      expect.objectContaining({ recipientUserId: 'user-123' })
     );
   });
 });

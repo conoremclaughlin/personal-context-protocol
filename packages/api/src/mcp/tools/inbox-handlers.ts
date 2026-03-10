@@ -259,8 +259,7 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
         const payload: AgentTriggerPayload = {
           fromAgentId: triggerSenderId,
           toAgentId,
-          // Thread messages have no agent_inbox row — pass userId directly for identity resolution
-          recipientUserId: resolved.user.id,
+          threadMessageId: threadMessage.id,
           triggerType: triggerType || 'message',
           summary:
             triggerSummary ||

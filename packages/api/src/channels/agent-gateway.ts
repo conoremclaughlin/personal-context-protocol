@@ -22,7 +22,11 @@ export interface AgentTriggerPayload {
   toAgentId: string;
   /** Optional inbox message ID that prompted this trigger (agent_inbox rows only) */
   inboxMessageId?: string;
-  /** Recipient user ID — when provided, skips the agent_inbox lookup for identity resolution */
+  /** Optional thread message ID that prompted this trigger (inbox_thread_messages rows) */
+  threadMessageId?: string;
+  /** Optional thread ID that prompted this trigger (inbox_threads rows) */
+  threadId?: string;
+  /** Recipient user ID — legacy/internal field; do not trust for identity resolution on public trigger routes */
   recipientUserId?: string;
   /** Trigger type for routing */
   triggerType: 'task_complete' | 'approval_needed' | 'message' | 'error' | 'custom';

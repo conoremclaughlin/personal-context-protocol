@@ -527,11 +527,7 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
     const authUser = getUserFromContext();
     const authUserId = authUser?.userId;
 
-    // Fast path: recipientUserId provided directly (thread-backed triggers).
-    // Skips agent_inbox lookup — thread messages have no agent_inbox row.
-    if (payload.recipientUserId) {
-      userId = payload.recipientUserId;
-    } else if (payload.inboxMessageId) {
+    if (payload.inboxMessageId) {
       const { data: inboxMsg, error: inboxError } = await dataComposer!
         .getClient()
         .from('agent_inbox')
@@ -563,6 +559,72 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
 
       userId = inboxMsg?.recipient_user_id;
       recipientIdentityId = inboxMsg?.recipient_identity_id || undefined;
+    } else if (payload.threadMessageId) {
+      // Thread message: resolve user_id via inbox_thread_messages → inbox_threads
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const supabase = dataComposer!.getClient() as any;
+      const { data: threadMsg, error: tmError } = await supabase
+        .from('inbox_thread_messages')
+        .select('thread_id')
+        .eq('id', payload.threadMessageId)
+        .single();
+      if (tmError) {
+        logger.error('[Trigger] Failed to look up thread message', {
+          threadMessageId: payload.threadMessageId,
+          error: tmError.message,
+        });
+      }
+      if (threadMsg?.thread_id) {
+        const { data: thread, error: threadError } = await supabase
+          .from('inbox_threads')
+          .select('user_id')
+          .eq('id', threadMsg.thread_id)
+          .single();
+        if (threadError) {
+          logger.error('[Trigger] Failed to look up thread from message', {
+            threadId: threadMsg.thread_id,
+            error: threadError.message,
+          });
+        }
+        const threadUserId = thread?.user_id as string | undefined;
+        if (threadUserId && authUserId && threadUserId !== authUserId) {
+          logger.warn('[Trigger] SECURITY: thread owner does not match authenticated user', {
+            threadMessageId: payload.threadMessageId,
+            threadUserId,
+            authUserId,
+            targetAgentId,
+            fromAgentId: payload.fromAgentId,
+          });
+          throw new Error('Trigger denied: thread does not belong to authenticated user');
+        }
+        userId = threadUserId;
+      }
+    } else if (payload.threadId) {
+      // Thread (add_thread_participant): resolve user_id directly from inbox_threads
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: thread, error: threadError } = await (dataComposer!.getClient() as any)
+        .from('inbox_threads')
+        .select('user_id')
+        .eq('id', payload.threadId)
+        .single();
+      if (threadError) {
+        logger.error('[Trigger] Failed to look up thread', {
+          threadId: payload.threadId,
+          error: threadError.message,
+        });
+      }
+      const threadUserId = thread?.user_id as string | undefined;
+      if (threadUserId && authUserId && threadUserId !== authUserId) {
+        logger.warn('[Trigger] SECURITY: thread owner does not match authenticated user', {
+          threadId: payload.threadId,
+          threadUserId,
+          authUserId,
+          targetAgentId,
+          fromAgentId: payload.fromAgentId,
+        });
+        throw new Error('Trigger denied: thread does not belong to authenticated user');
+      }
+      userId = threadUserId;
     }
 
     // Fall back to authenticated user from OAuth context (trigger_agent called directly)
@@ -743,7 +805,7 @@ When you complete a task_request, mark it as completed using update_inbox_messag
       if (!client) return;
 
       // 1. Restore inbox message to unread (only for agent_inbox rows — not thread messages)
-      if (payload.inboxMessageId && !payload.recipientUserId) {
+      if (payload.inboxMessageId) {
         const { error: restoreErr } = await client
           .from('agent_inbox')
           .update({ status: 'unread', read_at: null })
@@ -765,16 +827,39 @@ When you complete a task_request, mark it as completed using update_inbox_messag
       // 2. Notify sender agent (if there is one) — skip if no sender to avoid loops
       if (!payload.fromAgentId) return;
 
-      // Look up the userId from the original inbox message (needed for sender inbox insert).
-      // For thread-backed triggers, recipientUserId is already in the payload.
-      let recipientUserId: string | undefined = payload.recipientUserId;
-      if (!recipientUserId && payload.inboxMessageId) {
+      // Look up the userId from the original source row (needed for sender inbox insert).
+      let recipientUserId: string | undefined;
+      if (payload.inboxMessageId) {
         const { data: origMsg } = await client
           .from('agent_inbox')
           .select('recipient_user_id')
           .eq('id', payload.inboxMessageId)
           .single();
         recipientUserId = origMsg?.recipient_user_id;
+      } else if (payload.threadMessageId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: threadMsg } = await (client as any)
+          .from('inbox_thread_messages')
+          .select('thread_id')
+          .eq('id', payload.threadMessageId)
+          .single();
+        if (threadMsg?.thread_id) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { data: thread } = await (client as any)
+            .from('inbox_threads')
+            .select('user_id')
+            .eq('id', threadMsg.thread_id)
+            .single();
+          recipientUserId = thread?.user_id;
+        }
+      } else if (payload.threadId) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data: thread } = await (client as any)
+          .from('inbox_threads')
+          .select('user_id')
+          .eq('id', payload.threadId)
+          .single();
+        recipientUserId = thread?.user_id;
       }
 
       if (!recipientUserId) {
