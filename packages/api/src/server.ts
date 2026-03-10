@@ -527,7 +527,11 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
     const authUser = getUserFromContext();
     const authUserId = authUser?.userId;
 
-    if (payload.inboxMessageId) {
+    // Fast path: recipientUserId provided directly (thread-backed triggers).
+    // Skips agent_inbox lookup — thread messages have no agent_inbox row.
+    if (payload.recipientUserId) {
+      userId = payload.recipientUserId;
+    } else if (payload.inboxMessageId) {
       const { data: inboxMsg, error: inboxError } = await dataComposer!
         .getClient()
         .from('agent_inbox')
@@ -657,11 +661,14 @@ Type: ${payload.triggerType}`;
     if (payload.metadata && Object.keys(payload.metadata).length > 0) {
       triggerMessage += `\nContext:\n${JSON.stringify(payload.metadata, null, 2)}`;
     }
+    if (payload.threadKey) {
+      triggerMessage += `\n\nThread: ${payload.threadKey}`;
+    }
     triggerMessage += `
 
 ---
 IMPORTANT: This is a system trigger, NOT a user message on Telegram/WhatsApp.
-Check your inbox for the full message using get_inbox.
+${payload.threadKey ? `Fetch the thread using get_thread_messages(threadKey: "${payload.threadKey}"). Use reply_to_thread to respond.` : 'Check your inbox for the full message using get_inbox.'}
 If you need to message a user, use send_response with the appropriate channel and conversationId.
 When you complete a task_request, mark it as completed using update_inbox_message(messageId, status: "completed").`;
 
@@ -735,8 +742,8 @@ When you complete a task_request, mark it as completed using update_inbox_messag
       const client = dataComposer?.getClient();
       if (!client) return;
 
-      // 1. Restore inbox message to unread (only if it was read — don't touch other states)
-      if (payload.inboxMessageId) {
+      // 1. Restore inbox message to unread (only for agent_inbox rows — not thread messages)
+      if (payload.inboxMessageId && !payload.recipientUserId) {
         const { error: restoreErr } = await client
           .from('agent_inbox')
           .update({ status: 'unread', read_at: null })
@@ -758,9 +765,10 @@ When you complete a task_request, mark it as completed using update_inbox_messag
       // 2. Notify sender agent (if there is one) — skip if no sender to avoid loops
       if (!payload.fromAgentId) return;
 
-      // Look up the userId from the original inbox message (needed for sender inbox insert)
-      let recipientUserId: string | undefined;
-      if (payload.inboxMessageId) {
+      // Look up the userId from the original inbox message (needed for sender inbox insert).
+      // For thread-backed triggers, recipientUserId is already in the payload.
+      let recipientUserId: string | undefined = payload.recipientUserId;
+      if (!recipientUserId && payload.inboxMessageId) {
         const { data: origMsg } = await client
           .from('agent_inbox')
           .select('recipient_user_id')

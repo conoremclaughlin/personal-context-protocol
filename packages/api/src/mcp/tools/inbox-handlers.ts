@@ -187,8 +187,8 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       participants: allParticipants,
     });
 
-    // Ensure all recipients are participants (handles adding new participants to existing threads)
-    for (const agentId of allRecipients) {
+    // Ensure all participants are registered (recipients + sender for existing threads)
+    for (const agentId of allParticipants) {
       const { data: existing } = await threadTable(supabase, 'inbox_thread_participants')
         .select('agent_id')
         .eq('thread_id', thread.id)
@@ -259,7 +259,8 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
         const payload: AgentTriggerPayload = {
           fromAgentId: triggerSenderId,
           toAgentId,
-          inboxMessageId: threadMessage.id,
+          // Thread messages have no agent_inbox row — pass userId directly for identity resolution
+          recipientUserId: resolved.user.id,
           triggerType: triggerType || 'message',
           summary:
             triggerSummary ||

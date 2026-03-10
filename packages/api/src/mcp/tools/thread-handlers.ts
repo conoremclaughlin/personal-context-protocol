@@ -218,9 +218,9 @@ function dispatchTriggers(
   opts: {
     fromAgentId: string;
     threadKey: string;
-    messageId: string;
     summary: string;
     priority: string;
+    recipientUserId: string;
   }
 ): void {
   if (agentsToTrigger.length === 0) return;
@@ -230,7 +230,8 @@ function dispatchTriggers(
     const payload: AgentTriggerPayload = {
       fromAgentId: opts.fromAgentId,
       toAgentId,
-      inboxMessageId: opts.messageId,
+      // Thread messages have no agent_inbox row — pass userId directly for identity resolution
+      recipientUserId: opts.recipientUserId,
       triggerType: 'message',
       summary: opts.summary,
       priority: opts.priority as AgentTriggerPayload['priority'],
@@ -467,9 +468,9 @@ export async function handleReplyToThread(args: unknown, dataComposer: DataCompo
   dispatchTriggers(agentsToTrigger, {
     fromAgentId: senderAgentId,
     threadKey,
-    messageId: message.id,
     summary: `Reply in thread ${threadKey} from ${senderAgentId}`,
     priority,
+    recipientUserId: resolved.user.id,
   });
 
   return {
@@ -564,9 +565,9 @@ export async function handleAddThreadParticipant(args: unknown, dataComposer: Da
     dispatchTriggers([agentId], {
       fromAgentId: addedByAgentId || 'system',
       threadKey,
-      messageId: thread.id,
       summary: `You were added to thread ${threadKey}${reason ? `: ${reason}` : ''}`,
       priority: 'normal',
+      recipientUserId: resolved.user.id,
     });
   }
 

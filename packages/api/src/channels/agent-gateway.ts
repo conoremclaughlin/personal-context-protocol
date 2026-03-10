@@ -20,8 +20,10 @@ export interface AgentTriggerPayload {
   fromAgentId: string;
   /** Target agent to wake up (e.g., "myra") */
   toAgentId: string;
-  /** Optional inbox message ID that prompted this trigger */
+  /** Optional inbox message ID that prompted this trigger (agent_inbox rows only) */
   inboxMessageId?: string;
+  /** Recipient user ID — when provided, skips the agent_inbox lookup for identity resolution */
+  recipientUserId?: string;
   /** Trigger type for routing */
   triggerType: 'task_complete' | 'approval_needed' | 'message' | 'error' | 'custom';
   /** Short summary for logging/display */
