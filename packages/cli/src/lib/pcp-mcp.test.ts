@@ -135,4 +135,24 @@ describe('pcp-mcp callPcpTool', () => {
       'x-pcp-caller-profile': 'runtime',
     });
   });
+
+  it('reports fetch failures with PCP url and network diagnostics', async () => {
+    const fetchError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3999'), {
+        code: 'ECONNREFUSED',
+        address: '127.0.0.1',
+        port: 3999,
+      }),
+    });
+    const fetchSpy = vi.fn().mockRejectedValue(fetchError);
+    vi.stubGlobal('fetch', fetchSpy);
+
+    await expect(callPcpTool('list_sessions', { limit: 1 })).rejects.toThrow(
+      'PCP fetch failed for http://localhost:3999/mcp'
+    );
+    await expect(callPcpTool('list_sessions', { limit: 1 })).rejects.toThrow('ECONNREFUSED');
+    await expect(callPcpTool('list_sessions', { limit: 1 })).rejects.toThrow(
+      'Ensure PCP server is running and PCP_SERVER_URL is correct.'
+    );
+  });
 });
