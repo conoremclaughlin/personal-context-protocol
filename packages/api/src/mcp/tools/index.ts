@@ -3368,6 +3368,15 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.
 
+Recipient modes (provide exactly one):
+- recipientAgentId: Single recipient. Works with or without threadKey.
+- recipients[]: Multiple recipients. Requires threadKey. Creates a group thread automatically.
+
+Thread routing:
+When threadKey is provided, messages are stored in thread tables (inbox_thread_messages). All recipients are auto-added as thread participants — no need to call add_thread_participant separately. Late joiners see full thread history. Without threadKey, messages go to the simple agent_inbox.
+
+recipients[] is syntactic sugar: it creates the thread, adds all recipients as participants, sends the message, and triggers everyone — all in one call.
+
 Message types:
 - message: General communication
 - task_request: Request another agent to do work
@@ -3376,7 +3385,9 @@ Message types:
 - permission_grant: Grant or revoke tool permissions (include permissionGrant in metadata)
 
 Trigger behavior:
-All message types trigger the recipient by default. Most agents don't have heartbeats, so untriggered messages may sit unread for hours. Only set trigger=false if the message can genuinely wait 5+ hours.
+All message types trigger the recipient by default. For threads, all recipients are triggered on the initial send. For replies (via reply_to_thread), trigger rules depend on thread size — see reply_to_thread for details.
+
+Only set trigger=false if the message can genuinely wait 5+ hours.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: inboxToolDefinitions[0].schema,

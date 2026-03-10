@@ -68,7 +68,7 @@ const sendToInboxSchema = userIdentifierBaseSchema.extend({
     .string()
     .optional()
     .describe(
-      'Thread key for conversation continuity (e.g., "pr:32", "spec:cli-hooks"). Messages with the same threadKey are routed to the same session on the recipient side. See the process document for format guidelines.'
+      'Thread key for conversation continuity (e.g., "pr:32", "spec:cli-hooks"). When provided, messages are stored in thread tables and all participants see the full history. Without it, messages go to the simple agent_inbox. Format: <type>:<identifier>.'
     ),
   // Trigger options - automatically trigger the recipient after sending
   trigger: z
@@ -168,6 +168,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   const trigger = parsed.trigger ?? true;
 
   // ── Thread-first path: when threadKey is provided, route to thread tables ──
+  // Single-recipient with threadKey creates a 2-participant thread (spec invariant #5).
+  // recipients[] creates a multi-participant thread.
+  // Without threadKey, falls through to legacy agent_inbox path.
   if (threadKey) {
     const allRecipients = recipients || [recipientAgentId!];
     // Include sender as participant if they have an identity
@@ -363,7 +366,7 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       related_artifact_uri: relatedArtifactUri || null,
       metadata: enrichedMetadata as Json,
       expires_at: expiresAt || null,
-      thread_key: null,
+      thread_key: null, // threadKey messages route to thread tables above
     })
     .select()
     .single();
@@ -464,7 +467,7 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
                   'Actionable handoff is missing a routing anchor. Add one of: threadKey, recipientSessionId, recipientStudioId, or recipientStudioHint.',
               }
             : {}),
-          hint: 'Consider adding a threadKey (e.g., "pr:32", "spec:cli-hooks") so the recipient can resume the same session for follow-up messages on this topic.',
+          hint: 'Consider adding a threadKey (e.g., "pr:32", "spec:cli-hooks") to route this message to a group thread.',
         }),
       },
     ],
@@ -581,6 +584,80 @@ export async function handleGetInbox(args: unknown, dataComposer: DataComposer) 
   }
   const { count: unreadCount } = await unreadQuery;
 
+  // Get threads with unread counts (if agent has any thread participation)
+  let threadsWithUnread: Array<{
+    threadKey: string;
+    title: string | null;
+    unreadCount: number;
+    lastMessageAt: string | null;
+  }> = [];
+
+  if (agentId) {
+    try {
+      // Find threads this agent participates in
+      const { data: participantRows } = await threadTable(supabase, 'inbox_thread_participants')
+        .select('thread_id')
+        .eq('agent_id', agentId);
+
+      const threadIds = (participantRows || []).map((p: { thread_id: string }) => p.thread_id);
+
+      if (threadIds.length > 0) {
+        // Get open threads
+        const { data: threads } = await threadTable(supabase, 'inbox_threads')
+          .select('id, thread_key, title, user_id, updated_at')
+          .eq('user_id', resolved.user.id)
+          .eq('status', 'open')
+          .in('id', threadIds)
+          .order('updated_at', { ascending: false })
+          .limit(10);
+
+        if (threads?.length) {
+          threadsWithUnread = await Promise.all(
+            threads.map(
+              async (t: {
+                id: string;
+                thread_key: string;
+                title: string | null;
+                updated_at: string;
+              }) => {
+                // Get last read timestamp
+                const { data: readStatus } = await threadTable(supabase, 'inbox_thread_read_status')
+                  .select('last_read_at')
+                  .eq('thread_id', t.id)
+                  .eq('agent_id', agentId)
+                  .maybeSingle();
+
+                // Count unread messages
+                let countQuery = threadTable(supabase, 'inbox_thread_messages')
+                  .select('*', { count: 'exact', head: true })
+                  .eq('thread_id', t.id);
+
+                if (readStatus?.last_read_at) {
+                  countQuery = countQuery.gt('created_at', readStatus.last_read_at);
+                }
+
+                const { count } = await countQuery;
+
+                return {
+                  threadKey: t.thread_key,
+                  title: t.title,
+                  unreadCount: count || 0,
+                  lastMessageAt: t.updated_at,
+                };
+              }
+            )
+          );
+
+          // Only include threads that actually have unread messages
+          threadsWithUnread = threadsWithUnread.filter((t) => t.unreadCount > 0);
+        }
+      }
+    } catch (err) {
+      // Thread tables may not exist yet (migration not applied) — graceful fallback
+      logger.debug('Failed to fetch thread unread counts (tables may not exist)', { err });
+    }
+  }
+
   return {
     content: [
       {
@@ -606,6 +683,13 @@ export async function handleGetInbox(args: unknown, dataComposer: DataComposer) 
             createdAt: m.created_at,
             readAt: m.read_at,
           })),
+          ...(threadsWithUnread.length > 0
+            ? {
+                threadsWithUnread,
+                threadHint:
+                  'You have unread thread messages. Use get_thread_messages(threadKey) to read them, or list_threads() for an overview.',
+              }
+            : {}),
         }),
       },
     ],
