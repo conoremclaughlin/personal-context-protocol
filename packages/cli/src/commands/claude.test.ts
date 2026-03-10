@@ -1077,6 +1077,45 @@ describe('getClaudeLocalSessionsForProject previews', () => {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it('uses size-first fallback labels when no conversational preview is available', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-preview-fallback-'));
+    const tempHome = join(tempRoot, 'home');
+    const projectPath = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectDirName = projectPath.replace(/[\\/]/g, '-');
+    const projectDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectDir, { recursive: true });
+
+    const sessionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    writeFileSync(
+      join(projectDir, `${sessionId}.jsonl`),
+      `${JSON.stringify({
+        type: 'progress',
+        sessionId,
+        timestamp: '2026-03-10T08:00:00.000Z',
+      })}\n`
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getClaudeLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toMatch(/ · \(session\)$/);
+      expect(sessions[0]?.latestPrompt).not.toContain('(session) ·');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('extractLatestPreviewFromClaudeSessionJsonl', () => {
@@ -1296,6 +1335,47 @@ describe('getCodexLocalSessionsForProject', () => {
       rmSync(tempHome, { recursive: true, force: true });
     }
   });
+
+  it('uses size-first fallback labels when rollout transcripts have no previewable messages', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'codex-jsonl-fallback-label-'));
+    const projectPath = join(tempHome, 'repo');
+    mkdirSync(projectPath, { recursive: true });
+
+    const codexSessionsDir = join(tempHome, '.codex', 'sessions', '2026', '03', '02');
+    mkdirSync(codexSessionsDir, { recursive: true });
+
+    const sessionId = '019a23ac-e563-7d53-8bf0-5a948546bf88';
+    writeFileSync(
+      join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${sessionId}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-03-02T11:44:41.000Z',
+        type: 'session_meta',
+        payload: {
+          id: sessionId,
+          cwd: projectPath,
+          timestamp: '2026-03-02T11:44:41.000Z',
+          originator: 'codex_cli_rs',
+        },
+      })}\n`
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getCodexLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toMatch(/ · \(session\)$/);
+      expect(sessions[0]?.latestPrompt).not.toContain('(session) ·');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('getGeminiLocalSessionsForProject', () => {
@@ -1336,6 +1416,46 @@ describe('getGeminiLocalSessionsForProject', () => {
       const sessions = getGeminiLocalSessionsForProject(projectPath, 10);
       expect(sessions).toHaveLength(1);
       expect(sessions[0]?.latestPrompt).toBe('assistant: Here is the real reply');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('uses size-first fallback labels when gemini chat files have no meaningful preview', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'gemini-preview-fallback-'));
+    const projectPath = join(tempHome, 'repo');
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectKey = projectPath.replace(/[\\/]/g, '-');
+    const chatsDir = join(tempHome, '.gemini', 'tmp', projectKey, 'chats');
+    const historyDir = join(tempHome, '.gemini', 'history', projectKey);
+    mkdirSync(chatsDir, { recursive: true });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(join(historyDir, '.project_root'), projectPath);
+
+    writeFileSync(
+      join(chatsDir, 'session-2.json'),
+      JSON.stringify({
+        sessionId: 'gemini-session-2',
+        startTime: '2026-03-10T08:15:00.000Z',
+        lastUpdated: '2026-03-10T08:15:03.000Z',
+        messages: [{ type: 'assistant', content: '   ' }],
+      })
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getGeminiLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toMatch(/ · \(session\)$/);
+      expect(sessions[0]?.latestPrompt).not.toContain('(session) ·');
     } finally {
       if (originalHome === undefined) {
         delete process.env.HOME;

@@ -1428,8 +1428,7 @@ export function getClaudeLocalSessionsForProject(
         }
 
         if (!latestPrompt) {
-          const size = formatFileSize(stats.size);
-          if (size) latestPrompt = `(session) · ${size}`;
+          latestPrompt = withSessionFileSize(undefined, stats.size);
         }
 
         results.push({
@@ -1672,8 +1671,7 @@ LIMIT 200;
     }
 
     if (!latestPrompt) {
-      const size = formatFileSize(fileSizeBytes);
-      if (size) latestPrompt = `(session) · ${size}`;
+      latestPrompt = withSessionFileSize(undefined, fileSizeBytes);
     }
 
     sessions.push({
@@ -1799,8 +1797,7 @@ function getCodexLocalSessionsFromJsonl(
         transcriptPath: sessionFile.path,
       };
       if (!matched.latestPrompt) {
-        const size = formatFileSize(matched.fileSizeBytes);
-        if (size) matched.latestPrompt = `(session) · ${size}`;
+        matched.latestPrompt = withSessionFileSize(undefined, matched.fileSizeBytes);
       }
       break;
     }
@@ -1930,11 +1927,7 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
             })()
           : undefined;
       const latestPromptWithFallback =
-        latestPrompt ||
-        (() => {
-          const size = formatFileSize(fileSizeBytes);
-          return size ? `(session) · ${size}` : undefined;
-        })();
+        latestPrompt || withSessionFileSize(undefined, fileSizeBytes);
 
       sessions.push({
         backend: 'gemini',
