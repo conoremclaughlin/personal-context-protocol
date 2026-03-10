@@ -6,6 +6,7 @@ import {
   extractClaudeHistorySessionsForProject,
   extractBackendSessionOverrideId,
   extractLatestPreviewFromClaudeSessionJsonl,
+  extractLatestPreviewFromPcpTranscriptJsonl,
   extractSessionFromStartSessionResponse,
   filterUntrackedLocalBackendSessions,
   filterPcpSessionsForContext,
@@ -14,6 +15,7 @@ import {
   getClaudeLocalSessionsForProject,
   getKnownClaudeSessionIds,
   getCodexLocalSessionsForProject,
+  getGeminiLocalSessionsForProject,
   hasBackendSessionOverride,
   renderSessionCandidatesTable,
   resolveCapturedBackendSessionIdFromRuntime,
@@ -1158,6 +1160,32 @@ describe('extractLatestPreviewFromClaudeSessionJsonl', () => {
   });
 });
 
+describe('extractLatestPreviewFromPcpTranscriptJsonl', () => {
+  it('ignores local-command wrapper chatter and keeps last meaningful conversational text', () => {
+    const preview = extractLatestPreviewFromPcpTranscriptJsonl(
+      [
+        JSON.stringify({
+          type: 'assistant',
+          ts: '2026-03-10T08:10:00.000Z',
+          content: 'Real assistant reply',
+        }),
+        JSON.stringify({
+          type: 'user',
+          ts: '2026-03-10T08:10:01.000Z',
+          content:
+            '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+        }),
+      ].join('\n')
+    );
+
+    expect(preview).toEqual({
+      role: 'assistant',
+      content: 'Real assistant reply',
+      ts: '2026-03-10T08:10:00.000Z',
+    });
+  });
+});
+
 describe('getCodexLocalSessionsForProject', () => {
   it('falls back to codex session jsonl files when sqlite db is unavailable', () => {
     const tempHome = mkdtempSync(join(tmpdir(), 'codex-jsonl-fallback-'));
@@ -1181,6 +1209,20 @@ describe('getCodexLocalSessionsForProject', () => {
             cwd: projectPath,
             timestamp: '2026-03-02T11:44:41.000Z',
             originator: 'codex_cli_rs',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-03-02T11:44:46.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'output_text',
+                text: '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+              },
+            ],
           },
         }),
         JSON.stringify({
@@ -1238,6 +1280,55 @@ describe('getCodexLocalSessionsForProject', () => {
       ]);
     } finally {
       process.env.HOME = originalHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('getGeminiLocalSessionsForProject', () => {
+  it('skips noisy auth/tool chatter and falls back to latest meaningful message', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'gemini-preview-filter-'));
+    const projectPath = join(tempHome, 'repo');
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectKey = projectPath.replace(/[\\/]/g, '-');
+    const chatsDir = join(tempHome, '.gemini', 'tmp', projectKey, 'chats');
+    const historyDir = join(tempHome, '.gemini', 'history', projectKey);
+    mkdirSync(chatsDir, { recursive: true });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(join(historyDir, '.project_root'), projectPath);
+
+    writeFileSync(
+      join(chatsDir, 'session-1.json'),
+      JSON.stringify({
+        sessionId: 'gemini-session-1',
+        startTime: '2026-03-10T08:15:00.000Z',
+        lastUpdated: '2026-03-10T08:15:03.000Z',
+        messages: [
+          { type: 'user', content: 'Hello Gemini' },
+          { type: 'assistant', content: 'Here is the real reply' },
+          {
+            type: 'assistant',
+            content:
+              '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+          },
+        ],
+      })
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getGeminiLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toBe('assistant: Here is the real reply');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
       rmSync(tempHome, { recursive: true, force: true });
     }
   });

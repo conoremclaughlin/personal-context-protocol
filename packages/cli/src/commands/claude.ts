@@ -707,6 +707,33 @@ function normalizePreviewLeafText(value: string): string | undefined {
   return compact;
 }
 
+function extractPreviewText(value: unknown): string | undefined {
+  if (typeof value === 'string') {
+    return normalizePreviewLeafText(value);
+  }
+  if (Array.isArray(value)) {
+    const chunks: string[] = [];
+    for (const item of value) {
+      const chunk = extractPreviewText(item);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const textLikeKeys = ['text', 'message', 'content', 'output', 'input'];
+    const chunks: string[] = [];
+    for (const key of textLikeKeys) {
+      const chunk = extractPreviewText(record[key]);
+      if (chunk) chunks.push(chunk);
+    }
+    if (chunks.length === 0) return undefined;
+    return chunks.join(' ');
+  }
+  return undefined;
+}
+
 function extractClaudePreviewText(value: unknown): string | undefined {
   if (typeof value === 'string') {
     return normalizePreviewLeafText(value);
@@ -832,7 +859,7 @@ function extractLatestPreviewFromCodexRolloutJsonl(
 
       const role = roleFromUnknown(payload.role);
       if (!role || role === 'inbox') continue;
-      const content = extractMessageText(payload.content);
+      const content = extractPreviewText(payload.content);
       if (!content) continue;
       latest = { role, content, ts };
       continue;
@@ -845,10 +872,10 @@ function extractLatestPreviewFromCodexRolloutJsonl(
           : undefined;
       if (!payload) continue;
       if (payload.type === 'user_message') {
-        const content = extractMessageText(payload.message);
+        const content = extractPreviewText(payload.message);
         if (content) latest = { role: 'user', content, ts };
       } else if (payload.type === 'agent_message') {
-        const content = extractMessageText(payload.message);
+        const content = extractPreviewText(payload.message);
         if (content) latest = { role: 'assistant', content, ts };
       }
     }
@@ -856,7 +883,7 @@ function extractLatestPreviewFromCodexRolloutJsonl(
   return latest;
 }
 
-function extractLatestPreviewFromPcpTranscriptJsonl(
+export function extractLatestPreviewFromPcpTranscriptJsonl(
   jsonl: string
 ): SessionPreviewSummary | undefined {
   const events = parseJsonl(jsonl);
@@ -864,7 +891,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
   for (const event of events) {
     const type = typeof event.type === 'string' ? event.type : '';
     if (type === 'user') {
-      const content = extractMessageText(event.content);
+      const content = extractPreviewText(event.content);
       if (!content) continue;
       latest = {
         role: 'user',
@@ -874,7 +901,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
       continue;
     }
     if (type === 'assistant') {
-      const content = extractMessageText(event.content);
+      const content = extractPreviewText(event.content);
       if (!content) continue;
       latest = {
         role: 'assistant',
@@ -884,7 +911,7 @@ function extractLatestPreviewFromPcpTranscriptJsonl(
       continue;
     }
     if (type === 'inbox') {
-      const content = extractMessageText(event.rendered) || extractMessageText(event.content);
+      const content = extractPreviewText(event.rendered) || extractPreviewText(event.content);
       if (!content) continue;
       latest = {
         role: 'inbox',
@@ -1882,9 +1909,10 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
       })();
 
       const firstUserMessage = (parsed.messages || []).find((message) => message.type === 'user');
-      const latestMessage = [...(parsed.messages || [])]
-        .reverse()
-        .find((message) => Boolean(message?.content?.trim()));
+      const latestMessage = [...(parsed.messages || [])].reverse().find((message) => {
+        if (typeof message?.content !== 'string') return false;
+        return Boolean(extractPreviewText(message.content));
+      });
       const firstPrompt =
         parsed.summary ||
         (typeof firstUserMessage?.content === 'string'
@@ -1892,10 +1920,14 @@ function getGeminiSessionsForProjectKey(projectKey: string): BackendLocalSession
           : undefined);
       const latestPrompt =
         latestMessage && typeof latestMessage.content === 'string'
-          ? formatSessionPreviewText({
-              role: latestMessage.type === 'user' ? 'user' : 'assistant',
-              content: latestMessage.content,
-            })
+          ? (() => {
+              const content = extractPreviewText(latestMessage.content);
+              if (!content) return undefined;
+              return formatSessionPreviewText({
+                role: latestMessage.type === 'user' ? 'user' : 'assistant',
+                content,
+              });
+            })()
           : undefined;
       const latestPromptWithFallback =
         latestPrompt ||
