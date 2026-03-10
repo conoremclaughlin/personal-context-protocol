@@ -1921,7 +1921,9 @@ export function getBackendLocalSessionsForProject(
 }
 
 function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
+  const serverUrl = getPcpServerUrl();
   console.log(chalk.yellow(`\n⚠ PCP session service unavailable (${reason}).`));
+  console.log(chalk.yellow(`  PCP_SERVER_URL: ${serverUrl}`));
   const mcpPath = join(cwd, '.mcp.json');
   if (!existsSync(mcpPath)) {
     console.log(chalk.yellow('  .mcp.json not found in this repo.'));
@@ -1938,6 +1940,7 @@ function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
     }
   }
   console.log(chalk.dim('  To reconnect PCP features:'));
+  console.log(chalk.dim(`    curl -sS ${serverUrl.replace(/\/+$/, '')}/health`));
   console.log(chalk.dim('    sb auth login'));
   console.log(chalk.dim('    sb init'));
   console.log(chalk.dim('    sb status'));
