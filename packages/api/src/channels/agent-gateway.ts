@@ -269,7 +269,7 @@ export function createAgentGatewayRoutes(app: {
     };
 
     try {
-      const payload = request.body;
+      const { recipientUserId: _stripped, ...payload } = request.body;
 
       // Validate required fields
       if (!payload.fromAgentId || !payload.toAgentId || !payload.triggerType) {
