@@ -315,9 +315,11 @@ function ThreadRow({
           </Badge>
           <span className="text-xs text-gray-400">&middot;</span>
           <span className="text-xs font-medium text-gray-700">{thread.counterpart}</span>
-          <span className="text-xs text-gray-500">{thread.messageCount} msgs</span>
+          <span className="text-xs text-gray-500">
+            {thread.messageCount} {thread.messageCount === 1 ? 'message' : 'messages'}
+          </span>
           {thread.unreadCount > 0 && (
-            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-semibold text-white">
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] leading-none font-semibold text-white">
               {thread.unreadCount}
             </span>
           )}
@@ -677,9 +679,11 @@ export default function InboxPage() {
                           <span className="text-xs font-medium text-gray-700">
                             {gt.participants.join(', ')}
                           </span>
-                          <span className="text-xs text-gray-500">{gt.messageCount} msgs</span>
+                          <span className="text-xs text-gray-500">
+                            {gt.messageCount} {gt.messageCount === 1 ? 'message' : 'messages'}
+                          </span>
                           {gt.unreadCount > 0 && (
-                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1.5 text-[10px] font-semibold text-white">
+                            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-blue-500 px-1 text-[10px] leading-none font-semibold text-white">
                               {gt.unreadCount}
                             </span>
                           )}
