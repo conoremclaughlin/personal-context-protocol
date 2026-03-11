@@ -175,32 +175,31 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   let senderSessionId: string | null = reqCtx?.sessionId || sessCtx?.sessionId || null;
   const senderStudioId = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
 
-  if (!senderSessionId && senderAgentId) {
+  // When the caller's session ID wasn't provided via request context headers
+  // (x-pcp-session-id), fall back to threadKey-scoped lookup only. The
+  // previous getActiveSession() fallback (most-recent session) was
+  // non-deterministic and could route replies to the wrong session.
+  if (!senderSessionId && senderAgentId && threadKey) {
     try {
-      const activeSession = threadKey
-        ? ((await dataComposer.repositories.memory.getActiveSessionByThreadKey(
-            resolved.user.id,
-            senderAgentId,
-            threadKey,
-            senderStudioId
-          )) ??
-          (await dataComposer.repositories.memory.getActiveSession(
-            resolved.user.id,
-            senderAgentId,
-            senderStudioId
-          )))
-        : await dataComposer.repositories.memory.getActiveSession(
-            resolved.user.id,
-            senderAgentId,
-            senderStudioId
-          );
-      if (activeSession) {
-        senderSessionId = activeSession.id;
+      const threadSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
+        resolved.user.id,
+        senderAgentId,
+        threadKey,
+        senderStudioId
+      );
+      if (threadSession) {
+        senderSessionId = threadSession.id;
+        logger.debug('Resolved sender session from threadKey match (no header)', {
+          senderAgentId,
+          threadKey,
+          senderSessionId,
+        });
       }
     } catch (err) {
-      logger.warn('Failed to resolve sender session from active sessions', {
+      logger.warn('Failed to resolve sender session from threadKey', {
         error: err instanceof Error ? err.message : String(err),
         senderAgentId,
+        threadKey,
       });
     }
   }

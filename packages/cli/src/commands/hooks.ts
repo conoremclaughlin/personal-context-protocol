@@ -1752,7 +1752,8 @@ async function onSessionStartHandler(options?: { backend?: string }): Promise<vo
       if (role) createArgs.roleTemplate = role;
 
       const created = await callPcpTool('create_studio', createArgs);
-      const ws = created.workspace as Record<string, unknown> | undefined;
+      // create_studio returns { studio: { id, ... } }, not { workspace: ... }
+      const ws = (created.studio || created.workspace) as Record<string, unknown> | undefined;
       if (ws && typeof ws.id === 'string') {
         studioId = ws.id;
         // Persist studioId back to identity.json for future sessions
