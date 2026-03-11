@@ -85,7 +85,7 @@ export function extractInboxMessages(
     (Array.isArray(result.data) ? result.data : undefined) ||
     [];
 
-  return candidate
+  const legacyMessages = candidate
     .map((entry): InboxMessage | undefined => {
       const row = entry as Record<string, unknown>;
       const id = row.id;
@@ -109,6 +109,37 @@ export function extractInboxMessages(
       };
     })
     .filter((msg): msg is InboxMessage => Boolean(msg));
+
+  // Also extract thread preview messages from threadsWithUnread
+  const threadMessages: InboxMessage[] = [];
+  const threads = Array.isArray(result.threadsWithUnread) ? result.threadsWithUnread : [];
+  for (const thread of threads) {
+    const t = thread as Record<string, unknown>;
+    const threadKey = typeof t.threadKey === 'string' ? t.threadKey : undefined;
+    const participants = Array.isArray(t.participants) ? (t.participants as string[]) : [];
+    const previews = Array.isArray(t.previewMessages) ? t.previewMessages : [];
+    for (const preview of previews) {
+      const p = preview as Record<string, unknown>;
+      const sender = typeof p.senderAgentId === 'string' ? p.senderAgentId : undefined;
+      const content = typeof p.content === 'string' ? p.content : undefined;
+      const createdAt = typeof p.createdAt === 'string' ? p.createdAt : undefined;
+      const msgType = typeof p.messageType === 'string' ? p.messageType : undefined;
+      if (!createdAt) continue;
+      // Derive recipient: the other participant(s) in the thread
+      const recipients = participants.filter((id) => id !== sender);
+      threadMessages.push({
+        id: `thread-${threadKey}-${createdAt}`,
+        content,
+        messageType: msgType,
+        senderAgentId: sender,
+        recipientAgentId: recipients[0],
+        threadKey,
+        createdAt,
+      });
+    }
+  }
+
+  return [...legacyMessages, ...threadMessages];
 }
 
 export function inboxMessageToFeedEvent(msg: InboxMessage, timezone?: string): FeedEvent {
@@ -200,6 +231,12 @@ function parseSessions(result: Record<string, unknown>): Session[] {
 }
 
 export function extractUnreadCount(result: Record<string, unknown>): number {
+  // Prefer totalUnreadCount (includes thread unreads) over legacy unreadCount
+  const total = result.totalUnreadCount;
+  if (typeof total === 'number' && Number.isFinite(total)) {
+    return total;
+  }
+
   const explicit = result.unreadCount;
   if (typeof explicit === 'number' && Number.isFinite(explicit)) {
     return explicit;
@@ -556,10 +593,24 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
       const msgs = extractInboxMessages(inboxResult);
       if (msgs.length > 0 || inboxResult.allAgents === true) {
         inboxFetched = true;
+        // Count legacy inbox unreads per agent
         for (const m of msgs) {
           const agent = m.recipientAgentId || 'unknown';
           if (m.status === 'unread') {
             unreadByAgent[agent] = (unreadByAgent[agent] || 0) + 1;
+          }
+        }
+        // Count thread unreads per participant from threadsWithUnread
+        const threads = Array.isArray(inboxResult.threadsWithUnread)
+          ? (inboxResult.threadsWithUnread as Array<Record<string, unknown>>)
+          : [];
+        for (const t of threads) {
+          const participants = Array.isArray(t.participants) ? (t.participants as string[]) : [];
+          const threadUnread = typeof t.unreadCount === 'number' ? t.unreadCount : 0;
+          if (threadUnread > 0) {
+            for (const p of participants) {
+              unreadByAgent[p] = (unreadByAgent[p] || 0) + threadUnread;
+            }
           }
         }
         for (const agentId of Array.from(allAgents)) {
