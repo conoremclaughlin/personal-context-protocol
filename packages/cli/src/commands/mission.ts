@@ -575,76 +575,56 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
     allAgents.add(options.agent);
   }
 
-  const unreadByAgent: Record<string, number> = {};
   const allInboxMessages: InboxMessage[] = [];
   const fetchAllInbox = options.feed || options.watch;
 
-  // Try single query for all agents (requires server support for optional agentId).
-  // Falls back to per-agent loop if the server rejects the agentId-less request.
-  let inboxFetched = false;
-  if (!options.agent) {
-    try {
-      const inboxResult = (await pcp.callTool('get_inbox', {
-        email: config.email,
-        status: fetchAllInbox ? 'all' : 'unread',
-        limit: fetchAllInbox ? Number.parseInt(options.feedLimit || '40', 10) : 200,
-      })) as Record<string, unknown>;
+  // Use get_agent_summaries for accurate per-agent unread counts.
+  // This computes thread unreads with proper per-agent last_read_at (no inflation).
+  const unreadByAgent: Record<string, number> = {};
+  try {
+    const summariesResult = (await pcp.callTool('get_agent_summaries', {
+      email: config.email,
+      ...(options.agent ? { agentIds: [options.agent] } : {}),
+    })) as Record<string, unknown>;
 
-      const msgs = extractInboxMessages(inboxResult);
-      if (msgs.length > 0 || inboxResult.allAgents === true) {
-        inboxFetched = true;
-        // Count legacy inbox unreads per agent
-        for (const m of msgs) {
-          const agent = m.recipientAgentId || 'unknown';
-          if (m.status === 'unread') {
-            unreadByAgent[agent] = (unreadByAgent[agent] || 0) + 1;
-          }
-        }
-        // Count thread unreads per participant from threadsWithUnread
-        const threads = Array.isArray(inboxResult.threadsWithUnread)
-          ? (inboxResult.threadsWithUnread as Array<Record<string, unknown>>)
-          : [];
-        for (const t of threads) {
-          const participants = Array.isArray(t.participants) ? (t.participants as string[]) : [];
-          const threadUnread = typeof t.unreadCount === 'number' ? t.unreadCount : 0;
-          if (threadUnread > 0) {
-            for (const p of participants) {
-              unreadByAgent[p] = (unreadByAgent[p] || 0) + threadUnread;
-            }
-          }
-        }
-        for (const agentId of Array.from(allAgents)) {
-          if (!(agentId in unreadByAgent)) unreadByAgent[agentId] = 0;
-        }
-        if (fetchAllInbox) {
-          allInboxMessages.push(...msgs);
-        }
-      }
-    } catch {
-      // Server doesn't support agentId-less query yet — fall through to per-agent
+    const agents = Array.isArray(summariesResult.agents) ? summariesResult.agents : [];
+    for (const a of agents) {
+      const agent = a as Record<string, unknown>;
+      const agentId = typeof agent.agentId === 'string' ? agent.agentId : 'unknown';
+      const totalUnread = typeof agent.totalUnread === 'number' ? agent.totalUnread : 0;
+      unreadByAgent[agentId] = totalUnread;
+      allAgents.add(agentId);
     }
-  }
-
-  // Per-agent fallback (or when --agent filter is specified)
-  if (!inboxFetched) {
+  } catch {
+    // Fallback: server doesn't support get_agent_summaries yet — derive from get_inbox
     const agentsToQuery = options.agent ? [options.agent] : Array.from(allAgents);
     for (const agentId of agentsToQuery) {
       try {
         const inboxResult = (await pcp.callTool('get_inbox', {
           email: config.email,
           agentId,
-          status: fetchAllInbox ? 'all' : 'unread',
-          limit: fetchAllInbox ? Number.parseInt(options.feedLimit || '40', 10) : 200,
+          status: 'unread',
+          limit: 200,
         })) as Record<string, unknown>;
         unreadByAgent[agentId] = extractUnreadCount(inboxResult);
-        if (fetchAllInbox) {
-          const msgs = extractInboxMessages(inboxResult);
-          for (const m of msgs) m.recipientAgentId = agentId;
-          allInboxMessages.push(...msgs);
-        }
       } catch {
         unreadByAgent[agentId] = 0;
       }
+    }
+  }
+
+  // Fetch inbox messages for the feed (all agents, all statuses)
+  if (fetchAllInbox) {
+    try {
+      const inboxResult = (await pcp.callTool('get_inbox', {
+        email: config.email,
+        ...(options.agent ? { agentId: options.agent } : {}),
+        status: 'all',
+        limit: Number.parseInt(options.feedLimit || '40', 10),
+      })) as Record<string, unknown>;
+      allInboxMessages.push(...extractInboxMessages(inboxResult));
+    } catch {
+      // Feed messages are best-effort
     }
   }
 
