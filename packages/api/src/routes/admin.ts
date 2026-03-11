@@ -556,6 +556,7 @@ type TranscriptReadResult = {
   events: unknown[];
   lineCount: number;
   byteCount: number;
+  rawContent: string;
 };
 
 function getAncestorDirs(start: string, maxDepth = 6): string[] {
@@ -732,6 +733,7 @@ async function readTranscriptFromDescriptor(
       events,
       lineCount: events.length,
       byteCount,
+      rawContent: fileContent,
     };
   }
 
@@ -744,6 +746,7 @@ async function readTranscriptFromDescriptor(
     events,
     lineCount: lines.length,
     byteCount,
+    rawContent: fileContent,
   };
 }
 
@@ -5302,6 +5305,7 @@ router.post('/sessions/:id/sync-transcript', async (req: Request, res: Response)
       format: descriptor.format,
       sourcePath: descriptor.path,
       syncedAt,
+      rawContent: parsed.rawContent,
       events: parsed.events,
     };
 
