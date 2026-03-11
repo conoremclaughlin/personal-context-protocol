@@ -341,6 +341,30 @@ describe('adminAuthMiddleware', () => {
       expect(res._status).toBe(401);
       expect(next).not.toHaveBeenCalled();
     });
+
+    it('should accept mcp_access tokens only for transcript sync route', async () => {
+      mockVerifyPcpAccessToken
+        .mockReturnValueOnce(null) // pcp_admin check
+        .mockReturnValueOnce({
+          type: 'mcp_access',
+          sub: 'user-mcp',
+          email: 'mcp@example.com',
+          scope: 'mcp:tools',
+        });
+
+      const req = createMockReq({
+        method: 'POST',
+        path: '/sessions/session-123/sync-transcript',
+      });
+      const res = createMockRes();
+      const next = vi.fn();
+
+      await middleware(req, res, next);
+
+      expect(next).toHaveBeenCalled();
+      expect(mockGetUser).not.toHaveBeenCalled();
+      expect((req as any).pcpUserId).toBe('user-mcp');
+    });
   });
 
   // =========================================================================

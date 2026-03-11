@@ -15,7 +15,8 @@ import chalk from 'chalk';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { callPcpTool } from '../lib/pcp-mcp.js';
+import { callPcpTool, getPcpServerUrl } from '../lib/pcp-mcp.js';
+import { getValidAccessToken } from '../auth/tokens.js';
 
 interface PcpConfig {
   userId?: string;
@@ -47,6 +48,19 @@ export interface Session {
 
 export interface SessionListResult {
   sessions: Session[];
+}
+
+interface SyncTranscriptResult {
+  ok: boolean;
+  sessionId: string;
+  backend: string | null;
+  backendSessionId: string | null;
+  format: string;
+  sourcePath: string;
+  resolvedBy: string;
+  lineCount: number;
+  byteCount: number;
+  syncedAt: string;
 }
 
 // ============================================================================
@@ -308,6 +322,77 @@ async function endCommand(sessionId?: string): Promise<void> {
   }
 }
 
+async function syncTranscriptCommand(
+  sessionId: string,
+  options: {
+    backend?: string;
+    backendSessionId?: string;
+    workspaceId?: string;
+    json?: boolean;
+  }
+): Promise<void> {
+  const serverUrl = getPcpServerUrl().replace(/\/+$/, '');
+  const token = await getValidAccessToken(serverUrl);
+  if (!token) {
+    console.error(chalk.red('Not authenticated. Run: sb auth login'));
+    process.exit(1);
+  }
+
+  const payload: Record<string, unknown> = {};
+  if (options.backend) payload.backend = options.backend;
+  if (options.backendSessionId) payload.backendSessionId = options.backendSessionId;
+
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${token}`,
+    'Content-Type': 'application/json',
+  };
+  if (options.workspaceId) {
+    headers['x-pcp-workspace-id'] = options.workspaceId;
+  }
+
+  const response = await fetch(
+    `${serverUrl}/api/admin/sessions/${encodeURIComponent(sessionId)}/sync-transcript`,
+    {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    }
+  );
+
+  const responseText = await response.text();
+  let parsed: Record<string, unknown> = {};
+  if (responseText.trim()) {
+    try {
+      parsed = JSON.parse(responseText) as Record<string, unknown>;
+    } catch {
+      parsed = { error: responseText };
+    }
+  }
+
+  if (!response.ok) {
+    const errorMessage =
+      (typeof parsed.error === 'string' && parsed.error) ||
+      `HTTP ${response.status} ${response.statusText}`;
+    console.error(chalk.red(`Failed to sync transcript: ${errorMessage}`));
+    process.exit(1);
+  }
+
+  const result = parsed as unknown as SyncTranscriptResult;
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  console.log(chalk.green(`Synced transcript for session ${sessionId.substring(0, 8)}.`));
+  console.log(chalk.dim(`  Backend:     ${result.backend || 'unknown'}`));
+  console.log(chalk.dim(`  Session:     ${result.backendSessionId || 'n/a'}`));
+  console.log(chalk.dim(`  Format:      ${result.format}`));
+  console.log(chalk.dim(`  Lines:       ${result.lineCount.toLocaleString()}`));
+  console.log(chalk.dim(`  Bytes:       ${result.byteCount.toLocaleString()}`));
+  console.log(chalk.dim(`  Source path: ${result.sourcePath}`));
+  console.log(chalk.dim(`  Synced at:   ${formatDate(new Date(result.syncedAt))}`));
+}
+
 // ============================================================================
 // Utilities
 // ============================================================================
@@ -352,4 +437,13 @@ export function registerSessionCommands(program: Command): void {
   session.command('resume <id>').description('Resume a session').action(resumeCommand);
 
   session.command('end [id]').description('End a session').action(endCommand);
+
+  session
+    .command('sync <id>')
+    .description('Sync full backend transcript to cloud archive')
+    .option('--backend <backend>', 'Override backend resolver (claude|codex|gemini|pcp)')
+    .option('--backend-session-id <id>', 'Override backend session id used for transcript lookup')
+    .option('--workspace-id <id>', 'Workspace scope override for the admin API call')
+    .option('--json', 'Print raw JSON response')
+    .action(syncTranscriptCommand);
 }

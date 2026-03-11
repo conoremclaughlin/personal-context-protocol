@@ -122,6 +122,7 @@ function createQueryChain(resolvedData: unknown[] | null = [], error: unknown = 
   const chain: Record<string, any> = {};
   chain.select = vi.fn(() => chain);
   chain.insert = vi.fn(() => chain);
+  chain.upsert = vi.fn(() => chain);
   chain.update = vi.fn(() => chain);
   chain.delete = vi.fn(() => chain);
   chain.eq = vi.fn(() => chain);
@@ -625,6 +626,48 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       expect(json.sessions.map((s: any) => s.id)).toEqual(['session-identity', 'session-legacy']);
       expect(json.sessions[0].agentName).toBe('Wren');
       expect(json.stats.total).toBe(2);
+    });
+  });
+
+  // =========================================================================
+  // POST /sessions/:id/sync-transcript — manual transcript archive sync
+  // =========================================================================
+
+  describe('POST /sessions/:id/sync-transcript', () => {
+    it('returns 404 when session identity is outside active workspace', async () => {
+      const handler = findRouteHandler('post', '/sessions/:id/sync-transcript');
+      expect(handler).not.toBeNull();
+
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'agent_identities') {
+          return createQueryChain([{ id: 'identity-1', agent_id: 'wren' }]);
+        }
+
+        if (table === 'sessions') {
+          return createQueryChain([
+            {
+              id: 'session-other-workspace',
+              identity_id: 'identity-other',
+              agent_id: 'wren',
+              backend: 'claude',
+              backend_session_id: 'backend-2',
+              claude_session_id: null,
+            },
+          ]);
+        }
+
+        return createQueryChain([]);
+      });
+
+      const req = createAuthenticatedReq({
+        params: { id: 'session-other-workspace' },
+        body: {},
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(404);
+      expect(res._json).toEqual({ error: 'Session not found' });
     });
   });
 
