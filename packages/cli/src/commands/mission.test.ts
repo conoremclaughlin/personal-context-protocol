@@ -79,7 +79,11 @@ describe('summarizeMissionRows', () => {
 });
 
 describe('extractUnreadCount', () => {
-  it('reads unreadCount when present', () => {
+  it('prefers totalUnreadCount over unreadCount', () => {
+    expect(extractUnreadCount({ totalUnreadCount: 12, unreadCount: 5 })).toBe(12);
+  });
+
+  it('falls back to unreadCount when totalUnreadCount not present', () => {
     expect(extractUnreadCount({ unreadCount: 5 })).toBe(5);
   });
 
@@ -89,6 +93,10 @@ describe('extractUnreadCount', () => {
 
   it('falls back to nested data.unreadCount', () => {
     expect(extractUnreadCount({ data: { unreadCount: 9 } })).toBe(9);
+  });
+
+  it('ignores non-finite totalUnreadCount', () => {
+    expect(extractUnreadCount({ totalUnreadCount: NaN, unreadCount: 3 })).toBe(3);
   });
 });
 
@@ -588,6 +596,141 @@ describe('extractInboxMessages', () => {
       messages: [{ subject: 'no id' }, { id: 'valid', subject: 'has id' }],
     };
     expect(extractInboxMessages(result)).toHaveLength(1);
+  });
+
+  it('extracts thread preview messages from threadsWithUnread', () => {
+    const result = {
+      messages: [],
+      threadsWithUnread: [
+        {
+          threadKey: 'pr:210',
+          title: 'Group threads PR review',
+          participants: ['wren', 'lumen'],
+          unreadCount: 2,
+          previewMessages: [
+            {
+              senderAgentId: 'lumen',
+              content: 'Looking at it now.',
+              messageType: 'message',
+              createdAt: '2026-03-10T02:00:00Z',
+            },
+            {
+              senderAgentId: 'wren',
+              content: 'Thanks for the review!',
+              messageType: 'message',
+              createdAt: '2026-03-10T03:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]).toMatchObject({
+      senderAgentId: 'lumen',
+      recipientAgentId: 'wren',
+      content: 'Looking at it now.',
+      threadKey: 'pr:210',
+      createdAt: '2026-03-10T02:00:00Z',
+    });
+    expect(msgs[1]).toMatchObject({
+      senderAgentId: 'wren',
+      recipientAgentId: 'lumen',
+      content: 'Thanks for the review!',
+      threadKey: 'pr:210',
+    });
+  });
+
+  it('merges legacy messages and thread preview messages', () => {
+    const result = {
+      messages: [
+        {
+          id: 'msg-1',
+          subject: 'Direct message',
+          senderAgentId: 'myra',
+          recipientAgentId: 'wren',
+          createdAt: '2026-03-10T01:00:00Z',
+        },
+      ],
+      threadsWithUnread: [
+        {
+          threadKey: 'spec:routing',
+          participants: ['wren', 'lumen'],
+          unreadCount: 1,
+          previewMessages: [
+            {
+              senderAgentId: 'lumen',
+              content: 'Thread message',
+              messageType: 'task_request',
+              createdAt: '2026-03-10T02:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].id).toBe('msg-1');
+    expect(msgs[1].threadKey).toBe('spec:routing');
+    expect(msgs[1].messageType).toBe('task_request');
+  });
+
+  it('handles missing threadsWithUnread gracefully', () => {
+    const result = {
+      messages: [{ id: 'msg-1', subject: 'Solo' }],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(1);
+  });
+
+  it('skips thread preview messages without createdAt', () => {
+    const result = {
+      messages: [],
+      threadsWithUnread: [
+        {
+          threadKey: 'pr:99',
+          participants: ['wren', 'aster'],
+          unreadCount: 1,
+          previewMessages: [
+            { senderAgentId: 'aster', content: 'No timestamp' },
+            {
+              senderAgentId: 'aster',
+              content: 'Has timestamp',
+              createdAt: '2026-03-10T05:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].content).toBe('Has timestamp');
+  });
+
+  it('derives recipient from thread participants (excludes sender)', () => {
+    const result = {
+      messages: [],
+      threadsWithUnread: [
+        {
+          threadKey: 'thread:test',
+          participants: ['myra', 'benson', 'wren'],
+          unreadCount: 1,
+          previewMessages: [
+            {
+              senderAgentId: 'myra',
+              content: 'Group message',
+              messageType: 'message',
+              createdAt: '2026-03-10T06:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(1);
+    // recipientAgentId should be the first non-sender participant
+    expect(msgs[0].recipientAgentId).toBe('benson');
+    expect(msgs[0].senderAgentId).toBe('myra');
   });
 });
 
