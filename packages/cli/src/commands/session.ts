@@ -15,6 +15,7 @@ import chalk from 'chalk';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { readIdentityJson } from '../backends/identity.js';
 import { callPcpTool, getPcpServerUrl } from '../lib/pcp-mcp.js';
 import { getValidAccessToken } from '../auth/tokens.js';
 
@@ -77,6 +78,16 @@ function getPcpConfig(): PcpConfig | null {
     }
   }
   return null;
+}
+
+export function resolveSyncWorkspaceId(
+  explicitWorkspaceId?: string,
+  cwd = process.cwd()
+): string | undefined {
+  if (explicitWorkspaceId?.trim()) return explicitWorkspaceId.trim();
+
+  const identity = readIdentityJson(cwd);
+  return identity?.workspaceId || identity?.studioId || undefined;
 }
 
 // ============================================================================
@@ -346,8 +357,9 @@ async function syncTranscriptCommand(
     Authorization: `Bearer ${token}`,
     'Content-Type': 'application/json',
   };
-  if (options.workspaceId) {
-    headers['x-pcp-workspace-id'] = options.workspaceId;
+  const workspaceId = resolveSyncWorkspaceId(options.workspaceId);
+  if (workspaceId) {
+    headers['x-pcp-workspace-id'] = workspaceId;
   }
 
   const response = await fetch(
