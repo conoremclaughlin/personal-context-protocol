@@ -427,15 +427,16 @@ function normalizeSessionBackend(backendName: string): string {
 }
 
 function resolveActivePcpSessionId(cwd: string): string | undefined {
+  // 1. PCP_SESSION_ID env var — canonical, set by all CLI backends at spawn
+  const envSessionId = process.env.PCP_SESSION_ID?.trim();
+  if (envSessionId) return envSessionId;
+
   const detectedBackend = detectBackend(cwd);
   const sessionBackend = normalizeSessionBackend(detectedBackend.name);
   const { studioId } = getIdentitySessionContext(cwd);
   const agentId = resolveAgentId() || 'unknown';
 
-  // Check PCP_RUNTIME_LINK_ID first — it's set by both the sb launch path and
-  // the server-side runner (claude-runner/codex-runner) before spawning. This
-  // ensures server-triggered sessions are linked to the correct PCP session
-  // rather than the last sb-launched session recorded in sessions.json.
+  // 2. PCP_RUNTIME_LINK_ID → sessions.json lookup (server-spawned sessions)
   const runtimeLinkId = process.env.PCP_RUNTIME_LINK_ID;
   if (runtimeLinkId) {
     const linked = findRuntimeSessionByLinkId(cwd, runtimeLinkId, {
@@ -446,11 +447,9 @@ function resolveActivePcpSessionId(cwd: string): string | undefined {
     if (linked?.pcpSessionId) return linked.pcpSessionId;
   }
 
+  // 3. sessions.json current pointer (CLI-launched sessions)
   const current = getCurrentRuntimeSession(cwd, sessionBackend);
   if (current?.pcpSessionId) return current.pcpSessionId;
-
-  const fromLegacyFile = readRuntimeFile(cwd, 'pcp-session-id');
-  if (fromLegacyFile) return fromLegacyFile;
 
   return undefined;
 }
@@ -562,9 +561,6 @@ async function reconcileBackendSignal(
     runtimeLinkId: runtimeLinkId || null,
     stdinKeys: Object.keys(stdin),
   });
-  if (runtimeLinkId) {
-    writeRuntimeFile(cwd, 'runtime-link-id', runtimeLinkId);
-  }
   const { studioId, identityId } = getIdentitySessionContext(cwd);
 
   let pcpSessionId = options?.initialPcpSessionId || resolveActivePcpSessionId(cwd);
@@ -645,10 +641,6 @@ async function reconcileBackendSignal(
     }
   }
 
-  if (backendSessionId) {
-    writeRuntimeFile(cwd, 'session-id', backendSessionId);
-  }
-
   if (!pcpSessionId) {
     sbDebugLog('hooks', 'reconcile_result', {
       sessionBackend,
@@ -664,7 +656,6 @@ async function reconcileBackendSignal(
     };
   }
 
-  writeRuntimeFile(cwd, 'pcp-session-id', pcpSessionId);
   upsertRuntimeSession(cwd, {
     pcpSessionId,
     backend: sessionBackend,
