@@ -135,11 +135,12 @@ interface McpJsonConfig {
 
 /**
  * Build a merged MCP config that includes both the project's .mcp.json
- * and any skill-provided MCP servers. Returns the path to a temp file
- * and a cleanup function.
+ * and any skill-provided MCP servers. Also injects PCP session headers
+ * when the PCP_SESSION_ID env var is set (propagates session identity
+ * through to the MCP server via HTTP headers).
  *
- * If no skill MCP servers are found, returns the original .mcp.json path
- * (no temp file needed).
+ * Returns the path to a temp file and a cleanup function.
+ * When no modifications are needed, returns the original .mcp.json path.
  */
 export function buildMergedMcpConfig(cwd: string): {
   mcpConfigPath: string | null;
@@ -148,23 +149,34 @@ export function buildMergedMcpConfig(cwd: string): {
   const projectMcpPath = join(cwd, '.mcp.json');
   const skillServers = discoverSkillMcpServers(cwd);
 
-  // No skill MCP servers — just use the project config as-is
-  if (skillServers.length === 0) {
-    return {
-      mcpConfigPath: existsSync(projectMcpPath) ? projectMcpPath : null,
-      cleanup: () => {},
-    };
-  }
-
-  // Load existing project config
+  // Load existing project config (if any)
   let config: McpJsonConfig = { mcpServers: {} };
+  let hasProjectConfig = false;
   if (existsSync(projectMcpPath)) {
+    hasProjectConfig = true;
     try {
       const parsed = JSON.parse(readFileSync(projectMcpPath, 'utf-8'));
       config = { mcpServers: {}, ...parsed };
     } catch {
       config = { mcpServers: {} };
     }
+  }
+
+  let modified = false;
+
+  // Inject PCP session header when PCP_SESSION_ID env var is present.
+  // Uses ${VAR} interpolation — Claude Code resolves env vars in headers at runtime.
+  // Only inject if not already present (respect user-configured headers).
+  if (
+    process.env.PCP_SESSION_ID &&
+    config.mcpServers.pcp &&
+    !config.mcpServers.pcp.headers?.['x-pcp-session-id']
+  ) {
+    config.mcpServers.pcp.headers = {
+      ...config.mcpServers.pcp.headers,
+      'x-pcp-session-id': '${PCP_SESSION_ID}',
+    };
+    modified = true;
   }
 
   // Merge skill-provided servers (don't override existing ones)
@@ -176,7 +188,16 @@ export function buildMergedMcpConfig(cwd: string): {
         args: server.args,
         ...(server.env ? { env: server.env } : {}),
       };
+      modified = true;
     }
+  }
+
+  // No modifications needed — return original path
+  if (!modified) {
+    return {
+      mcpConfigPath: hasProjectConfig ? projectMcpPath : null,
+      cleanup: () => {},
+    };
   }
 
   // Write merged config to temp file
