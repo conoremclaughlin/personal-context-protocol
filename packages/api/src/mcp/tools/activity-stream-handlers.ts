@@ -123,6 +123,12 @@ export const getActivitySchema = z.object({
   platformChatId: z.string().optional().describe('Filter by platform chat'),
   correlationId: z.string().uuid().optional().describe('Filter by correlation ID'),
   parentId: z.string().uuid().optional().describe('Filter by parent activity'),
+  threadKey: z
+    .string()
+    .optional()
+    .describe(
+      'Filter by threadKey in payload (e.g., "pr:204"). Matches activities whose payload.threadKey equals this value.'
+    ),
   since: z.string().datetime().optional().describe('Activities after this time (ISO 8601)'),
   until: z.string().datetime().optional().describe('Activities before this time (ISO 8601)'),
   limit: z.number().min(1).max(100).optional().describe('Max results (default: 50)'),
@@ -295,6 +301,7 @@ export async function handleGetActivity(args: unknown, dataComposer: DataCompose
     platformChatId: params.platformChatId,
     correlationId: params.correlationId,
     parentId: params.parentId,
+    threadKey: params.threadKey,
     since: params.since ? new Date(params.since) : undefined,
     until: params.until ? new Date(params.until) : undefined,
     limit: params.limit,
