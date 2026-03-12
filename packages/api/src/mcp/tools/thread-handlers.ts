@@ -15,6 +15,7 @@ import { getEffectiveAgentId } from '../../auth/enforce-identity';
 import { logger } from '../../utils/logger';
 import type { Json } from '../../data/supabase/types';
 import { getAgentGateway, type AgentTriggerPayload } from '../../channels/agent-gateway.js';
+import { getRequestContext, getSessionContext } from '../../utils/request-context';
 
 // The thread tables are new and not yet in generated Supabase types.
 // Use type-safe wrappers that cast the table name for PostgREST queries.
@@ -416,6 +417,28 @@ export async function handleReplyToThread(args: unknown, dataComposer: DataCompo
     };
   }
 
+  // Enrich metadata with sender session context (mirrors handleSendToInbox)
+  const reqCtx = getRequestContext();
+  const sessCtx = getSessionContext();
+  const senderSessionId = reqCtx?.sessionId || sessCtx?.sessionId || null;
+  const senderStudioId = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
+
+  const rawMeta =
+    metadata && typeof metadata === 'object' ? (metadata as Record<string, unknown>) : {};
+  const existingPcpMeta =
+    rawMeta.pcp && typeof rawMeta.pcp === 'object' ? (rawMeta.pcp as Record<string, unknown>) : {};
+  const enrichedMetadata = {
+    ...rawMeta,
+    pcp: {
+      ...existingPcpMeta,
+      sender: {
+        agentId: senderAgentId,
+        sessionId: senderSessionId,
+        studioId: senderStudioId,
+      },
+    },
+  };
+
   // Insert message
   const { data: message, error } = await threadTable(supabase, 'inbox_thread_messages')
     .insert({
@@ -424,7 +447,7 @@ export async function handleReplyToThread(args: unknown, dataComposer: DataCompo
       content,
       message_type: messageType,
       priority,
-      metadata: (metadata || {}) as Json,
+      metadata: enrichedMetadata as Json,
     })
     .select()
     .single();

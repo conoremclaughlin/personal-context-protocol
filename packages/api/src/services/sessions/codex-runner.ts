@@ -22,6 +22,7 @@ import type {
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
+import { buildSessionEnv } from '@personal-context/shared';
 
 /** Write runtime hint files so the on-session-start hook finds the right PCP session. */
 function writeRuntimeSessionHint(
@@ -220,7 +221,11 @@ export class CodexRunner implements IClaudeRunner {
           HOME: process.env.HOME,
           PATH: buildSpawnPath(codexBin),
           ...(config.pcpAccessToken ? { PCP_ACCESS_TOKEN: config.pcpAccessToken } : {}),
-          ...(config.pcpSessionId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
+          ...buildSessionEnv({
+            pcpSessionId: config.pcpSessionId,
+            runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
+            studioId: config.studioId,
+          }),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

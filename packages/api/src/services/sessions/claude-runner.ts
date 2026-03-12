@@ -21,6 +21,7 @@ import type {
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
+import { injectSessionHeaders, buildSessionEnv } from '@personal-context/shared';
 
 /**
  * Write a minimal runtime session hint so the on-session-start hook can find
@@ -258,6 +259,25 @@ export class ClaudeRunner implements IClaudeRunner {
       );
     }
 
+    // Inject PCP session headers into MCP config so the spawned agent's
+    // MCP calls carry session identity back to the PCP server.
+    const mcpInjection =
+      config.mcpConfigPath && config.pcpSessionId
+        ? injectSessionHeaders({
+            mcpConfigPath: config.mcpConfigPath,
+            pcpSessionId: config.pcpSessionId,
+            studioId: config.studioId,
+          })
+        : null;
+
+    // If headers were injected, patch the --mcp-config arg to point to the temp file
+    if (mcpInjection?.modified) {
+      const mcpIdx = args.indexOf('--mcp-config');
+      if (mcpIdx !== -1 && args[mcpIdx + 1]) {
+        args[mcpIdx + 1] = mcpInjection.mcpConfigPath;
+      }
+    }
+
     return new Promise((resolve, reject) => {
       // Strip CLAUDECODE to prevent "nested session" detection when PCP is
       // launched from inside a Claude Code session (e.g., via PM2).
@@ -269,9 +289,13 @@ export class ClaudeRunner implements IClaudeRunner {
           // Ensure Claude Code uses correct paths
           HOME: process.env.HOME,
           PATH: buildSpawnPath(claudeBin),
-          // Pass runtime link ID so the on-session-start hook can find this
-          // PCP session in the runtime hint files we wrote above.
-          ...(config.pcpSessionId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
+          // Session env vars: PCP_SESSION_ID for ${VAR} interpolation in
+          // .mcp.json headers, PCP_RUNTIME_LINK_ID for hook hint matching.
+          ...buildSessionEnv({
+            pcpSessionId: config.pcpSessionId,
+            runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
+            studioId: config.studioId,
+          }),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -407,6 +431,7 @@ export class ClaudeRunner implements IClaudeRunner {
       proc.on('close', (code) => {
         clearTimeout(timeout);
         clearTimeout(idleTimer);
+        mcpInjection?.cleanup();
         if (settled) return; // Already resolved by timeout
         settled = true;
 

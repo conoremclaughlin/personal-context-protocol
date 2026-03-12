@@ -27,6 +27,7 @@ import type {
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
+import { buildSessionEnv } from '@personal-context/shared';
 
 /** Maximum time (ms) to wait for a Gemini CLI subprocess before killing it.
  *  Override with GEMINI_PROCESS_TIMEOUT_MS env var. */
@@ -149,6 +150,10 @@ export class GeminiRunner implements IClaudeRunner {
           HOME: process.env.HOME,
           PATH: buildSpawnPath(geminiBin),
           ...(config.pcpAccessToken ? { PCP_ACCESS_TOKEN: config.pcpAccessToken } : {}),
+          ...buildSessionEnv({
+            pcpSessionId: config.pcpSessionId,
+            studioId: config.studioId,
+          }),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

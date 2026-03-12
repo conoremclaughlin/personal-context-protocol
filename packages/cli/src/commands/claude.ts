@@ -3379,6 +3379,7 @@ export async function runClaude(
     passthroughArgs,
     ...(startupContextBlock ? { startupContextBlock } : {}),
     ...sessionContext,
+    ...(studioId ? { studioId } : {}),
     ...(options.dangerous ? { dangerous: true } : {}),
   });
 
@@ -3602,6 +3603,7 @@ export async function runClaudeInteractive(
       ...sessionContext,
       ...(attemptBackendSessionId ? { backendSessionId: attemptBackendSessionId } : {}),
       ...(attemptBackendSessionSeedId ? { backendSessionSeedId: attemptBackendSessionSeedId } : {}),
+      ...(studioId ? { studioId } : {}),
       ...(options.dangerous ? { dangerous: true } : {}),
     });
 

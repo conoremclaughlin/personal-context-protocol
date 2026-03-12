@@ -72,6 +72,7 @@ export class CodexAdapter implements BackendAdapter {
       env: {
         AGENT_ID: config.agentId,
         ...(config.pcpSessionId ? { PCP_SESSION_ID: config.pcpSessionId } : {}),
+        ...(config.studioId ? { PCP_STUDIO_ID: config.studioId } : {}),
       },
       cleanup,
     };

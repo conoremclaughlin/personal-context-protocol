@@ -232,9 +232,10 @@ export async function callPcpTool(
       ? args.agentId.trim().toLowerCase()
       : null;
 
-  // Propagate PCP session ID so the server can resolve studio scope and
+  // Propagate PCP session/studio IDs so the server can resolve studio scope and
   // attribute tool calls to the correct session context.
   const pcpSessionId = process.env.PCP_SESSION_ID?.trim() || undefined;
+  const pcpStudioId = process.env.PCP_STUDIO_ID?.trim() || undefined;
 
   const baseHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -244,6 +245,7 @@ export async function callPcpTool(
     // Today, effective agent identity is still sourced from JWT claims.
     ...(delegatedAgentId ? { 'x-pcp-agent-id': delegatedAgentId } : {}),
     ...(pcpSessionId ? { 'x-pcp-session-id': pcpSessionId } : {}),
+    ...(pcpStudioId ? { 'x-pcp-studio-id': pcpStudioId } : {}),
   };
 
   const callOnce = async (token: string | null): Promise<Response> => {

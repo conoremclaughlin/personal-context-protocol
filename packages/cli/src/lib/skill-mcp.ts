@@ -164,19 +164,24 @@ export function buildMergedMcpConfig(cwd: string): {
 
   let modified = false;
 
-  // Inject PCP session header when PCP_SESSION_ID env var is present.
+  // Inject PCP session/studio headers when env vars are present.
   // Uses ${VAR} interpolation — Claude Code resolves env vars in headers at runtime.
   // Only inject if not already present (respect user-configured headers).
-  if (
-    process.env.PCP_SESSION_ID &&
-    config.mcpServers.pcp &&
-    !config.mcpServers.pcp.headers?.['x-pcp-session-id']
-  ) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
-      'x-pcp-session-id': '${PCP_SESSION_ID}',
-    };
-    modified = true;
+  if (config.mcpServers.pcp) {
+    if (process.env.PCP_SESSION_ID && !config.mcpServers.pcp.headers?.['x-pcp-session-id']) {
+      config.mcpServers.pcp.headers = {
+        ...config.mcpServers.pcp.headers,
+        'x-pcp-session-id': '${PCP_SESSION_ID}',
+      };
+      modified = true;
+    }
+    if (process.env.PCP_STUDIO_ID && !config.mcpServers.pcp.headers?.['x-pcp-studio-id']) {
+      config.mcpServers.pcp.headers = {
+        ...config.mcpServers.pcp.headers,
+        'x-pcp-studio-id': '${PCP_STUDIO_ID}',
+      };
+      modified = true;
+    }
   }
 
   // Merge skill-provided servers (don't override existing ones)
