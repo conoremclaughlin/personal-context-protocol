@@ -296,6 +296,32 @@ mcp:
     }
   });
 
+  it('injects header via explicit options even without env var', () => {
+    // Simulates the CLI passing pcpSessionId directly (before setting spawn env)
+    delete process.env.PCP_SESSION_ID;
+    writeFileSync(
+      join(tmpDir, '.mcp.json'),
+      JSON.stringify({
+        mcpServers: {
+          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+        },
+      })
+    );
+
+    const { mcpConfigPath, cleanup } = buildMergedMcpConfig(tmpDir, {
+      pcpSessionId: 'explicit-session-id',
+      studioId: 'explicit-studio-id',
+    });
+    try {
+      expect(mcpConfigPath).not.toBe(join(tmpDir, '.mcp.json'));
+      const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
+      expect(merged.mcpServers.pcp.headers['x-pcp-session-id']).toBe('${PCP_SESSION_ID}');
+      expect(merged.mcpServers.pcp.headers['x-pcp-studio-id']).toBe('${PCP_STUDIO_ID}');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('does not inject header when no PCP server entry exists', () => {
     process.env.PCP_SESSION_ID = 'abc-123';
     writeFileSync(

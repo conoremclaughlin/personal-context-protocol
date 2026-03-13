@@ -149,7 +149,10 @@ interface McpJsonConfig {
  * Returns the path to a temp file and a cleanup function.
  * When no modifications are needed, returns the original .mcp.json path.
  */
-export function buildMergedMcpConfig(cwd: string): {
+export function buildMergedMcpConfig(
+  cwd: string,
+  options?: { pcpSessionId?: string; studioId?: string }
+): {
   mcpConfigPath: string | null;
   cleanup: () => void;
 } {
@@ -158,14 +161,19 @@ export function buildMergedMcpConfig(cwd: string): {
 
   // ── Layer 1: Session header injection (shared logic) ──
   // Delegates to the same injectSessionHeaders used by server runners.
+  // Prefer explicit options over process.env — the CLI knows the session ID
+  // before it's set in the spawn env.
   const cleanups: Array<() => void> = [];
   let effectivePath = hasProjectConfig ? projectMcpPath : null;
 
-  if (effectivePath && process.env.PCP_SESSION_ID) {
+  const sessionId = options?.pcpSessionId || process.env.PCP_SESSION_ID;
+  const studioId = options?.studioId || process.env.PCP_STUDIO_ID;
+
+  if (effectivePath && sessionId) {
     const injection = injectSessionHeaders({
       mcpConfigPath: effectivePath,
-      pcpSessionId: process.env.PCP_SESSION_ID,
-      studioId: process.env.PCP_STUDIO_ID,
+      pcpSessionId: sessionId,
+      studioId,
     });
     if (injection.modified) {
       effectivePath = injection.mcpConfigPath;
