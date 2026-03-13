@@ -382,6 +382,125 @@ describe('Session Identity Chain — HTTP Integration', () => {
     // (both studios belong to the test user, so either would work)
   });
 
+  // ── Codex env_http_headers simulation ──
+  // Codex injects headers via `-c mcp_servers.pcp.env_http_headers.<header>="ENV_VAR"`.
+  // This test verifies the server correctly processes those headers on MCP calls,
+  // proving the full chain: env var → Codex → HTTP header → PCP server → request context.
+
+  it('should process session headers as Codex would inject them via env_http_headers', async () => {
+    const studioId = await createTestStudio('codex-env-headers');
+    const sessionId = await createTestSession(studioId);
+    const threadKey = `test:codex-env-headers-${Date.now()}`;
+    createdThreadKeys.push(threadKey);
+
+    // Simulate what Codex does: env_http_headers resolve env vars to header values.
+    // From the server's perspective, these are just regular HTTP headers.
+    const { result, status } = await callTool(
+      'send_to_inbox',
+      {
+        userId: INTEGRATION_TEST_USER_ID,
+        recipientAgentId: 'echo',
+        senderAgentId: INTEGRATION_TEST_AGENT_ID,
+        threadKey,
+        content: 'Codex env_http_headers integration test',
+        messageType: 'message',
+        trigger: false,
+      },
+      {
+        'x-pcp-session-id': sessionId,
+        'x-pcp-studio-id': studioId,
+      }
+    );
+
+    expect(status).toBe(200);
+
+    // Verify the message was stored with correct sender metadata
+    await new Promise((r) => setTimeout(r, 200));
+
+    const { data: thread } = await dataComposer
+      .getClient()
+      .from('inbox_threads' as never)
+      .select('id')
+      .eq('thread_key', threadKey)
+      .eq('user_id', INTEGRATION_TEST_USER_ID)
+      .maybeSingle();
+
+    expect(thread).not.toBeNull();
+
+    const { data: messages } = await dataComposer
+      .getClient()
+      .from('inbox_thread_messages' as never)
+      .select('*')
+      .eq('thread_id', (thread as { id: string }).id)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    expect(messages).not.toBeNull();
+    expect((messages as Array<{ metadata: unknown }>).length).toBeGreaterThan(0);
+
+    const msg = (messages as Array<{ metadata: Record<string, unknown> }>)[0];
+    const pcp = msg.metadata.pcp as Record<string, unknown>;
+    const sender = pcp?.sender as Record<string, unknown>;
+
+    // Prove the full chain: HTTP headers → request context → sender metadata
+    expect(sender).toBeDefined();
+    expect(sender.agentId).toBe(INTEGRATION_TEST_AGENT_ID);
+    expect(sender.sessionId).toBe(sessionId);
+    expect(sender.studioId).toBe(studioId);
+  });
+
+  it('should derive studioId from session for Codex when only session header is sent', async () => {
+    const studioId = await createTestStudio('codex-session-only');
+    const sessionId = await createTestSession(studioId);
+    const threadKey = `test:codex-session-only-${Date.now()}`;
+    createdThreadKeys.push(threadKey);
+
+    // Codex might not always have PCP_STUDIO_ID set. When only x-pcp-session-id
+    // is present, the server should derive studioId from the session record.
+    const { status } = await callTool(
+      'send_to_inbox',
+      {
+        userId: INTEGRATION_TEST_USER_ID,
+        recipientAgentId: 'echo',
+        senderAgentId: INTEGRATION_TEST_AGENT_ID,
+        threadKey,
+        content: 'Codex session-only header test',
+        messageType: 'message',
+        trigger: false,
+      },
+      { 'x-pcp-session-id': sessionId }
+      // No x-pcp-studio-id — server should derive from session
+    );
+
+    expect(status).toBe(200);
+    await new Promise((r) => setTimeout(r, 200));
+
+    const { data: thread } = await dataComposer
+      .getClient()
+      .from('inbox_threads' as never)
+      .select('id')
+      .eq('thread_key', threadKey)
+      .eq('user_id', INTEGRATION_TEST_USER_ID)
+      .maybeSingle();
+
+    expect(thread).not.toBeNull();
+
+    const { data: messages } = await dataComposer
+      .getClient()
+      .from('inbox_thread_messages' as never)
+      .select('*')
+      .eq('thread_id', (thread as { id: string }).id)
+      .limit(1);
+
+    const msg = (messages as Array<{ metadata: Record<string, unknown> }>)[0];
+    const sender = (msg.metadata.pcp as Record<string, unknown>)?.sender as Record<string, unknown>;
+
+    expect(sender).toBeDefined();
+    expect(sender.sessionId).toBe(sessionId);
+    // studioId should be derived from the session's studio_id
+    expect(sender.studioId).toBe(studioId);
+  });
+
   // ── Health check ──
 
   it('should return healthy status', async () => {
