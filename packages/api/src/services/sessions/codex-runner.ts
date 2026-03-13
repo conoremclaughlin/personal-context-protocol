@@ -115,6 +115,11 @@ export class CodexRunner implements IClaudeRunner {
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
+    // PCP session headers — Codex resolves env var names to values at runtime
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-agent-id="AGENT_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-session-id="PCP_SESSION_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-studio-id="PCP_STUDIO_ID"');
+
     if (config.model) {
       args.push('-m', config.model);
     }
@@ -162,6 +167,7 @@ export class CodexRunner implements IClaudeRunner {
           ...cleanEnv,
           HOME: process.env.HOME,
           PATH: buildSpawnPath(codexBin),
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
           ...(config.pcpAccessToken ? { PCP_ACCESS_TOKEN: config.pcpAccessToken } : {}),
           ...buildSessionEnv({
             pcpSessionId: config.pcpSessionId,
