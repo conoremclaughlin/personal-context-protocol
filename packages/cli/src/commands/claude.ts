@@ -547,7 +547,7 @@ async function resolveCodexStartupContextBlock(options: {
       { timeoutMs: 5000, callerProfile: 'runtime' }
     );
 
-    const { studioId: ctxStudioId, studioName: ctxStudioName } = getIdentityContextFromIdentityJson(
+    const { studioId: ctxStudioId, studioName: ctxStudioName } = await resolveStudioId(
       process.cwd()
     );
     const startupContextBlock = buildInjectedStartupContext(bootstrap, {
@@ -607,6 +607,35 @@ function getIdentityContextFromIdentityJson(cwd = process.cwd()): {
   } catch {
     return {};
   }
+}
+
+/**
+ * Resolve studioId from identity.json, falling back to a PCP API lookup
+ * by worktree path if the UUID isn't stored locally.
+ */
+async function resolveStudioId(cwd: string): Promise<{
+  studioId?: string;
+  identityId?: string;
+  studioName?: string;
+}> {
+  const local = getIdentityContextFromIdentityJson(cwd);
+  if (local.studioId) return local;
+
+  // No UUID in identity.json — try resolving via PCP API by worktree path
+  try {
+    const result = await callPcpTool<{ studio?: { id?: string } }>(
+      'get_studio',
+      { path: cwd },
+      { timeoutMs: 3000 }
+    );
+    if (result?.studio?.id) {
+      return { ...local, studioId: result.studio.id };
+    }
+  } catch {
+    // API unavailable or studio not found — proceed without studioId
+  }
+
+  return local;
 }
 
 function normalizePath(path: string | null | undefined): string | null {
@@ -2443,7 +2472,7 @@ async function ensurePcpSessionContext(
   const config = getPcpConfig();
   const email = config?.email;
   const cwd = process.cwd();
-  const { studioId, identityId } = getIdentityContextFromIdentityJson(cwd);
+  const { studioId, identityId } = await resolveStudioId(cwd);
   const currentGitBranch = getCurrentGitBranch(cwd);
   const localSessionLimit = options.listCandidates || options.listCandidatesJson ? 120 : 40;
   const pcpSessionLimit = options.listCandidates || options.listCandidatesJson ? 80 : 40;
@@ -3332,7 +3361,7 @@ export async function runClaude(
     : {};
   const runtimeLinkId = options.session ? randomUUID() : undefined;
   const currentGitBranch = getCurrentGitBranch(process.cwd());
-  const { studioId, identityId } = getIdentityContextFromIdentityJson(process.cwd());
+  const { studioId, identityId } = await resolveStudioId(process.cwd());
 
   if (sessionContext.pcpSessionId && runtimeLinkId) {
     upsertRuntimeSession(process.cwd(), {
@@ -3542,7 +3571,7 @@ export async function runClaudeInteractive(
     : {};
   const runtimeLinkId = options.session ? randomUUID() : undefined;
   const currentGitBranch = getCurrentGitBranch(process.cwd());
-  const { studioId, identityId } = getIdentityContextFromIdentityJson(process.cwd());
+  const { studioId, identityId } = await resolveStudioId(process.cwd());
 
   if (sessionContext.pcpSessionId && runtimeLinkId) {
     upsertRuntimeSession(process.cwd(), {
