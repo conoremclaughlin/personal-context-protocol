@@ -7,7 +7,7 @@
 
 import { spawn, type ChildProcess } from 'child_process';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type {
@@ -22,64 +22,7 @@ import type {
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
-
-/** Write runtime hint files so the on-session-start hook finds the right PCP session. */
-function writeRuntimeSessionHint(
-  workingDirectory: string,
-  pcpSessionId: string,
-  agentId: string,
-  backend: string,
-  runtimeLinkId: string,
-  studioId?: string
-): void {
-  try {
-    const runtimeDir = join(workingDirectory, '.pcp', 'runtime');
-    mkdirSync(runtimeDir, { recursive: true });
-    const sessionsPath = join(runtimeDir, 'sessions.json');
-    let state: {
-      version: 1;
-      current?: Record<string, unknown>;
-      sessions: Array<Record<string, unknown>>;
-    } = { version: 1, sessions: [] };
-    if (existsSync(sessionsPath)) {
-      try {
-        const raw = JSON.parse(readFileSync(sessionsPath, 'utf-8')) as typeof state;
-        if (raw.version === 1 && Array.isArray(raw.sessions)) state = raw;
-      } catch {
-        // Corrupt file — start fresh.
-      }
-    }
-    const now = new Date().toISOString();
-    const record: Record<string, unknown> = {
-      pcpSessionId,
-      backend,
-      agentId,
-      runtimeLinkId,
-      ...(studioId ? { studioId } : {}),
-      updatedAt: now,
-      startedAt: now,
-    };
-    const idx = state.sessions.findIndex(
-      (s) =>
-        s['pcpSessionId'] === pcpSessionId && s['backend'] === backend && s['agentId'] === agentId
-    );
-    if (idx >= 0) {
-      state.sessions[idx] = { ...state.sessions[idx], ...record };
-    } else {
-      state.sessions.push(record);
-    }
-    state.current = {
-      pcpSessionId,
-      backend,
-      agentId,
-      ...(studioId ? { studioId } : {}),
-      updatedAt: now,
-    };
-    writeFileSync(sessionsPath, JSON.stringify(state, null, 2));
-  } catch {
-    // Best-effort only.
-  }
-}
+import { buildSessionEnv, writeRuntimeSessionHint } from '@personal-context/shared';
 
 /** Maximum time (ms) to wait for a Codex CLI subprocess before killing it.
  *  Override with CODEX_PROCESS_TIMEOUT_MS env var. */
@@ -172,6 +115,11 @@ export class CodexRunner implements IClaudeRunner {
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
+    // PCP session headers — Codex resolves env var names to values at runtime
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-agent-id="AGENT_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-session-id="PCP_SESSION_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-studio-id="PCP_STUDIO_ID"');
+
     if (config.model) {
       args.push('-m', config.model);
     }
@@ -219,8 +167,13 @@ export class CodexRunner implements IClaudeRunner {
           ...cleanEnv,
           HOME: process.env.HOME,
           PATH: buildSpawnPath(codexBin),
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
           ...(config.pcpAccessToken ? { PCP_ACCESS_TOKEN: config.pcpAccessToken } : {}),
-          ...(config.pcpSessionId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
+          ...buildSessionEnv({
+            pcpSessionId: config.pcpSessionId,
+            runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
+            studioId: config.studioId,
+          }),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -280,7 +233,14 @@ export class CodexRunner implements IClaudeRunner {
             }
 
             const maybeSessionId = this.extractSessionId(parsed);
-            if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            if (maybeSessionId && maybeSessionId !== resolvedSessionId) {
+              logger.debug('Codex session ID discovered in event stream', {
+                codexSessionId: maybeSessionId,
+                eventType: parsed.type,
+                eventIndex: parsedEventCount,
+              });
+              resolvedSessionId = maybeSessionId;
+            }
 
             const maybeUsage = this.extractUsage(parsed);
             if (maybeUsage) usage = maybeUsage;
@@ -352,6 +312,25 @@ export class CodexRunner implements IClaudeRunner {
               nonJsonLines.shift();
             }
           }
+        }
+
+        // Log session ID extraction result for debugging session continuity
+        const uniqueEventTypes = Array.from(new Set(parsedEventTypes));
+        if (resolvedSessionId) {
+          logger.info('Codex native session ID extracted', {
+            codexSessionId: resolvedSessionId,
+            eventCount: parsedEventCount,
+            eventTypes: uniqueEventTypes,
+            exitCode: code,
+          });
+        } else if (parsedEventCount > 0) {
+          logger.warn('Codex process completed without yielding a session ID', {
+            eventCount: parsedEventCount,
+            eventTypes: uniqueEventTypes,
+            exitCode: code,
+            hadFinalText: !!finalTextResponse,
+            toolCallCount: toolCalls.length,
+          });
         }
 
         if (code !== 0 && !finalTextResponse && responses.length === 0) {

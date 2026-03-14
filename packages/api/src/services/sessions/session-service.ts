@@ -359,7 +359,12 @@ export class SessionService implements ISessionService {
         injectedContext.agent.name,
         injectedContext.agent.soul,
         injectedContext.user.timezone,
-        injectedContext.agent.heartbeat
+        injectedContext.agent.heartbeat,
+        {
+          pcpSessionId: session.id,
+          studioId: session.studioId || undefined,
+          threadKey: session.threadKey || undefined,
+        }
       ),
       ...(runtimeModel ? { model: runtimeModel } : {}),
       ...(pcpAccessToken ? { pcpAccessToken } : {}),
@@ -471,6 +476,13 @@ export class SessionService implements ISessionService {
     // idle (not completed) after success — session stays reusable. completed only via end_session.
     const postRunLifecycle = result.success ? 'idle' : 'failed';
     if (result.claudeSessionId !== session.claudeSessionId) {
+      logger.info('Backend session ID linked to PCP session', {
+        pcpSessionId: session.id,
+        backendSessionId: result.claudeSessionId,
+        previousBackendSessionId: session.claudeSessionId || null,
+        backend: resolvedBackend,
+        agentId: session.agentId,
+      });
       await this.repository.update(session.id, {
         claudeSessionId: result.claudeSessionId,
         messageCount: session.messageCount + 1,
@@ -755,12 +767,12 @@ export class SessionService implements ISessionService {
     if (options.recipientSessionId) {
       const { data } = await this.supabase
         .from('sessions')
-        .select('studio_id, workspace_id')
+        .select('studio_id')
         .eq('id', options.recipientSessionId)
         .eq('user_id', userId)
         .maybeSingle();
 
-      const scopedStudioId = data?.studio_id || data?.workspace_id || undefined;
+      const scopedStudioId = data?.studio_id || undefined;
       if (scopedStudioId) {
         return scopedStudioId;
       }
@@ -770,36 +782,34 @@ export class SessionService implements ISessionService {
     if (options.threadKey) {
       const { data: activeThreadSession } = await this.supabase
         .from('sessions')
-        .select('studio_id, workspace_id, updated_at')
+        .select('studio_id, updated_at')
         .eq('user_id', userId)
         .eq('agent_id', agentId)
         .eq('thread_key', options.threadKey)
         .is('ended_at', null)
-        .or('studio_id.not.is.null,workspace_id.not.is.null')
+        .not('studio_id', 'is', null)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      const activeThreadStudio =
-        activeThreadSession?.studio_id || activeThreadSession?.workspace_id || undefined;
+      const activeThreadStudio = activeThreadSession?.studio_id || undefined;
       if (activeThreadStudio) {
         return activeThreadStudio;
       }
 
       const { data: endedThreadSession } = await this.supabase
         .from('sessions')
-        .select('studio_id, workspace_id, updated_at')
+        .select('studio_id, updated_at')
         .eq('user_id', userId)
         .eq('agent_id', agentId)
         .eq('thread_key', options.threadKey)
         .not('ended_at', 'is', null)
-        .or('studio_id.not.is.null,workspace_id.not.is.null')
+        .not('studio_id', 'is', null)
         .order('updated_at', { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      const endedThreadStudio =
-        endedThreadSession?.studio_id || endedThreadSession?.workspace_id || undefined;
+      const endedThreadStudio = endedThreadSession?.studio_id || undefined;
       if (endedThreadStudio) {
         return endedThreadStudio;
       }
