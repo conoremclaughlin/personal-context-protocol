@@ -233,7 +233,14 @@ export class CodexRunner implements IClaudeRunner {
             }
 
             const maybeSessionId = this.extractSessionId(parsed);
-            if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            if (maybeSessionId && maybeSessionId !== resolvedSessionId) {
+              logger.debug('Codex session ID discovered in event stream', {
+                codexSessionId: maybeSessionId,
+                eventType: parsed.type,
+                eventIndex: parsedEventCount,
+              });
+              resolvedSessionId = maybeSessionId;
+            }
 
             const maybeUsage = this.extractUsage(parsed);
             if (maybeUsage) usage = maybeUsage;
@@ -305,6 +312,25 @@ export class CodexRunner implements IClaudeRunner {
               nonJsonLines.shift();
             }
           }
+        }
+
+        // Log session ID extraction result for debugging session continuity
+        const uniqueEventTypes = Array.from(new Set(parsedEventTypes));
+        if (resolvedSessionId) {
+          logger.info('Codex native session ID extracted', {
+            codexSessionId: resolvedSessionId,
+            eventCount: parsedEventCount,
+            eventTypes: uniqueEventTypes,
+            exitCode: code,
+          });
+        } else if (parsedEventCount > 0) {
+          logger.warn('Codex process completed without yielding a session ID', {
+            eventCount: parsedEventCount,
+            eventTypes: uniqueEventTypes,
+            exitCode: code,
+            hadFinalText: !!finalTextResponse,
+            toolCallCount: toolCalls.length,
+          });
         }
 
         if (code !== 0 && !finalTextResponse && responses.length === 0) {

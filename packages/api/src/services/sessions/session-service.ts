@@ -476,6 +476,13 @@ export class SessionService implements ISessionService {
     // idle (not completed) after success — session stays reusable. completed only via end_session.
     const postRunLifecycle = result.success ? 'idle' : 'failed';
     if (result.claudeSessionId !== session.claudeSessionId) {
+      logger.info('Backend session ID linked to PCP session', {
+        pcpSessionId: session.id,
+        backendSessionId: result.claudeSessionId,
+        previousBackendSessionId: session.claudeSessionId || null,
+        backend: resolvedBackend,
+        agentId: session.agentId,
+      });
       await this.repository.update(session.id, {
         claudeSessionId: result.claudeSessionId,
         messageCount: session.messageCount + 1,
