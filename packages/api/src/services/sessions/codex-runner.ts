@@ -416,6 +416,15 @@ export class CodexRunner implements IClaudeRunner {
   }
 
   private extractSessionId(event: Record<string, unknown>): string | undefined {
+    // Codex emits `session_meta` with the session UUID at `payload.id`.
+    // Prioritise this over generic key scanning so we always capture it.
+    if (
+      event.type === 'session_meta' &&
+      typeof (event.payload as Record<string, unknown>)?.id === 'string'
+    ) {
+      return (event.payload as Record<string, unknown>).id as string;
+    }
+
     const queue: unknown[] = [event];
     const sessionKeys = new Set([
       'session_id',

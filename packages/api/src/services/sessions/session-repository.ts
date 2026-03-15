@@ -286,6 +286,8 @@ export class SessionRepository implements ISessionRepository {
 
     if (updates.claudeSessionId !== undefined) {
       dbUpdates.claude_session_id = updates.claudeSessionId;
+      // Keep backend_session_id in sync — it is the canonical column
+      dbUpdates.backend_session_id = updates.claudeSessionId;
     }
 
     if (updates.lifecycle !== undefined) {
