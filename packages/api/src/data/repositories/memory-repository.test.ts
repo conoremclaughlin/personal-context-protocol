@@ -10,6 +10,11 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 describe('MemoryRepository', () => {
   let mockSupabase: MockSupabaseClient;
   let repo: MemoryRepository;
+  const disableEmbeddings = () => {
+    (repo as any).embeddingRouter = {
+      isEnabled: vi.fn().mockReturnValue(false),
+    };
+  };
 
   beforeEach(() => {
     mockSupabase = createMockSupabaseClient();
@@ -18,6 +23,7 @@ describe('MemoryRepository', () => {
 
   describe('remember', () => {
     it('should create a memory with required fields', async () => {
+      disableEmbeddings();
       const mockMemoryRow = {
         id: 'mem-123',
         user_id: 'user-456',
@@ -57,6 +63,7 @@ describe('MemoryRepository', () => {
     });
 
     it('should include optional fields when provided', async () => {
+      disableEmbeddings();
       const mockMemoryRow = {
         id: 'mem-123',
         user_id: 'user-456',
@@ -91,6 +98,7 @@ describe('MemoryRepository', () => {
     });
 
     it('should support reflection source type for agent reflections', async () => {
+      disableEmbeddings();
       const mockMemoryRow = {
         id: 'mem-123',
         user_id: 'user-456',
@@ -122,6 +130,7 @@ describe('MemoryRepository', () => {
     });
 
     it('should throw on database error', async () => {
+      disableEmbeddings();
       mockSupabase._setReturnData(null, { message: 'Database error' });
 
       await expect(
@@ -177,7 +186,7 @@ describe('MemoryRepository', () => {
     it('should apply text search filter', async () => {
       mockSupabase._setArrayData([]);
 
-      await repo.recall('user-456', 'search term');
+      await repo.recall('user-456', 'search term', { recallMode: 'text' });
 
       expect(mockSupabase._queryBuilder.or).toHaveBeenCalledWith(
         'content.ilike.%search term%,summary.ilike.%search term%,topic_key.ilike.%search term%,content.ilike.%search%,summary.ilike.%search%,topic_key.ilike.%search%,content.ilike.%term%,summary.ilike.%term%,topic_key.ilike.%term%'
@@ -1226,6 +1235,94 @@ describe('MemoryRepository', () => {
       await expect(
         repo.setCachedSummary('user-456', 'wren', 'Summary', 5)
       ).resolves.toBeUndefined();
+    });
+  });
+
+  describe('semantic recall integration', () => {
+    it('serializes query embeddings for match_memories RPC', async () => {
+      const rpc = vi.fn().mockResolvedValue({
+        data: [
+          {
+            id: 'mem-sem-1',
+            user_id: 'user-456',
+            content: 'Semantic memory',
+            summary: 'Semantic memory',
+            topic_key: 'pr:214',
+            source: 'observation',
+            salience: 'high',
+            topics: ['pr:214'],
+            agent_id: 'lumen',
+            embedding: '[0.1,0.2,0.3]',
+            metadata: {},
+            version: 1,
+            created_at: '2026-03-16T00:00:00Z',
+            expires_at: null,
+            identity_id: null,
+            similarity: 0.9,
+          },
+        ],
+        error: null,
+      });
+      (mockSupabase as any).rpc = rpc;
+      (repo as any).embeddingRouter = {
+        embedQuery: vi.fn().mockResolvedValue({
+          vector: [0.1, 0.2, 0.3],
+          provider: 'openai',
+          model: 'text-embedding-3-small',
+          dimensions: 1024,
+        }),
+        getRuntimeConfig: vi.fn().mockReturnValue({
+          enabled: true,
+          provider: 'openai',
+          model: 'text-embedding-3-small',
+          dimensions: 1024,
+          queryThreshold: 0.2,
+          matchCountMultiplier: 5,
+          ollamaBaseUrl: 'http://localhost:11434',
+          openaiBaseUrl: 'https://api.openai.com',
+          hasOpenAIKey: true,
+        }),
+      };
+
+      const results = await repo.recall('user-456', 'semantic query', { recallMode: 'semantic' });
+
+      expect(rpc).toHaveBeenCalledWith(
+        'match_memories',
+        expect.objectContaining({
+          query_embedding: '[0.1,0.2,0.3]',
+        })
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0].embedding).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('skips RPC when query embedding dimensions do not match schema dimensions', async () => {
+      const rpc = vi.fn();
+      (mockSupabase as any).rpc = rpc;
+      (repo as any).embeddingRouter = {
+        embedQuery: vi.fn().mockResolvedValue({
+          vector: [0.1, 0.2, 0.3],
+          provider: 'ollama',
+          model: 'nomic-embed-text',
+          dimensions: 768,
+        }),
+        getRuntimeConfig: vi.fn().mockReturnValue({
+          enabled: true,
+          provider: 'ollama',
+          model: 'nomic-embed-text',
+          dimensions: 1024,
+          queryThreshold: 0.2,
+          matchCountMultiplier: 5,
+          ollamaBaseUrl: 'http://localhost:11434',
+          openaiBaseUrl: 'https://api.openai.com',
+          hasOpenAIKey: false,
+        }),
+      };
+
+      const results = await repo.recall('user-456', 'semantic query', { recallMode: 'semantic' });
+
+      expect(rpc).not.toHaveBeenCalled();
+      expect(results).toEqual([]);
     });
   });
 });

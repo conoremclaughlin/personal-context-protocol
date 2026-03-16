@@ -4,6 +4,7 @@ import {
   getDefaultVettedModel,
   VETTED_EMBEDDING_MODELS,
   type EmbeddingProviderKind,
+  type VettedEmbeddingModel,
 } from './vetted-models';
 
 export interface EmbeddingResult {
@@ -26,23 +27,53 @@ export interface EmbeddingRuntimeConfig {
 }
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com';
+const MEMORY_EMBEDDING_SCHEMA_DIMENSIONS = 1024;
 
-function normalizeVector(vector: number[], targetDimensions: number): number[] {
-  if (vector.length === targetDimensions) return vector;
-  if (vector.length > targetDimensions) return vector.slice(0, targetDimensions);
-  return [...vector, ...Array(targetDimensions - vector.length).fill(0)];
+function findVettedModel(
+  provider: EmbeddingProviderKind,
+  model: string
+): VettedEmbeddingModel | null {
+  return (
+    VETTED_EMBEDDING_MODELS.find(
+      (candidate) => candidate.provider === provider && candidate.model === model
+    ) || null
+  );
+}
+
+function assertExpectedDimensions(
+  vector: number[],
+  expectedDimensions: number,
+  provider: EmbeddingProviderKind,
+  model: string
+): number[] {
+  if (vector.length !== expectedDimensions) {
+    throw new Error(
+      `${provider}:${model} returned ${vector.length} dimensions, expected ${expectedDimensions}`
+    );
+  }
+  return vector;
 }
 
 function buildRuntimeConfig(): EmbeddingRuntimeConfig {
   const provider = env.MEMORY_EMBEDDING_PROVIDER || 'ollama';
   const model = env.MEMORY_EMBEDDING_MODEL || getDefaultVettedModel(provider);
   const configuredDimensions = env.MEMORY_EMBEDDING_DIMENSIONS;
-  const dimensions = 1024; // Current memories.embedding column is vector(1024)
+  const dimensions = MEMORY_EMBEDDING_SCHEMA_DIMENSIONS; // Current memories.embedding column is vector(1024)
 
   if (configuredDimensions !== dimensions) {
     logger.warn('Overriding configured memory embedding dimensions to match schema', {
       configuredDimensions,
       enforcedDimensions: dimensions,
+    });
+  }
+
+  const vettedModel = findVettedModel(provider, model);
+  if (vettedModel && !vettedModel.dimensions.includes(dimensions)) {
+    logger.warn('Selected embedding model does not advertise support for schema dimensions', {
+      provider,
+      model,
+      schemaDimensions: dimensions,
+      supportedDimensions: vettedModel.dimensions,
     });
   }
 
@@ -176,7 +207,7 @@ export class EmbeddingRouter {
         throw new Error('Ollama embed returned no embedding vector');
       }
 
-      const vector = normalizeVector(rawVector, dimensions);
+      const vector = assertExpectedDimensions(rawVector, dimensions, 'ollama', model);
       return { vector, provider: 'ollama', model, dimensions: vector.length };
     } finally {
       clearTimeout(timeout);
@@ -220,7 +251,7 @@ export class EmbeddingRouter {
       if (!rawVector || !Array.isArray(rawVector)) {
         throw new Error('OpenAI embeddings returned no embedding vector');
       }
-      const vector = normalizeVector(rawVector, dimensions);
+      const vector = assertExpectedDimensions(rawVector, dimensions, 'openai', model);
       return { vector, provider: 'openai', model, dimensions: vector.length };
     } finally {
       clearTimeout(timeout);

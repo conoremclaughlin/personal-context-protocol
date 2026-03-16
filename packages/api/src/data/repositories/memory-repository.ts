@@ -3,6 +3,7 @@
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Database } from '../supabase/types';
 import { resolveIdentityId } from '../../auth/resolve-identity';
 import { logger } from '../../utils/logger';
 import { EmbeddingRouter } from '../../services/embeddings/router';
@@ -36,11 +37,39 @@ interface RecallCandidate {
   finalScore: number;
 }
 
-interface SemanticMatchRow extends MemoryRow {
+type MatchMemoriesArgs = Database['public']['Functions']['match_memories']['Args'];
+type MatchMemoriesReturn = Database['public']['Functions']['match_memories']['Returns'][number];
+type MatchMemoriesRpcResult = {
+  data: MatchMemoriesReturn[] | null;
+  error: { message: string } | null;
+};
+type MatchMemoriesRpcClient = {
+  rpc(fn: 'match_memories', args: MatchMemoriesArgs): Promise<MatchMemoriesRpcResult>;
+};
+
+type SemanticMatchRow = Omit<MemoryRow, 'embedding'> & {
+  embedding: number[] | string | null;
   similarity?: number;
-}
+};
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+function formatVectorLiteral(vector: number[]): string {
+  return `[${vector.join(',')}]`;
+}
+
+function parseEmbeddingValue(value: MemoryRow['embedding'] | string | null): number[] | undefined {
+  if (!value) return undefined;
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return undefined;
+
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map((entry) => Number(entry)) : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 function tokenizeRelevance(text: string): string[] {
   return text
@@ -181,6 +210,9 @@ export class MemoryRepository {
 
     const memory = this.rowToMemory(data);
 
+    // Embedding persistence is intentionally eventually consistent: we insert the
+    // memory row first so writes never fail on provider/network issues, then best-
+    // effort persist the vector in a follow-up update.
     await this.tryEmbedMemory(memory, input);
 
     return memory;
@@ -334,7 +366,10 @@ export class MemoryRepository {
       .replace(/[,%()]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
-    const tokens = this.tokenize(full).filter((token) => token.length > 2);
+    const tokens = this.tokenize(full)
+      .filter((token) => token.length > 2)
+      .sort((a, b) => b.length - a.length)
+      .slice(0, 3);
     return Array.from(new Set([full, ...tokens].filter(Boolean)));
   }
 
@@ -439,23 +474,36 @@ export class MemoryRepository {
     if (!queryEmbedding) return null;
 
     const config = this.embeddingRouter.getRuntimeConfig();
+    if (queryEmbedding.dimensions !== config.dimensions) {
+      logger.warn('Skipping semantic recall due to embedding dimension mismatch', {
+        provider: queryEmbedding.provider,
+        model: queryEmbedding.model,
+        embeddingDimensions: queryEmbedding.dimensions,
+        expectedDimensions: config.dimensions,
+      });
+      return null;
+    }
+
     const matchCount = Math.max(
       limit,
       (offset + limit) * Math.max(1, config.matchCountMultiplier || 1)
     );
 
-    const { data, error } = await (this.supabase as any).rpc('match_memories', {
-      query_embedding: queryEmbedding.vector,
+    const rpcArgs: MatchMemoriesArgs = {
+      query_embedding: formatVectorLiteral(queryEmbedding.vector),
       match_threshold: config.queryThreshold,
       match_count: matchCount,
       p_user_id: userId,
-      p_source: options.source ?? null,
-      p_salience: options.salience ?? null,
-      p_topics: options.topics && options.topics.length > 0 ? options.topics : null,
-      p_agent_id: options.agentId ?? null,
+      p_source: options.source,
+      p_salience: options.salience,
+      p_topics: options.topics && options.topics.length > 0 ? options.topics : undefined,
+      p_agent_id: options.agentId,
       p_include_shared: options.includeShared !== false,
       p_include_expired: options.includeExpired === true,
-    });
+    };
+
+    const rpcClient = this.supabase as unknown as MatchMemoriesRpcClient;
+    const { data, error } = await rpcClient.rpc('match_memories', rpcArgs);
 
     if (error) {
       logger.warn('Semantic memory recall failed, falling back to text recall', {
@@ -1320,7 +1368,7 @@ export class MemoryRepository {
 
   // ==================== HELPERS ====================
 
-  private rowToMemory(row: MemoryRow): Memory {
+  private rowToMemory(row: MemoryRow | SemanticMatchRow): Memory {
     return {
       id: row.id,
       userId: row.user_id,
@@ -1331,7 +1379,7 @@ export class MemoryRepository {
       salience: row.salience,
       topics: row.topics,
       agentId: row.agent_id || undefined,
-      embedding: row.embedding || undefined,
+      embedding: parseEmbeddingValue(row.embedding),
       metadata: row.metadata,
       version: row.version || 1,
       createdAt: new Date(row.created_at),
