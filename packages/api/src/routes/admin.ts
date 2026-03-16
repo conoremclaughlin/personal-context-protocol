@@ -2946,25 +2946,174 @@ router.get('/individuals/:agentId/inbox', async (req: Request, res: Response) =>
     // Sort flat messages by createdAt descending (interleaves sent + received)
     flatMessages.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-    const totalItems = threads.length + flatMessages.length;
-    const unreadCount = allMessages.filter((m) => m.status === 'unread').length;
+    // ── Thread tables: fetch group threads from inbox_thread_* tables ──
+    // These are threads created via send_to_inbox with threadKey (new thread model).
+    interface GroupThread {
+      threadKey: string;
+      title: string | null;
+      status: string;
+      participants: string[];
+      messageCount: number;
+      unreadCount: number;
+      lastMessage: MappedMessage | null;
+      firstMessageAt: string;
+      lastMessageAt: string;
+      messages: MappedMessage[];
+    }
+    const groupThreads: GroupThread[] = [];
+    let threadTableUnreadCount = 0;
 
-    // Paginate: threads first, then flat messages
+    try {
+      // Find threads this agent participates in (from thread tables)
+      const { data: threadParticipantRows } = await (supabase as any)
+        .from('inbox_thread_participants')
+        .select('thread_id')
+        .eq('agent_id', agentId);
+
+      const threadIds = (threadParticipantRows || []).map(
+        (p: { thread_id: string }) => p.thread_id
+      );
+
+      if (threadIds.length > 0) {
+        // Get thread metadata
+        let threadQuery = (supabase as any)
+          .from('inbox_threads')
+          .select('*')
+          .eq('user_id', authReq.pcpUserId)
+          .in('id', threadIds)
+          .order('updated_at', { ascending: false });
+
+        const { data: threadRows } = await threadQuery;
+
+        if (threadRows?.length) {
+          // Get read status for all threads
+          const { data: readStatusRows } = await (supabase as any)
+            .from('inbox_thread_read_status')
+            .select('thread_id, last_read_at')
+            .eq('agent_id', agentId)
+            .in('thread_id', threadIds);
+
+          const readStatusMap = new Map<string, string>();
+          for (const rs of readStatusRows || []) {
+            readStatusMap.set(rs.thread_id, rs.last_read_at);
+          }
+
+          for (const t of threadRows) {
+            // Get participants
+            const { data: parts } = await (supabase as any)
+              .from('inbox_thread_participants')
+              .select('agent_id')
+              .eq('thread_id', t.id);
+            const participants = (parts || []).map((p: { agent_id: string }) => p.agent_id);
+
+            // Get messages
+            let msgQuery = (supabase as any)
+              .from('inbox_thread_messages')
+              .select('*')
+              .eq('thread_id', t.id)
+              .order('created_at', { ascending: true })
+              .limit(200);
+
+            if (status !== 'all') {
+              // Thread messages don't have a status field — filter by read status instead
+              // For 'unread' filter, only include messages after last_read_at
+            }
+            if (messageType) {
+              msgQuery = msgQuery.eq('message_type', messageType);
+            }
+
+            const { data: msgRows } = await msgQuery;
+            const threadMsgs: MappedMessage[] = (msgRows || []).map((m: Record<string, any>) => ({
+              id: m.id,
+              subject: null,
+              content: m.content,
+              messageType: m.message_type,
+              priority: m.priority,
+              status: 'unread', // computed below
+              senderAgentId: m.sender_agent_id,
+              senderIdentityId: null,
+              recipientAgentId: agentId, // thread messages don't have a single recipient
+              recipientIdentityId: null,
+              threadKey: t.thread_key,
+              recipientSessionId: null,
+              relatedArtifactUri: null,
+              metadata: m.metadata as Record<string, unknown> | null,
+              createdAt: m.created_at,
+              readAt: null,
+              acknowledgedAt: null,
+              expiresAt: null,
+            }));
+
+            // Compute read/unread based on read status
+            const lastReadAt = readStatusMap.get(t.id);
+            let unread = 0;
+            for (const msg of threadMsgs) {
+              if (lastReadAt && new Date(msg.createdAt) <= new Date(lastReadAt)) {
+                msg.status = 'read';
+                msg.readAt = lastReadAt;
+              } else {
+                msg.status = 'unread';
+                unread++;
+              }
+            }
+
+            threadTableUnreadCount += unread;
+
+            if (threadMsgs.length > 0) {
+              groupThreads.push({
+                threadKey: t.thread_key,
+                title: t.title,
+                status: t.status,
+                participants,
+                messageCount: threadMsgs.length,
+                unreadCount: unread,
+                lastMessage: threadMsgs[threadMsgs.length - 1],
+                firstMessageAt: threadMsgs[0].createdAt,
+                lastMessageAt: threadMsgs[threadMsgs.length - 1].createdAt,
+                messages: threadMsgs,
+              });
+            }
+          }
+        }
+      }
+    } catch (err) {
+      // Thread tables may not exist yet — graceful fallback
+      logger.debug('Failed to fetch group threads (tables may not exist)', { err });
+    }
+
+    // Sort group threads by latest message
+    groupThreads.sort(
+      (a, b) => new Date(b.lastMessageAt).getTime() - new Date(a.lastMessageAt).getTime()
+    );
+
+    const inboxUnreadCount = allMessages.filter((m) => m.status === 'unread').length;
+    const totalUnreadCount = inboxUnreadCount + threadTableUnreadCount;
+
+    // Paginate legacy threads and flat messages. Group threads are always
+    // returned in full (typically few) so they stay visible on every page.
     const paginatedThreads = threads.slice(offset, offset + limit);
-    const remainingSlots = limit - paginatedThreads.length;
+    const remainingAfterThreads = limit - paginatedThreads.length;
     const flatOffset = Math.max(0, offset - threads.length);
     const paginatedFlat =
-      remainingSlots > 0 ? flatMessages.slice(flatOffset, flatOffset + remainingSlots) : [];
+      remainingAfterThreads > 0
+        ? flatMessages.slice(flatOffset, flatOffset + remainingAfterThreads)
+        : [];
+
+    const totalItems = threads.length + flatMessages.length;
 
     res.json({
       agentId,
       stats: {
-        totalMessages: allMessages.length,
-        unreadCount,
+        totalMessages: allMessages.length + groupThreads.reduce((s, t) => s + t.messageCount, 0),
+        unreadCount: inboxUnreadCount,
+        threadUnreadCount: threadTableUnreadCount,
+        totalUnreadCount,
         threadCount: threads.length,
+        groupThreadCount: groupThreads.length,
         flatCount: flatMessages.length,
       },
       threads: paginatedThreads,
+      groupThreads,
       flatMessages: paginatedFlat,
       pagination: {
         limit,
@@ -3960,8 +4109,8 @@ router.get('/sessions', async (req: Request, res: Response) => {
     }
 
     // 2. Fetch sessions scoped to identities in the active top-level workspace.
-    // Sessions store studio/worktree scope in studio_id/workspace_id, so we scope
-    // via identity_id (with legacy agent_id fallback), not by sessions.workspace_id.
+    // Sessions store studio/worktree scope in studio_id, so we scope
+    // via identity_id (with legacy agent_id fallback), not by studio directly.
     let identitySessionsQuery = supabase
       .from('sessions')
       .select('*')
@@ -4026,9 +4175,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
 
     // 3. Batch-fetch studios linked to these sessions (studio_id preferred, session_id fallback)
     const sessionIds = sessionRows.map((s) => s.id);
-    const studioIds = [
-      ...new Set(sessionRows.map((s) => s.studio_id || s.workspace_id).filter(Boolean)),
-    ] as string[];
+    const studioIds = [...new Set(sessionRows.map((s) => s.studio_id).filter(Boolean))] as string[];
 
     const studiosById = new Map<
       string,
@@ -4215,9 +4362,7 @@ router.get('/sessions', async (req: Request, res: Response) => {
       sessions: sessionRows.map((s) => {
         const identity = s.agent_id ? identitiesByAgentId.get(s.agent_id) : null;
         const studio =
-          studiosById.get(s.studio_id || s.workspace_id || '') ||
-          workspacesBySessionId.get(s.id) ||
-          null;
+          studiosById.get(s.studio_id || '') || workspacesBySessionId.get(s.id) || null;
         return {
           id: s.id,
           backendSessionId: s.backend_session_id || s.claude_session_id || null,
@@ -4317,7 +4462,6 @@ router.get('/studios', async (req: Request, res: Response) => {
         .from('sessions')
         .select('agent_id, lifecycle, current_phase, status, updated_at')
         .eq('user_id', authReq.pcpUserId)
-        .eq('workspace_id', authReq.pcpWorkspaceId)
         .in('agent_id', agentIds)
         .is('ended_at', null)
         .neq('lifecycle', 'failed')

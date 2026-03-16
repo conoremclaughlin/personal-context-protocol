@@ -41,7 +41,7 @@ This returns:
 
 - **User Info**: User ID, contacts, and **timezone** (e.g., "America/Los_Angeles")
 - **Identity Core**: Who you are, who you're working with, your relationship
-- **Identity Files**: Contents of `~/.pcp/shared/` and `~/.pcp/{agentId}/` files (VALUES.md, IDENTITY.md, etc.)
+- **Constitution**: Your values, process, user, identity, heartbeat, and soul documents (DB-first, filesystem fallback)
 - **Active Context**: Current projects, focus, project-specific context
 - **Recent Memories**: High-salience memories filtered by your agentId (plus shared memories)
 - **Active Sessions**: Array of all active sessions (use `workspaceId` to find yours)
@@ -167,24 +167,22 @@ PCP supports multiple AI identities sharing the same infrastructure:
 | **myra**   | Telegram/WhatsApp | Persistent messaging bridge            |
 | **benson** | Discord/Slack     | Conversational partner                 |
 
-Each agent has its own identity files (`~/.pcp/<agentId>/IDENTITY.md`) and filtered memories. Shared values live in `~/.pcp/shared/VALUES.md`.
+Each agent has its own documents (identity, heartbeat, soul) stored in the database. Shared documents (values, process, user) are workspace-level. Together these form your constitution. The filesystem (`~/.pcp/`) is a fallback cache only.
 
-### Identity Files
+### Constitution
 
-Located in `~/.pcp/`:
+Six documents, stored in the database and served via bootstrap:
 
-```
-~/.pcp/
-├── config.json           # User config + agentMapping
-├── shared/               # Shared across all agents
-│   └── VALUES.md         # Core values we all share
-├── wren/
-│   └── IDENTITY.md       # Wren's identity
-├── benson/
-│   └── IDENTITY.md       # Benson's identity
-└── myra/
-    └── IDENTITY.md       # Myra's identity
-```
+| Document      | Scope              | What it governs                           |
+| ------------- | ------------------ | ----------------------------------------- |
+| **values**    | Shared (workspace) | Shared principles across all SBs          |
+| **process**   | Shared (workspace) | Team operational process                  |
+| **user**      | Shared (user)      | About the organic human                   |
+| **identity**  | Per-agent          | Name, role, relationships, capabilities   |
+| **heartbeat** | Per-agent          | Operational wake-up checklist             |
+| **soul**      | Per-agent          | Philosophical core, existential questions |
+
+Tools: `get_identity` / `save_identity` (per-agent), `get_team_constitution` / `save_team_constitution` (shared values/process), `get_user_identity` / `save_user_identity` (user profile).
 
 ### Memory Attribution
 
@@ -504,7 +502,31 @@ npx @modelcontextprotocol/inspector packages/api/dist/index.js
 4. Add Next.js rewrite in `packages/web/next.config.ts`
 5. Call from frontend via `useApiQuery`/`useApiPost` (never direct Supabase)
 
-### Debugging
+### Debugging & Logs
+
+Winston writes to **both** the console and persistent log files:
+
+| Log            | Path                         | Contents                                  |
+| -------------- | ---------------------------- | ----------------------------------------- |
+| **combined**   | `~/.pcp/logs/combined.log`   | All log levels (info, warn, error, debug) |
+| **error**      | `~/.pcp/logs/error.log`      | Errors only                               |
+| **exceptions** | `~/.pcp/logs/exceptions.log` | Uncaught exceptions                       |
+| **rejections** | `~/.pcp/logs/rejections.log` | Unhandled promise rejections              |
+
+Logs rotate at 10MB (combined) or 5MB (error), keeping 5 files each. `tailable: true` means the base filename (`combined.log`) is always the active log — `tail -f ~/.pcp/logs/combined.log` always works.
+
+```bash
+# Tail live server logs
+tail -f ~/.pcp/logs/combined.log
+
+# Search for trigger activity
+grep "trigger\|Dispatching" ~/.pcp/logs/combined.log
+
+# Search for a specific thread
+grep "pr:218" ~/.pcp/logs/combined.log
+```
+
+These log files are written regardless of how the server is started (`yarn dev`, `yarn dev:pm2`, or `yarn pm2:start`). PM2 adds its own log layer at `~/.pm2/logs/` but the winston logs are the canonical source.
 
 - Logger available via `import { logger } from '../utils/logger'`
 - Use `logger.info()`, `logger.error()`, `logger.debug()`
@@ -525,6 +547,7 @@ Spec URIs follow the pattern `pcp://specs/<slug>`. When referencing a spec in co
 
 Defined in [CONTRIBUTING.md](./CONTRIBUTING.md). Key SB-specific reminders:
 
+- **Commit continuously at logical completion points.** Do not wait until the end of a PR to dump one large commit. Each commit should represent one coherent, reviewable unit of work.
 - **Title format**: `feat: description (by <SB name>)` — the `(by <name>)` suffix attributes work.
 - **Sign reviews**: end PR comments with `— Wren`, `— Lumen`, etc.
 - **Do not wait for permission to open a PR** once implementation is ready. Create the PR proactively unless the user explicitly asked you not to.

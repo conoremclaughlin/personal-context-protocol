@@ -13,15 +13,16 @@ import { tmpdir } from 'os';
 import type {
   InjectedContext,
   ClaudeRunnerConfig,
-  ClaudeRunnerResult,
+  RunnerResult,
   ChannelResponse,
   ChannelType,
-  IClaudeRunner,
+  IRunner,
   ToolCall,
 } from './types.js';
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
+import { buildSessionEnv, writeRuntimeSessionHint } from '@personal-context/shared';
 
 /** Maximum time (ms) to wait for a Codex CLI subprocess before killing it.
  *  Override with CODEX_PROCESS_TIMEOUT_MS env var. */
@@ -36,19 +37,17 @@ interface CodexUsageStats {
   outputTokens: number;
 }
 
-export class CodexRunner implements IClaudeRunner {
+export class CodexRunner implements IRunner {
   async run(
     message: string,
     options: {
-      claudeSessionId?: string;
+      backendSessionId?: string;
       injectedContext?: InjectedContext;
       config: ClaudeRunnerConfig;
     }
-  ): Promise<ClaudeRunnerResult> {
-    const { claudeSessionId, injectedContext, config } = options;
-    const isResume = !!claudeSessionId;
-
-    let sessionId = claudeSessionId || randomUUID();
+  ): Promise<RunnerResult> {
+    const { backendSessionId, injectedContext, config } = options;
+    const isResume = !!backendSessionId;
 
     let fullMessage = message;
     if (injectedContext && !isResume) {
@@ -61,9 +60,12 @@ export class CodexRunner implements IClaudeRunner {
     );
 
     try {
-      const args = this.buildArgs(sessionId, isResume, fullMessage, config, promptPath);
+      // Only pass a session ID to buildArgs when resuming a known backend session.
+      // For fresh runs, Codex assigns its own session UUID — we extract it from stdout.
+      const argsSessionId = isResume ? backendSessionId! : undefined;
+      const args = this.buildArgs(argsSessionId, isResume, fullMessage, config, promptPath);
       logger.info('Spawning Codex CLI', {
-        sessionId,
+        resumeSessionId: argsSessionId || null,
         isResume,
         workingDirectory: config.workingDirectory,
         messageLength: fullMessage.length,
@@ -71,13 +73,14 @@ export class CodexRunner implements IClaudeRunner {
       });
 
       const result = await this.spawnProcess(args, config);
-      if (result.sessionId) {
-        sessionId = result.sessionId;
-      }
+
+      // Only return a backend session ID if we actually extracted one from
+      // the Codex event stream, or if we were resuming an existing session.
+      const resolvedBackendSessionId = result.sessionId || argsSessionId || undefined;
 
       return {
         success: true,
-        claudeSessionId: sessionId,
+        backendSessionId: resolvedBackendSessionId || null,
         responses: result.responses,
         usage: result.usage,
         finalTextResponse: result.finalTextResponse,
@@ -85,12 +88,12 @@ export class CodexRunner implements IClaudeRunner {
       };
     } catch (error) {
       logger.error('Codex process failed', {
-        sessionId,
+        resumeSessionId: backendSessionId || null,
         error: error instanceof Error ? error.message : String(error),
       });
       return {
         success: false,
-        claudeSessionId: sessionId,
+        backendSessionId: backendSessionId || null,
         responses: [],
         error: error instanceof Error ? error.message : 'Unknown error',
       };
@@ -100,7 +103,7 @@ export class CodexRunner implements IClaudeRunner {
   }
 
   private buildArgs(
-    sessionId: string,
+    resumeSessionId: string | undefined,
     isResume: boolean,
     message: string,
     config: ClaudeRunnerConfig,
@@ -114,12 +117,17 @@ export class CodexRunner implements IClaudeRunner {
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
+    // PCP session headers — Codex resolves env var names to values at runtime
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-agent-id="AGENT_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-session-id="PCP_SESSION_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-studio-id="PCP_STUDIO_ID"');
+
     if (config.model) {
       args.push('-m', config.model);
     }
 
-    if (isResume) {
-      args.push(sessionId);
+    if (isResume && resumeSessionId) {
+      args.push(resumeSessionId);
       args.push(message);
     } else {
       args.push(message);
@@ -139,6 +147,19 @@ export class CodexRunner implements IClaudeRunner {
     sessionId?: string;
   }> {
     const codexBin = await resolveBinaryPath('codex');
+
+    const runtimeLinkId = randomUUID();
+    if (config.pcpSessionId && config.workingDirectory) {
+      writeRuntimeSessionHint(
+        config.workingDirectory,
+        config.pcpSessionId,
+        config.agentId || 'unknown',
+        'codex',
+        runtimeLinkId,
+        config.studioId
+      );
+    }
+
     return new Promise((resolve, reject) => {
       // Strip CLAUDECODE to prevent env leaking into subprocess
       const { CLAUDECODE, ...cleanEnv } = process.env;
@@ -148,7 +169,13 @@ export class CodexRunner implements IClaudeRunner {
           ...cleanEnv,
           HOME: process.env.HOME,
           PATH: buildSpawnPath(codexBin),
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
           ...(config.pcpAccessToken ? { PCP_ACCESS_TOKEN: config.pcpAccessToken } : {}),
+          ...buildSessionEnv({
+            pcpSessionId: config.pcpSessionId,
+            runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
+            studioId: config.studioId,
+          }),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
@@ -207,8 +234,21 @@ export class CodexRunner implements IClaudeRunner {
               }
             }
 
-            const maybeSessionId = this.extractSessionId(parsed);
-            if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            // Only extract session ID if we haven't found one yet.
+            // The first match (typically thread.started) is authoritative;
+            // later events may contain unrelated IDs (e.g., conversationId
+            // from tool calls) that would incorrectly overwrite it.
+            if (!resolvedSessionId) {
+              const maybeSessionId = this.extractSessionId(parsed);
+              if (maybeSessionId) {
+                logger.debug('Codex session ID discovered in event stream', {
+                  codexSessionId: maybeSessionId,
+                  eventType: parsed.type,
+                  eventIndex: parsedEventCount,
+                });
+                resolvedSessionId = maybeSessionId;
+              }
+            }
 
             const maybeUsage = this.extractUsage(parsed);
             if (maybeUsage) usage = maybeUsage;
@@ -265,8 +305,10 @@ export class CodexRunner implements IClaudeRunner {
                 parsedErrorMessages.shift();
               }
             }
-            const maybeSessionId = this.extractSessionId(parsed);
-            if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            if (!resolvedSessionId) {
+              const maybeSessionId = this.extractSessionId(parsed);
+              if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            }
             const maybeUsage = this.extractUsage(parsed);
             if (maybeUsage) usage = maybeUsage;
             const maybeText = this.extractFinalText(parsed);
@@ -280,6 +322,25 @@ export class CodexRunner implements IClaudeRunner {
               nonJsonLines.shift();
             }
           }
+        }
+
+        // Log session ID extraction result for debugging session continuity
+        const uniqueEventTypes = Array.from(new Set(parsedEventTypes));
+        if (resolvedSessionId) {
+          logger.info('Codex native session ID extracted', {
+            codexSessionId: resolvedSessionId,
+            eventCount: parsedEventCount,
+            eventTypes: uniqueEventTypes,
+            exitCode: code,
+          });
+        } else if (parsedEventCount > 0) {
+          logger.warn('Codex process completed without yielding a session ID', {
+            eventCount: parsedEventCount,
+            eventTypes: uniqueEventTypes,
+            exitCode: code,
+            hadFinalText: !!finalTextResponse,
+            toolCallCount: toolCalls.length,
+          });
         }
 
         if (code !== 0 && !finalTextResponse && responses.length === 0) {
@@ -365,15 +426,26 @@ export class CodexRunner implements IClaudeRunner {
   }
 
   private extractSessionId(event: Record<string, unknown>): string | undefined {
+    // Priority 1: Codex JSONL emits `session_meta` with UUID at `payload.id`.
+    if (
+      event.type === 'session_meta' &&
+      typeof (event.payload as Record<string, unknown>)?.id === 'string'
+    ) {
+      return (event.payload as Record<string, unknown>).id as string;
+    }
+
+    // Priority 2: Codex stdout emits `thread.started` with `thread_id`.
+    // This is the primary session ID source for `codex exec --json`.
+    if (event.type === 'thread.started' && typeof event.thread_id === 'string') {
+      return event.thread_id;
+    }
+
+    // Fallback: BFS scan for common session ID keys.
+    // Only match session/thread IDs — NOT conversationId, which often
+    // contains PCP routing keys (e.g., "trigger:lumen:thread:foo")
+    // that are unrelated to the backend session.
     const queue: unknown[] = [event];
-    const sessionKeys = new Set([
-      'session_id',
-      'sessionId',
-      'conversation_id',
-      'conversationId',
-      'thread_id',
-      'threadId',
-    ]);
+    const sessionKeys = new Set(['session_id', 'sessionId', 'thread_id', 'threadId']);
 
     while (queue.length > 0) {
       const current = queue.shift();
@@ -503,6 +575,7 @@ export class CodexRunner implements IClaudeRunner {
                 metadata: (input as Record<string, unknown>).metadata as
                   | Record<string, unknown>
                   | undefined,
+                media: (input as Record<string, unknown>).media as ChannelResponse['media'],
               });
             }
           }

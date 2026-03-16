@@ -10,15 +10,20 @@ import { randomUUID } from 'crypto';
 import type {
   InjectedContext,
   ClaudeRunnerConfig,
-  ClaudeRunnerResult,
+  RunnerResult,
   ChannelResponse,
   ChannelType,
-  IClaudeRunner,
+  IRunner,
   ToolCall,
 } from './types.js';
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
+import {
+  injectSessionHeaders,
+  buildSessionEnv,
+  writeRuntimeSessionHint,
+} from '@personal-context/shared';
 
 /** Maximum time (ms) to wait for a Claude Code subprocess before killing it.
  *  Override with CLAUDE_PROCESS_TIMEOUT_MS env var. */
@@ -36,20 +41,20 @@ interface ClaudeUsageStats {
   cacheWriteTokens?: number;
 }
 
-export class ClaudeRunner implements IClaudeRunner {
+export class ClaudeRunner implements IRunner {
   async run(
     message: string,
     options: {
-      claudeSessionId?: string;
+      backendSessionId?: string;
       injectedContext?: InjectedContext;
       config: ClaudeRunnerConfig;
     }
-  ): Promise<ClaudeRunnerResult> {
-    const { claudeSessionId, injectedContext, config } = options;
+  ): Promise<RunnerResult> {
+    const { backendSessionId, injectedContext, config } = options;
 
     // Determine if resuming or starting new session
-    const isResume = !!claudeSessionId;
-    let sessionId = claudeSessionId || randomUUID();
+    const isResume = !!backendSessionId;
+    let sessionId = backendSessionId || randomUUID();
 
     // Build the message with injected context
     let fullMessage = message;
@@ -93,7 +98,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
         return {
           success: true,
-          claudeSessionId: sessionId,
+          backendSessionId: sessionId,
           responses: retryResult.responses,
           usage: retryResult.usage,
           finalTextResponse: retryResult.finalTextResponse,
@@ -103,7 +108,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
       return {
         success: true,
-        claudeSessionId: sessionId,
+        backendSessionId: sessionId,
         responses: result.responses,
         usage: result.usage,
         finalTextResponse: result.finalTextResponse,
@@ -117,7 +122,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
       return {
         success: false,
-        claudeSessionId: sessionId,
+        backendSessionId: sessionId,
         responses: [],
         error: error instanceof Error ? error.message : 'Unknown error',
       };
@@ -164,6 +169,40 @@ export class ClaudeRunner implements IClaudeRunner {
     toolCalls: ToolCall[];
   }> {
     const claudeBin = await resolveBinaryPath('claude');
+
+    // Write runtime hint files before spawning so the on-session-start hook
+    // picks up the correct PCP session ID (not the last sb-launched session).
+    const runtimeLinkId = randomUUID();
+    if (config.pcpSessionId && config.workingDirectory) {
+      writeRuntimeSessionHint(
+        config.workingDirectory,
+        config.pcpSessionId,
+        config.agentId || 'unknown',
+        'claude',
+        runtimeLinkId,
+        config.studioId
+      );
+    }
+
+    // Inject PCP session headers into MCP config so the spawned agent's
+    // MCP calls carry session identity back to the PCP server.
+    const mcpInjection =
+      config.mcpConfigPath && config.pcpSessionId
+        ? injectSessionHeaders({
+            mcpConfigPath: config.mcpConfigPath,
+            pcpSessionId: config.pcpSessionId,
+            studioId: config.studioId,
+          })
+        : null;
+
+    // If headers were injected, patch the --mcp-config arg to point to the temp file
+    if (mcpInjection?.modified) {
+      const mcpIdx = args.indexOf('--mcp-config');
+      if (mcpIdx !== -1 && args[mcpIdx + 1]) {
+        args[mcpIdx + 1] = mcpInjection.mcpConfigPath;
+      }
+    }
+
     return new Promise((resolve, reject) => {
       // Strip CLAUDECODE to prevent "nested session" detection when PCP is
       // launched from inside a Claude Code session (e.g., via PM2).
@@ -175,6 +214,13 @@ export class ClaudeRunner implements IClaudeRunner {
           // Ensure Claude Code uses correct paths
           HOME: process.env.HOME,
           PATH: buildSpawnPath(claudeBin),
+          // Session env vars: PCP_SESSION_ID for ${VAR} interpolation in
+          // .mcp.json headers, PCP_RUNTIME_LINK_ID for hook hint matching.
+          ...buildSessionEnv({
+            pcpSessionId: config.pcpSessionId,
+            runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
+            studioId: config.studioId,
+          }),
         },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
@@ -310,6 +356,7 @@ export class ClaudeRunner implements IClaudeRunner {
       proc.on('close', (code) => {
         clearTimeout(timeout);
         clearTimeout(idleTimer);
+        mcpInjection?.cleanup();
         if (settled) return; // Already resolved by timeout
         settled = true;
 
@@ -389,6 +436,7 @@ export class ClaudeRunner implements IClaudeRunner {
           format: input.format as 'text' | 'markdown' | 'code' | 'json' | undefined,
           replyToMessageId: input.replyToMessageId as string | undefined,
           metadata: input.metadata as Record<string, unknown> | undefined,
+          media: input.media as ChannelResponse['media'],
         };
         responses.push(response);
         logger.debug('Captured send_response call', { response });
@@ -412,7 +460,8 @@ export function buildIdentityPrompt(
   agentName: string,
   soul?: string,
   timezone?: string,
-  heartbeat?: string
+  heartbeat?: string,
+  sessionIds?: { pcpSessionId?: string; studioId?: string; threadKey?: string }
 ): string {
   let prompt = `## Identity Override (CRITICAL)
 
@@ -422,6 +471,14 @@ When calling PCP tools (bootstrap, remember, recall, start_session, etc.), use \
 
 Do NOT read \`.pcp/identity.json\` — your identity is set by this system prompt.
 Do NOT run \`echo $AGENT_ID\` — you are running headlessly without shell access.`;
+
+  // Session identity — always in context for debugging and routing verification
+  if (sessionIds?.pcpSessionId) {
+    const idParts = [`- PCP Session: \`${sessionIds.pcpSessionId}\``];
+    if (sessionIds.studioId) idParts.push(`- Studio: \`${sessionIds.studioId}\``);
+    if (sessionIds.threadKey) idParts.push(`- Thread: \`${sessionIds.threadKey}\``);
+    prompt += `\n\n### Session Identity\n${idParts.join('\n')}`;
+  }
 
   if (soul) {
     prompt += `\n\n### Soul\n${soul}`;

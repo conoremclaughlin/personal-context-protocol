@@ -7,17 +7,21 @@ import { mintDelegationToken, verifyDelegationToken } from '@personal-context/sh
 const testState = vi.hoisted(() => ({
   inputs: [] as string[],
   pcpCalls: [] as Array<{ tool: string; args: Record<string, unknown> }>,
-  identity: { workspaceId: 'studio-test' } as { workspaceId?: string },
+  identity: { studioId: 'studio-test' } as { studioId?: string },
   callToolImpl: vi.fn(),
   runBackendImpl: vi.fn(),
   discoverSkillsImpl: vi.fn(),
   loadSkillInstructionImpl: vi.fn(),
 }));
 
-vi.mock('../backends/identity.js', () => ({
-  resolveAgentId: (agent?: string) => agent || 'lumen',
-  readIdentityJson: () => testState.identity,
-}));
+vi.mock('../backends/identity.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../backends/identity.js')>();
+  return {
+    ...original,
+    resolveAgentId: (agent?: string) => agent || 'lumen',
+    readIdentityJson: () => testState.identity,
+  };
+});
 
 vi.mock('../lib/pcp-client.js', () => ({
   PcpClient: class MockPcpClient {
@@ -86,7 +90,7 @@ describe('runChat integration', () => {
     vi.setSystemTime(new Date('2026-02-27T00:00:00.000Z'));
     testState.inputs = [];
     testState.pcpCalls = [];
-    testState.identity = { workspaceId: 'studio-test' };
+    testState.identity = { studioId: 'studio-test' };
     testState.callToolImpl.mockReset();
     testState.runBackendImpl.mockReset();
     testState.discoverSkillsImpl.mockReset();
@@ -160,7 +164,6 @@ describe('runChat integration', () => {
       agentId: 'lumen',
       threadKey: 'heartbeat:myra',
       studioId: 'studio-test',
-      workspaceId: 'studio-test',
     });
 
     const replDir = join(testCwd, '.pcp', 'runtime', 'repl');
@@ -604,7 +607,6 @@ describe('runChat integration', () => {
               {
                 id: 'sess-wren-new',
                 agentId: 'wren',
-                workspaceId: 'studio-test',
                 studioId: 'studio-test',
                 status: 'active',
                 threadKey: 'pr:900',
@@ -613,7 +615,6 @@ describe('runChat integration', () => {
               {
                 id: 'sess-lumen-mid',
                 agentId: 'lumen',
-                workspaceId: 'studio-test',
                 studioId: 'studio-2',
                 status: 'active',
                 threadKey: 'pr:901',
@@ -622,7 +623,6 @@ describe('runChat integration', () => {
               {
                 id: 'sess-lumen-old',
                 agentId: 'lumen',
-                workspaceId: 'workspace-other',
                 studioId: 'studio-3',
                 status: 'active',
                 threadKey: 'pr:902',
@@ -1134,7 +1134,7 @@ describe('runChat integration', () => {
     expect(logText).toContain('Inbox auto-run disabled.');
   });
 
-  it('toggles tool routing via slash command', async () => {
+  it('toggles tool routing via slash command and auto-persists', async () => {
     testState.inputs = ['/tool-routing local', '/session', '/tool-routing backend', '/quit'];
 
     await runChat({
@@ -1144,9 +1144,14 @@ describe('runChat integration', () => {
     });
 
     const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
-    expect(logText).toContain('Tool routing set to local.');
+    expect(logText).toContain('Tool routing set to local. (auto-saved)');
     expect(logText).toContain('routing=local');
-    expect(logText).toContain('Tool routing set to backend.');
+    expect(logText).toContain('Tool routing set to backend. (auto-saved)');
+
+    // Verify preferences were auto-persisted to .pcp/identity.json
+    const identityPath = join(testCwd, '.pcp', 'identity.json');
+    const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
+    expect(identity.runtime?.toolRouting).toBe('backend'); // last value set
   });
 
   it('toggles ui mode via slash command', async () => {
@@ -1215,6 +1220,7 @@ describe('runChat integration', () => {
     await runChat({
       agent: 'lumen',
       backend: 'claude',
+      toolRouting: 'backend',
       pollSeconds: '999',
     });
 
@@ -1289,6 +1295,519 @@ describe('runChat integration', () => {
       (call) => call.tool === 'get_inbox' && call.args.limit === 1
     );
     expect(localToolCall).toBeTruthy();
+  });
+
+  it('executes local pcp-tool blocks with gemini backend via sb runtime', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":2}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['run local gemini tool routing', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'gemini',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual(['--allowed-tools', '']);
+    const localToolCall = testState.pcpCalls.find(
+      (call) => call.tool === 'get_inbox' && call.args.limit === 2
+    );
+    expect(localToolCall).toBeTruthy();
+  });
+
+  it('executes local pcp-tool blocks with codex backend via sb runtime', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":3}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['run local codex tool routing', '/quit'];
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual([]);
+    const localToolCall = testState.pcpCalls.find(
+      (call) => call.tool === 'get_inbox' && call.args.limit === 3
+    );
+    expect(localToolCall).toBeTruthy();
+  });
+
+  it('does not pass unsupported --allowedTools passthrough to codex backend', async () => {
+    testState.inputs = ['codex local turn', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+    };
+    expect(backendRequest.passthroughArgs).toEqual([]);
+  });
+
+  it('applies strict codex hardening args in local routing when --sb-strict-tools is set', async () => {
+    testState.inputs = ['codex strict local turn', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      toolRouting: 'local',
+      sbStrictTools: true,
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      passthroughArgs: string[];
+      prompt: string;
+    };
+    expect(backendRequest.passthroughArgs).toEqual([
+      '--color',
+      'never',
+      '--sandbox',
+      'read-only',
+      '--skip-git-repo-check',
+      '--config',
+      'features.apps=false',
+      '--config',
+      'mcp_servers.pcp.enabled=false',
+      '--config',
+      'mcp_servers.next-devtools.enabled=false',
+      '--config',
+      'mcp_servers.github.enabled=false',
+      '--config',
+      'mcp_servers.supabase.enabled=false',
+      '--config',
+      'mcp_servers={}',
+    ]);
+    expect(backendRequest.prompt).toContain('Strict tools mode: ON.');
+  });
+
+  it('re-invokes backend with tool results in multi-turn loop', async () => {
+    let callCount = 0;
+    testState.runBackendImpl.mockImplementation(async () => {
+      callCount++;
+      if (callCount === 1) {
+        // First call: backend emits a pcp-tool block
+        return {
+          success: true,
+          stdout:
+            '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":2}}\n```',
+          stderr: '',
+          exitCode: 0,
+          durationMs: 5,
+          command: 'mock',
+        };
+      }
+      // Second call: backend sees tool results and produces final answer
+      return {
+        success: true,
+        stdout: 'You have 2 unread messages from Myra about media testing.',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 5,
+        command: 'mock',
+      };
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [{ from: 'myra', subject: 'test' }], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+          case 'log_activity':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['check my inbox and summarize', '/quit'];
+    await runChat({
+      agent: 'wren',
+      backend: 'claude',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    // Backend should be called twice: initial turn + continuation with tool results
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(2);
+
+    // The continuation prompt should contain the tool results
+    const secondCall = testState.runBackendImpl.mock.calls[1][0] as { prompt: string };
+    expect(secondCall.prompt).toContain('Tool results from previous turn');
+    expect(secondCall.prompt).toContain('get_inbox');
+
+    // The tool should have been executed locally
+    const inboxCall = testState.pcpCalls.find((call) => call.tool === 'get_inbox');
+    expect(inboxCall).toBeTruthy();
+
+    // Final output should be the summary (no tool blocks)
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('2 unread messages from Myra');
+  });
+
+  it('stops tool loop at max iterations', async () => {
+    // Backend always emits a tool call — should stop at MAX_TOOL_LOOP_ITERATIONS (5)
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":1}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+          case 'log_activity':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    testState.inputs = ['infinite tool loop test', '/quit'];
+    await runChat({
+      agent: 'wren',
+      backend: 'claude',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    // Should be called 5 times: 1 initial + 4 continuations. The 5th iteration
+    // increments toolLoopIteration to 5 which hits MAX_TOOL_LOOP_ITERATIONS (5)
+    // and breaks BEFORE making another backend call.
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(5);
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('tool loop limit reached');
+  });
+
+  it('handles non-interactive local tool blocks without readline crashes', async () => {
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"wren","content":"ping"}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+
+    await expect(
+      runChat({
+        agent: 'lumen',
+        backend: 'claude',
+        nonInteractive: true,
+        message: 'one shot',
+        toolRouting: 'local',
+        pollSeconds: '999',
+      })
+    ).resolves.toBeUndefined();
+
+    // In non-interactive mode there is no readline prompt, so this tool call must be denied
+    // instead of crashing from an uninitialized readline reference.
+    expect(testState.pcpCalls.some((call) => call.tool === 'send_to_inbox')).toBe(false);
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('Local tool denied (send_to_inbox)');
+  });
+
+  it('grants promptable tool via approval channel and executes in tool loop', async () => {
+    // Backend emits a tool call on first invocation, then plain text on follow-up
+    let backendCallCount = 0;
+    testState.runBackendImpl.mockImplementation(async () => {
+      backendCallCount++;
+      if (backendCallCount === 1) {
+        // First backend call (user message turn) — emit pcp-tool block
+        return {
+          success: true,
+          stdout:
+            '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":1}}\n```',
+          stderr: '',
+          exitCode: 0,
+          durationMs: 5,
+          command: 'mock',
+        };
+      }
+      // Follow-up after tool results — plain text
+      return {
+        success: true,
+        stdout: 'done processing',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 5,
+        command: 'mock',
+      };
+    });
+    testState.callToolImpl.mockImplementation(
+      async (tool: string, args?: Record<string, unknown>) => {
+        switch (tool) {
+          case 'bootstrap':
+            return { user: { timezone: 'America/Los_Angeles' } };
+          case 'start_session':
+            return { session: { id: 'sess-1' } };
+          case 'get_inbox':
+            return { messages: [{ id: 'm1', content: 'test message' }], echo: args || {} };
+          case 'update_session_phase':
+          case 'end_session':
+          case 'log_activity':
+            return { success: true };
+          default:
+            return { success: true };
+        }
+      }
+    );
+
+    // /prompt marks get_inbox as requiring per-call approval
+    // approvalMode 'once' auto-approves via AutoApprovalChannel
+    testState.inputs = ['/prompt get_inbox', 'trigger tool call', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      toolRouting: 'local',
+      approvalMode: 'auto-approve',
+      pollSeconds: '999',
+    });
+
+    // get_inbox should have been executed after auto-approval
+    const inboxCall = testState.pcpCalls.find((call) => call.tool === 'get_inbox');
+    expect(inboxCall).toBeTruthy();
+  });
+
+  it('auto-denies tool calls in non-interactive jsonl approval mode when no response arrives', async () => {
+    // In non-interactive mode with jsonl, tools should auto-deny (AutoApprovalChannel)
+    testState.runBackendImpl.mockResolvedValue({
+      success: true,
+      stdout:
+        '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hello"}}\n```',
+      stderr: '',
+      exitCode: 0,
+      durationMs: 5,
+      command: 'mock',
+    });
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      nonInteractive: true,
+      message: 'test auto-deny',
+      toolRouting: 'local',
+      pollSeconds: '999',
+    });
+
+    // send_to_inbox should have been denied (non-interactive auto-denies promptable tools)
+    expect(testState.pcpCalls.some((call) => call.tool === 'send_to_inbox')).toBe(false);
+    const logText = stripAnsi(logSpy.mock.calls.flat().join('\n'));
+    expect(logText).toContain('send_to_inbox');
+  });
+
+  it('emits JSONL approval_request on stderr and executes tool when response arrives on stdin', async () => {
+    // Verify the JSONL wire protocol end-to-end through runChat:
+    // approval_request emitted on stderr → response piped to stdin → tool executes
+    let backendCallCount = 0;
+    testState.runBackendImpl.mockImplementation(async () => {
+      backendCallCount++;
+      if (backendCallCount === 1) {
+        return {
+          success: true,
+          stdout:
+            '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hi"}}\n```',
+          stderr: '',
+          exitCode: 0,
+          durationMs: 5,
+          command: 'mock',
+        };
+      }
+      return {
+        success: true,
+        stdout: 'ok',
+        stderr: '',
+        exitCode: 0,
+        durationMs: 3,
+        command: 'mock',
+      };
+    });
+
+    // Capture stderr writes and auto-respond to approval_request events via stdin
+    const stderrWrites: string[] = [];
+    const originalStderrWrite = process.stderr.write.bind(process.stderr);
+    const stderrSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation((chunk: string | Uint8Array, ...rest: unknown[]) => {
+        const str = String(chunk);
+        stderrWrites.push(str);
+
+        // When we see an approval_request, respond immediately via stdin
+        for (const line of str.split('\n')) {
+          try {
+            const parsed = JSON.parse(line.trim()) as { type?: string; id?: string };
+            if (parsed.type === 'approval_request' && parsed.id) {
+              // Push the approval response to stdin so the channel picks it up
+              const response = JSON.stringify({
+                type: 'approval_response',
+                id: parsed.id,
+                decision: 'once',
+                by: 'test-harness',
+              });
+              process.stdin.push(response + '\n');
+            }
+          } catch {
+            // Not JSON — ignore
+          }
+        }
+
+        return originalStderrWrite(
+          chunk,
+          ...(rest as [BufferEncoding, (err?: Error | null) => void])
+        );
+      });
+
+    testState.inputs = ['trigger tool', '/quit'];
+
+    await runChat({
+      agent: 'lumen',
+      backend: 'claude',
+      toolRouting: 'local',
+      approvalMode: 'jsonl',
+      pollSeconds: '999',
+    });
+
+    stderrSpy.mockRestore();
+
+    // Verify approval_request was emitted on stderr
+    const allStderr = stderrWrites.join('');
+    const approvalRequests = allStderr.split('\n').filter((line) => {
+      try {
+        return JSON.parse(line.trim()).type === 'approval_request';
+      } catch {
+        return false;
+      }
+    });
+    expect(approvalRequests.length).toBeGreaterThan(0);
+
+    const request = JSON.parse(approvalRequests[0]) as {
+      type: string;
+      tool: string;
+      id: string;
+      ts: string;
+    };
+    expect(request.type).toBe('approval_request');
+    expect(request.tool).toBe('send_to_inbox');
+    expect(request.id).toBeTruthy();
+
+    // send_to_inbox should have been executed after approval response was piped to stdin
+    expect(testState.pcpCalls.some((call) => call.tool === 'send_to_inbox')).toBe(true);
+  }, 10_000);
+
+  it('applies default backend timeout for non-interactive turns', async () => {
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      nonInteractive: true,
+      message: 'one shot timeout default',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      timeoutMs?: number;
+    };
+    expect(backendRequest.timeoutMs).toBe(120_000);
+  });
+
+  it('applies explicit --backend-timeout-seconds override', async () => {
+    await runChat({
+      agent: 'lumen',
+      backend: 'codex',
+      nonInteractive: true,
+      message: 'one shot timeout override',
+      backendTimeoutSeconds: '7',
+      pollSeconds: '999',
+    });
+
+    expect(testState.runBackendImpl).toHaveBeenCalledTimes(1);
+    const backendRequest = testState.runBackendImpl.mock.calls[0][0] as {
+      timeoutMs?: number;
+    };
+    expect(backendRequest.timeoutMs).toBe(7_000);
   });
 
   it('exits gracefully on double ctrl+c', async () => {

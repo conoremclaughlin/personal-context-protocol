@@ -4,6 +4,9 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import {
   extractClaudeHistorySessionsForProject,
+  extractBackendSessionOverrideId,
+  extractLatestPreviewFromClaudeSessionJsonl,
+  extractLatestPreviewFromPcpTranscriptJsonl,
   extractSessionFromStartSessionResponse,
   filterUntrackedLocalBackendSessions,
   filterPcpSessionsForContext,
@@ -12,16 +15,20 @@ import {
   getClaudeLocalSessionsForProject,
   getKnownClaudeSessionIds,
   getCodexLocalSessionsForProject,
+  getGeminiLocalSessionsForProject,
   hasBackendSessionOverride,
   renderSessionCandidatesTable,
   resolveCapturedBackendSessionIdFromRuntime,
+  resolveCapturedBackendSessionIdWithRetry,
   resolveAdoptableLocalBackendSessionId,
   resolveBackendSessionIdForResume,
   resolveBackendSessionSeedId,
   resolveStartedSessionFromList,
   sanitizeBackendExecutionArgs,
+  sortSessionEntriesByRecency,
   shouldRetryWithFreshBackendSession,
   shouldAutoResumeRuntimeSession,
+  withSessionFileSize,
 } from './claude.js';
 
 describe('hasBackendSessionOverride', () => {
@@ -64,6 +71,35 @@ describe('hasBackendSessionOverride', () => {
     expect(hasBackendSessionOverride('claude', ['-r'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['--resume'])).toBe(true);
     expect(hasBackendSessionOverride('gemini', ['-r'])).toBe(true);
+  });
+});
+
+describe('extractBackendSessionOverrideId', () => {
+  it('extracts codex resume id from positional subcommand', () => {
+    expect(
+      extractBackendSessionOverrideId(
+        'codex',
+        [],
+        ['resume', '019c44fd-68f6-7332-9eda-2dc7c8afcedf']
+      )
+    ).toBe('019c44fd-68f6-7332-9eda-2dc7c8afcedf');
+  });
+
+  it('extracts codex resume id from passthrough subcommand', () => {
+    expect(extractBackendSessionOverrideId('codex', ['--full-auto', 'resume', '019c1234'])).toBe(
+      '019c1234'
+    );
+  });
+
+  it('extracts claude --resume id', () => {
+    expect(extractBackendSessionOverrideId('claude', ['--resume', 'ba549776-aaaa'])).toBe(
+      'ba549776-aaaa'
+    );
+  });
+
+  it('returns undefined when no explicit override id is present', () => {
+    expect(extractBackendSessionOverrideId('claude', ['--resume'])).toBeUndefined();
+    expect(extractBackendSessionOverrideId('codex', ['resume'])).toBeUndefined();
   });
 });
 
@@ -111,6 +147,40 @@ describe('buildSessionPickerLabel', () => {
     expect(label).toContain('↳');
     expect(label).toContain('PCP');
     expect(label).toContain('c4ec2f5e');
+  });
+});
+
+describe('withSessionFileSize', () => {
+  it('prefixes file size before the preview text', () => {
+    expect(withSessionFileSize('you: Nah just run it again as is', 8.55 * 1024 * 1024)).toBe(
+      '8.55 MB · you: Nah just run it again as is'
+    );
+  });
+
+  it('shows file size before the session fallback label', () => {
+    expect(withSessionFileSize(undefined, 648)).toBe('648 B · (session)');
+  });
+});
+
+describe('sortSessionEntriesByRecency', () => {
+  it('sorts newest-first regardless of source type', () => {
+    const sorted = sortSessionEntriesByRecency([
+      { key: 'pcp:old', sortMs: 10 },
+      { key: 'local:new', sortMs: 30 },
+      { key: 'pcp:mid', sortMs: 20 },
+    ]);
+
+    expect(sorted.map((entry) => entry.key)).toEqual(['local:new', 'pcp:mid', 'pcp:old']);
+  });
+
+  it('uses key as stable tiebreaker for deterministic ordering', () => {
+    const sorted = sortSessionEntriesByRecency([
+      { key: 'local:b', sortMs: 10 },
+      { key: 'pcp:a', sortMs: 10 },
+      { key: 'pcp:c', sortMs: 10 },
+    ]);
+
+    expect(sorted.map((entry) => entry.key)).toEqual(['local:b', 'pcp:a', 'pcp:c'].sort());
   });
 });
 
@@ -727,6 +797,97 @@ describe('resolveCapturedBackendSessionIdFromRuntime', () => {
     ).toBe('fallback-id');
   });
 
+  it('detects a brand-new local backend session even when pre-run snapshot is empty', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-empty-'));
+    const tempHome = join(tempRoot, 'home');
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(tempRepo, { recursive: true });
+
+    const projectDirName = tempRepo.replace(/[\\/]/g, '-');
+    const projectKeyDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectKeyDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const newSessionId = '10101010-1010-4010-8010-101010101010';
+      writeFileSync(
+        join(projectKeyDir, `${newSessionId}.jsonl`),
+        JSON.stringify({
+          type: 'progress',
+          sessionId: newSessionId,
+          timestamp: '2026-03-09T00:00:00.000Z',
+        }) + '\n'
+      );
+
+      const resolved = resolveCapturedBackendSessionIdFromRuntime({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-empty-snapshot',
+        knownLocalSessionSnapshot: new Map(),
+      });
+
+      expect(resolved).toBe(newSessionId);
+    } finally {
+      if (oldHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = oldHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('retries local session detection to handle delayed transcript flushes', async () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-retry-'));
+    const tempHome = join(tempRoot, 'home');
+    const tempRepo = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(tempRepo, { recursive: true });
+
+    const projectDirName = tempRepo.replace(/[\\/]/g, '-');
+    const projectKeyDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectKeyDir, { recursive: true });
+
+    const oldHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const delayedSessionId = '20202020-2020-4020-8020-202020202020';
+      const timer = setTimeout(() => {
+        writeFileSync(
+          join(projectKeyDir, `${delayedSessionId}.jsonl`),
+          JSON.stringify({
+            type: 'progress',
+            sessionId: delayedSessionId,
+            timestamp: '2026-03-09T00:03:00.000Z',
+          }) + '\n'
+        );
+      }, 120);
+
+      const resolved = await resolveCapturedBackendSessionIdWithRetry({
+        cwd: tempRepo,
+        backend: 'claude',
+        pcpSessionId: 'pcp-session-retry',
+        knownLocalSessionSnapshot: new Map(),
+        attempts: 10,
+        intervalMs: 40,
+      });
+
+      clearTimeout(timer);
+      expect(resolved).toBe(delayedSessionId);
+    } finally {
+      if (oldHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = oldHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it('falls back to new local backend session for the project when runtime linkage is missing', () => {
     const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-runtime-'));
     const tempHome = join(tempRoot, 'home');
@@ -916,6 +1077,165 @@ describe('getClaudeLocalSessionsForProject previews', () => {
       rmSync(tempRoot, { recursive: true, force: true });
     }
   });
+
+  it('uses size-first fallback labels when no conversational preview is available', () => {
+    const tempRoot = mkdtempSync(join(tmpdir(), 'sb-claude-preview-fallback-'));
+    const tempHome = join(tempRoot, 'home');
+    const projectPath = join(tempRoot, 'repo');
+    mkdirSync(tempHome, { recursive: true });
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectDirName = projectPath.replace(/[\\/]/g, '-');
+    const projectDir = join(tempHome, '.claude', 'projects', projectDirName);
+    mkdirSync(projectDir, { recursive: true });
+
+    const sessionId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    writeFileSync(
+      join(projectDir, `${sessionId}.jsonl`),
+      `${JSON.stringify({
+        type: 'progress',
+        sessionId,
+        timestamp: '2026-03-10T08:00:00.000Z',
+      })}\n`
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getClaudeLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toMatch(/ · \(session\)$/);
+      expect(sessions[0]?.latestPrompt).not.toContain('(session) ·');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempRoot, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('extractLatestPreviewFromClaudeSessionJsonl', () => {
+  it('ignores claude tool_result chatter and keeps meaningful assistant text', () => {
+    const sessionId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const preview = extractLatestPreviewFromClaudeSessionJsonl(
+      [
+        JSON.stringify({
+          type: 'user',
+          sessionId,
+          timestamp: '2026-03-10T07:57:00.000Z',
+          message: { role: 'user', content: 'Hi Wren' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          sessionId,
+          timestamp: '2026-03-10T07:57:01.000Z',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Let me check that for you.' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          sessionId,
+          timestamp: '2026-03-10T07:57:02.000Z',
+          message: {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                content:
+                  '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+              },
+            ],
+          },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          sessionId,
+          timestamp: '2026-03-10T07:57:03.000Z',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'All set — authentication worked.' }],
+          },
+        }),
+      ].join('\n')
+    );
+
+    expect(preview).toEqual({
+      role: 'assistant',
+      content: 'All set — authentication worked.',
+      ts: '2026-03-10T07:57:03.000Z',
+    });
+  });
+
+  it('falls back to the last real conversational message when latest entry is tool noise', () => {
+    const sessionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const preview = extractLatestPreviewFromClaudeSessionJsonl(
+      [
+        JSON.stringify({
+          type: 'user',
+          sessionId,
+          timestamp: '2026-03-10T08:00:00.000Z',
+          message: { role: 'user', content: 'Can you check auth?' },
+        }),
+        JSON.stringify({
+          type: 'assistant',
+          sessionId,
+          timestamp: '2026-03-10T08:00:01.000Z',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'Running the command now.' }],
+          },
+        }),
+        JSON.stringify({
+          type: 'user',
+          sessionId,
+          timestamp: '2026-03-10T08:00:02.000Z',
+          message: {
+            role: 'user',
+            content:
+              '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+          },
+        }),
+      ].join('\n')
+    );
+
+    expect(preview).toEqual({
+      role: 'assistant',
+      content: 'Running the command now.',
+      ts: '2026-03-10T08:00:01.000Z',
+    });
+  });
+});
+
+describe('extractLatestPreviewFromPcpTranscriptJsonl', () => {
+  it('ignores local-command wrapper chatter and keeps last meaningful conversational text', () => {
+    const preview = extractLatestPreviewFromPcpTranscriptJsonl(
+      [
+        JSON.stringify({
+          type: 'assistant',
+          ts: '2026-03-10T08:10:00.000Z',
+          content: 'Real assistant reply',
+        }),
+        JSON.stringify({
+          type: 'user',
+          ts: '2026-03-10T08:10:01.000Z',
+          content:
+            '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+        }),
+      ].join('\n')
+    );
+
+    expect(preview).toEqual({
+      role: 'assistant',
+      content: 'Real assistant reply',
+      ts: '2026-03-10T08:10:00.000Z',
+    });
+  });
 });
 
 describe('getCodexLocalSessionsForProject', () => {
@@ -928,6 +1248,7 @@ describe('getCodexLocalSessionsForProject', () => {
     mkdirSync(codexSessionsDir, { recursive: true });
 
     const matchingSessionId = '019a23ac-e563-7d53-8bf0-5a948546bf29';
+    const nonCliSessionId = '019a23ac-e563-7d53-8bf0-5a948546bf99';
     const nonMatchingSessionId = '019a23b9-b211-7972-b007-012a8bc1d6f2';
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${matchingSessionId}.jsonl`),
@@ -939,6 +1260,21 @@ describe('getCodexLocalSessionsForProject', () => {
             id: matchingSessionId,
             cwd: projectPath,
             timestamp: '2026-03-02T11:44:41.000Z',
+            originator: 'codex_cli_rs',
+          },
+        }),
+        JSON.stringify({
+          timestamp: '2026-03-02T11:44:46.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'user',
+            content: [
+              {
+                type: 'output_text',
+                text: '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+              },
+            ],
           },
         }),
         JSON.stringify({
@@ -951,6 +1287,19 @@ describe('getCodexLocalSessionsForProject', () => {
           },
         }),
       ].join('\n') + '\n'
+    );
+    writeFileSync(
+      join(codexSessionsDir, `rollout-2026-03-02T11-45-41-${nonCliSessionId}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-03-02T11:45:41.000Z',
+        type: 'session_meta',
+        payload: {
+          id: nonCliSessionId,
+          cwd: projectPath,
+          timestamp: '2026-03-02T11:45:41.000Z',
+          originator: 'codex_exec',
+        },
+      })}\n`
     );
     writeFileSync(
       join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${nonMatchingSessionId}.jsonl`),
@@ -973,8 +1322,146 @@ describe('getCodexLocalSessionsForProject', () => {
       expect(sessions.map((session) => session.sessionId)).toEqual([matchingSessionId]);
       expect(sessions[0]?.latestPrompt).toBe('assistant: Most recent assistant reply');
       expect(sessions[0]?.transcriptPath).toContain(matchingSessionId);
+
+      const sessionsIncludingExec = getCodexLocalSessionsForProject(projectPath, 10, {
+        includeExecSources: true,
+      });
+      expect(sessionsIncludingExec.map((session) => session.sessionId)).toEqual([
+        nonCliSessionId,
+        matchingSessionId,
+      ]);
     } finally {
       process.env.HOME = originalHome;
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('uses size-first fallback labels when rollout transcripts have no previewable messages', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'codex-jsonl-fallback-label-'));
+    const projectPath = join(tempHome, 'repo');
+    mkdirSync(projectPath, { recursive: true });
+
+    const codexSessionsDir = join(tempHome, '.codex', 'sessions', '2026', '03', '02');
+    mkdirSync(codexSessionsDir, { recursive: true });
+
+    const sessionId = '019a23ac-e563-7d53-8bf0-5a948546bf88';
+    writeFileSync(
+      join(codexSessionsDir, `rollout-2026-03-02T11-44-41-${sessionId}.jsonl`),
+      `${JSON.stringify({
+        timestamp: '2026-03-02T11:44:41.000Z',
+        type: 'session_meta',
+        payload: {
+          id: sessionId,
+          cwd: projectPath,
+          timestamp: '2026-03-02T11:44:41.000Z',
+          originator: 'codex_cli_rs',
+        },
+      })}\n`
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getCodexLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toMatch(/ · \(session\)$/);
+      expect(sessions[0]?.latestPrompt).not.toContain('(session) ·');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('getGeminiLocalSessionsForProject', () => {
+  it('skips noisy auth/tool chatter and falls back to latest meaningful message', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'gemini-preview-filter-'));
+    const projectPath = join(tempHome, 'repo');
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectKey = projectPath.replace(/[\\/]/g, '-');
+    const chatsDir = join(tempHome, '.gemini', 'tmp', projectKey, 'chats');
+    const historyDir = join(tempHome, '.gemini', 'history', projectKey);
+    mkdirSync(chatsDir, { recursive: true });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(join(historyDir, '.project_root'), projectPath);
+
+    writeFileSync(
+      join(chatsDir, 'session-1.json'),
+      JSON.stringify({
+        sessionId: 'gemini-session-1',
+        startTime: '2026-03-10T08:15:00.000Z',
+        lastUpdated: '2026-03-10T08:15:03.000Z',
+        messages: [
+          { type: 'user', content: 'Hello Gemini' },
+          { type: 'assistant', content: 'Here is the real reply' },
+          {
+            type: 'assistant',
+            content:
+              '<local-command-stdout>Authentication successful. Connected to supabase.</local-command-stdout>',
+          },
+        ],
+      })
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getGeminiLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toBe('assistant: Here is the real reply');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      rmSync(tempHome, { recursive: true, force: true });
+    }
+  });
+
+  it('uses size-first fallback labels when gemini chat files have no meaningful preview', () => {
+    const tempHome = mkdtempSync(join(tmpdir(), 'gemini-preview-fallback-'));
+    const projectPath = join(tempHome, 'repo');
+    mkdirSync(projectPath, { recursive: true });
+
+    const projectKey = projectPath.replace(/[\\/]/g, '-');
+    const chatsDir = join(tempHome, '.gemini', 'tmp', projectKey, 'chats');
+    const historyDir = join(tempHome, '.gemini', 'history', projectKey);
+    mkdirSync(chatsDir, { recursive: true });
+    mkdirSync(historyDir, { recursive: true });
+    writeFileSync(join(historyDir, '.project_root'), projectPath);
+
+    writeFileSync(
+      join(chatsDir, 'session-2.json'),
+      JSON.stringify({
+        sessionId: 'gemini-session-2',
+        startTime: '2026-03-10T08:15:00.000Z',
+        lastUpdated: '2026-03-10T08:15:03.000Z',
+        messages: [{ type: 'assistant', content: '   ' }],
+      })
+    );
+
+    const originalHome = process.env.HOME;
+    process.env.HOME = tempHome;
+
+    try {
+      const sessions = getGeminiLocalSessionsForProject(projectPath, 10);
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.latestPrompt).toMatch(/ · \(session\)$/);
+      expect(sessions[0]?.latestPrompt).not.toContain('(session) ·');
+    } finally {
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
       rmSync(tempHome, { recursive: true, force: true });
     }
   });

@@ -283,14 +283,52 @@ export class MCPServer {
         : {};
       const callerProfileHeader = req.header('x-pcp-caller-profile')?.trim().toLowerCase();
       // Trust boundary note:
-      // `x-pcp-caller-profile` is only consumed on the MCP transport entrypoint.
-      // Supported MCP clients in our stack do not expose arbitrary header injection to model prompts,
-      // so this remains a runtime/server-controlled signal rather than an LLM-controlled parameter.
+      // `x-pcp-caller-profile`, `x-pcp-session-id`, and `x-pcp-studio-id` are only consumed
+      // on the MCP transport entrypoint. Supported MCP clients in our stack do not expose
+      // arbitrary header injection to model prompts, so these remain runtime/server-controlled
+      // signals rather than LLM-controlled parameters.
       const callerProfile: 'agent' | 'runtime' =
         callerProfileHeader === 'runtime' ? 'runtime' : 'agent';
-      Object.assign(ctx, { callerProfile });
+      const sessionIdHeader = req.header('x-pcp-session-id')?.trim();
+      const studioIdHeader = req.header('x-pcp-studio-id')?.trim();
+      Object.assign(ctx, {
+        callerProfile,
+        ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
+        ...(studioIdHeader ? { workspaceId: studioIdHeader } : {}),
+      });
 
-      if (userData) {
+      // Resolve studioId from session when x-pcp-session-id is provided
+      // but x-pcp-studio-id is not. This avoids requiring a separate studio
+      // header — the session record already stores its studio scope.
+      let hasSessionDerivedWorkspace = false;
+      if (sessionIdHeader && !studioIdHeader && userData) {
+        try {
+          const session = await this.dataComposer.repositories.memory.getSession(sessionIdHeader);
+          if (session?.studioId) {
+            // Verify the session belongs to the authenticated user before
+            // trusting its studioId for workspace scoping.
+            if (session.userId !== userData.userId) {
+              logger.warn('Session-derived studioId rejected: session belongs to different user', {
+                sessionId: sessionIdHeader,
+                sessionUserId: session.userId,
+                authenticatedUserId: userData.userId,
+              });
+            } else {
+              Object.assign(ctx, { workspaceId: session.studioId, workspaceSource: 'session' });
+              hasSessionDerivedWorkspace = true;
+            }
+          }
+        } catch (error) {
+          logger.debug('Failed to resolve studioId from session header', {
+            sessionId: sessionIdHeader,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      // Only fall back to header/agent-derived workspace resolution when session
+      // didn't already provide one (session scope takes priority over derivation).
+      if (userData && !hasSessionDerivedWorkspace) {
         try {
           Object.assign(ctx, await this.resolveWorkspaceContextForMcpRequest(req, userData));
         } catch (error) {

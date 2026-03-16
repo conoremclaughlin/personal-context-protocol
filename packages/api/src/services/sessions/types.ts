@@ -52,7 +52,8 @@ export interface Session {
   identityId?: string;
   /** Studio/worktree scope for this session */
   studioId?: string;
-  claudeSessionId: string | null;
+  /** Backend-specific session ID for resume (Claude Code, Codex thread UUID, Gemini session) */
+  backendSessionId: string | null;
 
   type: SessionType;
   /** Runtime lifecycle: running, idle, completed, failed */
@@ -138,12 +139,14 @@ export interface ChannelResponse {
   format?: 'text' | 'markdown' | 'code' | 'json';
   replyToMessageId?: string;
   metadata?: Record<string, unknown>;
+  /** Media attachments (images, videos, documents) to send alongside text */
+  media?: import('../../agent/types').OutboundMedia[];
 }
 
 export interface SessionResult {
   success: boolean;
   sessionId: string;
-  claudeSessionId: string | null;
+  backendSessionId: string | null;
 
   // Responses routed via send_response
   responses: ChannelResponse[];
@@ -338,7 +341,7 @@ export interface ISessionRepository {
     usage: { contextTokens: number; inputTokens: number; outputTokens: number }
   ): Promise<void>;
 
-  markCompacted(id: string, newClaudeSessionId: string): Promise<void>;
+  markCompacted(id: string, newBackendSessionId: string | null): Promise<void>;
 
   /**
    * Atomically acquire a compaction lock for a session.
@@ -380,7 +383,7 @@ export interface IContextBuilder {
   getAgentBackend(userId: string, agentId: string): Promise<string | null>;
 }
 
-// ─── Claude Runner Interface ───
+// ─── Runner Interface ───
 
 export interface ClaudeRunnerConfig {
   workingDirectory: string;
@@ -389,31 +392,43 @@ export interface ClaudeRunnerConfig {
   systemPrompt?: string;
   appendSystemPrompt?: string;
   pcpAccessToken?: string;
+  /** PCP session ID for this run — written to runtime hint files so hooks link correctly */
+  pcpSessionId?: string;
+  /** Agent ID for this run — written to runtime hint files */
+  agentId?: string;
+  /** Studio/worktree scope — written to runtime hint so findRuntimeSessionByLinkId matches */
+  studioId?: string;
 }
 
-export interface ClaudeRunnerResult {
+export interface RunnerResult {
   success: boolean;
-  claudeSessionId: string;
+  backendSessionId: string | null;
   responses: ChannelResponse[];
   usage?: SessionResult['usage'];
   error?: string;
-  /** The final text response from Claude (for auto-routing if no explicit send_response) */
+  /** The final text response from the backend (for auto-routing if no explicit send_response) */
   finalTextResponse?: string;
   /** Tool calls captured during this run (for activity stream logging) */
   toolCalls?: ToolCall[];
 }
 
-export interface IClaudeRunner {
+/** @deprecated Use RunnerResult */
+export type ClaudeRunnerResult = RunnerResult;
+
+export interface IRunner {
   /**
-   * Run a message through Claude Code.
-   * Spawns process with --resume or --session-id as appropriate.
+   * Run a message through a backend CLI.
+   * Spawns process with --resume or equivalent as appropriate.
    */
   run(
     message: string,
     options: {
-      claudeSessionId?: string;
+      backendSessionId?: string;
       injectedContext?: InjectedContext;
       config: ClaudeRunnerConfig;
     }
-  ): Promise<ClaudeRunnerResult>;
+  ): Promise<RunnerResult>;
 }
+
+/** @deprecated Use IRunner */
+export type IClaudeRunner = IRunner;

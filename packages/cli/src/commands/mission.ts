@@ -27,6 +27,7 @@ interface MissionRow {
   latestLifecycle?: string;
   latestPhase?: string;
   latestBackendSessionId?: string;
+  sessionsByLifecycle?: Record<string, number>;
 }
 
 interface MissionSnapshot {
@@ -85,7 +86,7 @@ export function extractInboxMessages(
     (Array.isArray(result.data) ? result.data : undefined) ||
     [];
 
-  return candidate
+  const legacyMessages = candidate
     .map((entry): InboxMessage | undefined => {
       const row = entry as Record<string, unknown>;
       const id = row.id;
@@ -109,6 +110,37 @@ export function extractInboxMessages(
       };
     })
     .filter((msg): msg is InboxMessage => Boolean(msg));
+
+  // Also extract thread preview messages from threadsWithUnread
+  const threadMessages: InboxMessage[] = [];
+  const threads = Array.isArray(result.threadsWithUnread) ? result.threadsWithUnread : [];
+  for (const thread of threads) {
+    const t = thread as Record<string, unknown>;
+    const threadKey = typeof t.threadKey === 'string' ? t.threadKey : undefined;
+    const participants = Array.isArray(t.participants) ? (t.participants as string[]) : [];
+    const previews = Array.isArray(t.previewMessages) ? t.previewMessages : [];
+    for (const preview of previews) {
+      const p = preview as Record<string, unknown>;
+      const sender = typeof p.senderAgentId === 'string' ? p.senderAgentId : undefined;
+      const content = typeof p.content === 'string' ? p.content : undefined;
+      const createdAt = typeof p.createdAt === 'string' ? p.createdAt : undefined;
+      const msgType = typeof p.messageType === 'string' ? p.messageType : undefined;
+      if (!createdAt) continue;
+      // Derive recipient: the other participant(s) in the thread
+      const recipients = participants.filter((id) => id !== sender);
+      threadMessages.push({
+        id: `thread-${threadKey}-${createdAt}`,
+        content,
+        messageType: msgType,
+        senderAgentId: sender,
+        recipientAgentId: recipients[0],
+        threadKey,
+        createdAt,
+      });
+    }
+  }
+
+  return [...legacyMessages, ...threadMessages];
 }
 
 export function inboxMessageToFeedEvent(msg: InboxMessage, timezone?: string): FeedEvent {
@@ -200,6 +232,12 @@ function parseSessions(result: Record<string, unknown>): Session[] {
 }
 
 export function extractUnreadCount(result: Record<string, unknown>): number {
+  // Prefer totalUnreadCount (includes thread unreads) over legacy unreadCount
+  const total = result.totalUnreadCount;
+  if (typeof total === 'number' && Number.isFinite(total)) {
+    return total;
+  }
+
   const explicit = result.unreadCount;
   if (typeof explicit === 'number' && Number.isFinite(explicit)) {
     return explicit;
@@ -284,6 +322,41 @@ export function formatWorktreeLabel(folder: string): string {
     return `${folder.slice(0, dashIdx)} / ${folder.slice(dashIdx + 2)}`;
   }
   return folder;
+}
+
+/**
+ * Format a state_change activity into a human-readable summary showing actual values.
+ * Payload shape: { changedFields, before, after, ... }
+ */
+function formatStateChange(activity: MissionActivity): string {
+  const p = activity.payload;
+  const after = p?.after as Record<string, unknown> | undefined;
+  const changedFields = p?.changedFields as string[] | undefined;
+
+  if (!after || !changedFields?.length) {
+    // Fallback to raw content if payload is missing
+    return (activity.content || 'session updated').replace(/\s+/g, ' ').trim();
+  }
+
+  const sessionId =
+    typeof p?.sessionId === 'string' ? p.sessionId.slice(0, 8) : activity.sessionId?.slice(0, 8);
+
+  // Show the values that changed, not just the field names
+  const parts: string[] = [];
+  for (const field of changedFields) {
+    const val = after[field];
+    if (val == null || val === '') continue;
+    const strVal = String(val);
+    // Skip very long values (like context blobs) in the summary line
+    if (strVal.length > 80) continue;
+    parts.push(`${field}: ${strVal}`);
+  }
+
+  if (parts.length === 0) {
+    return `Session ${sessionId || '?'} updated (${changedFields.join(', ')})`;
+  }
+
+  return `Session ${sessionId || '?'} → ${parts.join(', ')}`;
 }
 
 function compactPreview(value?: string, max = 110): string {
@@ -419,7 +492,8 @@ function newestSession(sessions: Session[]): Session | undefined {
 
 export function summarizeMissionRows(
   sessions: Session[],
-  unreadByAgent: Record<string, number>
+  unreadByAgent: Record<string, number>,
+  lifecycleByAgent?: Record<string, Record<string, number>>
 ): MissionRow[] {
   const grouped = new Map<string, Session[]>();
 
@@ -436,6 +510,14 @@ export function summarizeMissionRows(
     .map((agent) => {
       const list = grouped.get(agent) || [];
       const latest = newestSession(list);
+
+      // Count sessions by lifecycle
+      const byLifecycle: Record<string, number> = {};
+      for (const s of list) {
+        const lc = s.lifecycle || 'unknown';
+        byLifecycle[lc] = (byLifecycle[lc] || 0) + 1;
+      }
+
       return {
         agent,
         activeSessions: list.length,
@@ -445,6 +527,9 @@ export function summarizeMissionRows(
         latestLifecycle: latest?.lifecycle || 'idle',
         latestPhase: latest?.currentPhase || undefined,
         latestBackendSessionId: latest?.backendSessionId || latest?.claudeSessionId,
+        sessionsByLifecycle:
+          lifecycleByAgent?.[agent] ||
+          (Object.keys(byLifecycle).length > 0 ? byLifecycle : undefined),
       } satisfies MissionRow;
     })
     .sort((a, b) => {
@@ -538,62 +623,67 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
     allAgents.add(options.agent);
   }
 
-  const unreadByAgent: Record<string, number> = {};
   const allInboxMessages: InboxMessage[] = [];
   const fetchAllInbox = options.feed || options.watch;
 
-  // Try single query for all agents (requires server support for optional agentId).
-  // Falls back to per-agent loop if the server rejects the agentId-less request.
-  let inboxFetched = false;
-  if (!options.agent) {
-    try {
-      const inboxResult = (await pcp.callTool('get_inbox', {
-        email: config.email,
-        status: fetchAllInbox ? 'all' : 'unread',
-        limit: fetchAllInbox ? Number.parseInt(options.feedLimit || '40', 10) : 200,
-      })) as Record<string, unknown>;
+  // Use get_agent_summaries for accurate per-agent unread counts and session breakdowns.
+  // This computes thread unreads with proper per-agent last_read_at (no inflation).
+  const unreadByAgent: Record<string, number> = {};
+  const lifecycleByAgent: Record<string, Record<string, number>> = {};
+  try {
+    const summariesResult = (await pcp.callTool('get_agent_summaries', {
+      email: config.email,
+      ...(options.agent ? { agentIds: [options.agent] } : {}),
+    })) as Record<string, unknown>;
 
-      const msgs = extractInboxMessages(inboxResult);
-      if (msgs.length > 0 || inboxResult.allAgents === true) {
-        inboxFetched = true;
-        for (const m of msgs) {
-          const agent = m.recipientAgentId || 'unknown';
-          if (m.status === 'unread') {
-            unreadByAgent[agent] = (unreadByAgent[agent] || 0) + 1;
-          }
+    const agents = Array.isArray(summariesResult.agents) ? summariesResult.agents : [];
+    for (const a of agents) {
+      const agent = a as Record<string, unknown>;
+      const agentId = typeof agent.agentId === 'string' ? agent.agentId : 'unknown';
+      const totalUnread = typeof agent.totalUnread === 'number' ? agent.totalUnread : 0;
+      unreadByAgent[agentId] = totalUnread;
+      allAgents.add(agentId);
+
+      // Extract session lifecycle breakdown
+      const byLc = agent.sessionsByLifecycle;
+      if (byLc && typeof byLc === 'object' && !Array.isArray(byLc)) {
+        const breakdown: Record<string, number> = {};
+        for (const [lc, count] of Object.entries(byLc as Record<string, unknown>)) {
+          if (typeof count === 'number') breakdown[lc] = count;
         }
-        for (const agentId of Array.from(allAgents)) {
-          if (!(agentId in unreadByAgent)) unreadByAgent[agentId] = 0;
-        }
-        if (fetchAllInbox) {
-          allInboxMessages.push(...msgs);
-        }
+        if (Object.keys(breakdown).length > 0) lifecycleByAgent[agentId] = breakdown;
       }
-    } catch {
-      // Server doesn't support agentId-less query yet — fall through to per-agent
     }
-  }
-
-  // Per-agent fallback (or when --agent filter is specified)
-  if (!inboxFetched) {
+  } catch {
+    // Fallback: server doesn't support get_agent_summaries yet — derive from get_inbox
     const agentsToQuery = options.agent ? [options.agent] : Array.from(allAgents);
     for (const agentId of agentsToQuery) {
       try {
         const inboxResult = (await pcp.callTool('get_inbox', {
           email: config.email,
           agentId,
-          status: fetchAllInbox ? 'all' : 'unread',
-          limit: fetchAllInbox ? Number.parseInt(options.feedLimit || '40', 10) : 200,
+          status: 'unread',
+          limit: 200,
         })) as Record<string, unknown>;
         unreadByAgent[agentId] = extractUnreadCount(inboxResult);
-        if (fetchAllInbox) {
-          const msgs = extractInboxMessages(inboxResult);
-          for (const m of msgs) m.recipientAgentId = agentId;
-          allInboxMessages.push(...msgs);
-        }
       } catch {
         unreadByAgent[agentId] = 0;
       }
+    }
+  }
+
+  // Fetch inbox messages for the feed (all agents, all statuses)
+  if (fetchAllInbox) {
+    try {
+      const inboxResult = (await pcp.callTool('get_inbox', {
+        email: config.email,
+        ...(options.agent ? { agentId: options.agent } : {}),
+        status: 'all',
+        limit: Number.parseInt(options.feedLimit || '40', 10),
+      })) as Record<string, unknown>;
+      allInboxMessages.push(...extractInboxMessages(inboxResult));
+    } catch {
+      // Feed messages are best-effort
     }
   }
 
@@ -629,7 +719,7 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
   }
 
   return {
-    rows: summarizeMissionRows(sessions, unreadByAgent),
+    rows: summarizeMissionRows(sessions, unreadByAgent, lifecycleByAgent),
     sessions,
     feed,
     inboxMessages: allInboxMessages,
@@ -744,7 +834,7 @@ export function activityToFeedEvent(
   } else if (activity.type === 'message_out') {
     content = `→ ${activity.platform || 'unknown'}: ${compactPreview(activity.content, maxPreview)}`;
   } else if (activity.type === 'state_change') {
-    content = compactPreview(activity.content, maxPreview);
+    content = formatStateChange(activity);
   } else if (activity.type === 'tool_call' || activity.type === 'tool_result') {
     const ap = activity.payload;
     const isBackendCli = activity.subtype?.startsWith('backend_cli:');
@@ -888,6 +978,7 @@ async function runInkMission(options: MissionOptions): Promise<void> {
         phase: row.latestPhase,
         unread: row.unreadInbox,
         sessions: row.activeSessions,
+        sessionsByLifecycle: row.sessionsByLifecycle,
         latestThread: row.latestThreadKey,
       }));
       mission.setAgents(agentSummaries);

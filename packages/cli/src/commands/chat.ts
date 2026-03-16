@@ -13,8 +13,19 @@ import {
   watchFile,
 } from 'fs';
 import { isAbsolute, join } from 'path';
-import { readIdentityJson, resolveAgentId } from '../backends/identity.js';
+import {
+  readIdentityJson,
+  resolveAgentId,
+  saveRuntimePreferences,
+  type RuntimePreferences,
+} from '../backends/identity.js';
 import { PcpClient } from '../lib/pcp-client.js';
+import { initSbDebug, sbDebugLog } from '../lib/sb-debug.js';
+import {
+  getBackendAuthStatus,
+  runBackendInteractiveLogin,
+  type BackendAuthBackend,
+} from '../lib/backend-auth.js';
 import { runBackendTurn } from '../repl/backend-runner.js';
 import { ContextLedger, estimateTokens } from '../repl/context-ledger.js';
 import { parseSlashCommand } from '../repl/slash.js';
@@ -26,6 +37,12 @@ import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
 import { executeToolCalls, type ToolCallResult } from '../repl/tool-call-executor.js';
 import { applyProfile, formatProfileList, isValidProfileId } from '../repl/tool-profiles.js';
 import { ApprovalRequestManager } from '../repl/approval-request.js';
+import {
+  type ApprovalChannel,
+  type ApprovalResponseDecision,
+  JsonlApprovalChannel,
+  AutoApprovalChannel,
+} from '../repl/approval-channel.js';
 import {
   parsePermissionGrant,
   applyPermissionGrant,
@@ -72,9 +89,13 @@ type ChatOptions = {
   profile?: string;
   message?: string;
   nonInteractive?: boolean;
+  backendTimeoutSeconds?: string;
   tailTranscript?: string;
+  sbStrictTools?: boolean;
+  sbDebug?: boolean;
   verbose?: boolean;
   fullscreen?: boolean;
+  approvalMode?: string;
 };
 
 interface InboxMessage {
@@ -99,7 +120,6 @@ interface ChatRuntime {
   toolRouting: 'backend' | 'local';
   uiMode: 'scroll' | 'live';
   threadKey?: string;
-  workspaceId?: string;
   studioId?: string;
   userTimezone?: string;
   backendTokenWindow: number;
@@ -113,13 +133,15 @@ interface ChatRuntime {
   transcriptPath: string;
   activeSkills: SkillInstruction[];
   bootstrapContext?: string;
+  strictTools: boolean;
+  backendTurnTimeoutMs?: number;
+  approvalMode: 'interactive' | 'jsonl' | 'auto-deny' | 'auto-approve';
+  approvalChannel?: ApprovalChannel;
 }
 
 interface SessionSummary {
   id: string;
   agentId?: string;
-  workspaceId?: string;
-  workspaceName?: string;
   studioId?: string;
   studioName?: string;
   status?: string;
@@ -140,6 +162,167 @@ interface ActivitySummary {
   agentId?: string;
   sessionId?: string;
   createdAt?: string;
+}
+
+function isBackendAuthBackend(value: string): value is BackendAuthBackend {
+  return value === 'claude' || value === 'codex' || value === 'gemini';
+}
+
+async function ensureBackendAuthReady(
+  backend: string,
+  mode: { nonInteractive: boolean; hasMessage: boolean; verbose: boolean }
+): Promise<void> {
+  if (process.env.SB_SKIP_BACKEND_AUTH_CHECK === '1' || process.env.VITEST) {
+    return;
+  }
+  if (!isBackendAuthBackend(backend)) return;
+
+  const status = await getBackendAuthStatus(backend);
+  sbDebugLog('chat', 'backend_auth_status', {
+    backend,
+    authenticated: status.authenticated,
+    detail: status.detail,
+    canInteractiveLogin: status.canInteractiveLogin,
+    loginCommand: status.loginCommand || null,
+    mode,
+  });
+  if (status.authenticated) {
+    if (mode.verbose) {
+      console.log(chalk.dim(`Backend auth: ${backend} (${status.detail})`));
+    }
+    return;
+  }
+
+  const guidance = `Backend ${backend} is not authenticated (${status.detail}).`;
+  const loginHint =
+    status.loginCommand ||
+    (backend === 'gemini' ? 'Start `gemini` once and complete login in the Gemini CLI' : null);
+
+  if (mode.nonInteractive || mode.hasMessage) {
+    sbDebugLog('chat', 'backend_auth_required_non_interactive', {
+      backend,
+      detail: status.detail,
+      loginCommand: loginHint || null,
+      mode,
+    });
+    throw new Error(
+      `${guidance}${loginHint ? `\nRun: ${loginHint}` : '\nAuthenticate backend CLI and retry.'}`
+    );
+  }
+
+  console.log(chalk.yellow(`⚠ ${guidance}`));
+  if (!status.canInteractiveLogin || !status.loginCommand) {
+    if (loginHint) console.log(chalk.dim(`  Run: ${loginHint}`));
+    return;
+  }
+  if (!input.isTTY || !output.isTTY) {
+    console.log(chalk.dim(`  Run: ${status.loginCommand}`));
+    return;
+  }
+
+  const prompt = createInterface({ input, output });
+  try {
+    const answer = (
+      await prompt.question(chalk.cyan(`Run ${status.loginCommand} now? [Y/n] `))
+    ).trim();
+    if (answer && !['y', 'yes'].includes(answer.toLowerCase())) {
+      console.log(chalk.dim(`  Skipping login. Run manually: ${status.loginCommand}`));
+      return;
+    }
+  } finally {
+    prompt.close();
+  }
+
+  const exitCode = await runBackendInteractiveLogin(backend);
+  if (exitCode !== 0) {
+    throw new Error(
+      `Backend ${backend} login exited with code ${exitCode}. Run \`${status.loginCommand}\` and retry.`
+    );
+  }
+  const recheck = await getBackendAuthStatus(backend);
+  if (!recheck.authenticated) {
+    throw new Error(
+      `Backend ${backend} still appears unauthenticated (${recheck.detail}). Run \`${status.loginCommand}\` and retry.`
+    );
+  }
+  console.log(chalk.green(`✓ Backend ${backend} authenticated (${recheck.detail})`));
+}
+
+type BackendToolGateSnapshot = {
+  mode: ToolMode;
+  allowedTools: string[];
+  unresolvedPatterns: string[];
+};
+
+function buildBackendToolPassthrough(
+  backend: string,
+  toolRouting: 'backend' | 'local',
+  gate: BackendToolGateSnapshot,
+  strictTools: boolean
+): { passthroughArgs: string[]; warning?: string } {
+  const shouldDisableBackendTools = toolRouting !== 'backend' || gate.mode === 'off';
+
+  if (backend === 'claude') {
+    if (shouldDisableBackendTools) {
+      return { passthroughArgs: ['--allowedTools', ''] };
+    }
+    if (gate.mode === 'privileged') {
+      return { passthroughArgs: [] };
+    }
+    return { passthroughArgs: ['--allowedTools', gate.allowedTools.join(',')] };
+  }
+
+  if (backend === 'gemini') {
+    if (shouldDisableBackendTools) {
+      return { passthroughArgs: ['--allowed-tools', ''] };
+    }
+    if (gate.mode === 'privileged') {
+      return { passthroughArgs: [] };
+    }
+    return { passthroughArgs: ['--allowed-tools', gate.allowedTools.join(',')] };
+  }
+
+  if (backend === 'codex') {
+    if (toolRouting === 'local' && strictTools) {
+      return {
+        passthroughArgs: [
+          // Keep Codex execution deterministic in one-shot mode.
+          // NOTE: for Codex `exec`, these are subcommand options and therefore
+          // must be placed after `exec` (adapter handles ordering).
+          '--color',
+          'never',
+          '--sandbox',
+          'read-only',
+          '--skip-git-repo-check',
+          '--config',
+          'features.apps=false',
+          '--config',
+          'mcp_servers.pcp.enabled=false',
+          '--config',
+          'mcp_servers.next-devtools.enabled=false',
+          '--config',
+          'mcp_servers.github.enabled=false',
+          '--config',
+          'mcp_servers.supabase.enabled=false',
+          '--config',
+          'mcp_servers={}',
+        ],
+        warning:
+          'Codex strict-tools mode enabled: forcing read-only sandbox, no color UI, and disabling known backend MCP servers.',
+      };
+    }
+    if (shouldDisableBackendTools || gate.mode === 'backend') {
+      return {
+        passthroughArgs: [],
+        warning:
+          toolRouting === 'local'
+            ? 'Codex CLI has no allowlist passthrough flag; relying on sb local-tool routing prompt guard.'
+            : 'Codex CLI has no allowlist passthrough flag; backend tool gating is not enforced by CLI flags.',
+      };
+    }
+  }
+
+  return { passthroughArgs: [] };
 }
 
 interface DelegationState {
@@ -713,20 +896,6 @@ function extractSessionSummaries(
       return {
         id,
         agentId: typeof row.agentId === 'string' ? row.agentId : undefined,
-        workspaceId:
-          typeof row.workspaceId === 'string'
-            ? row.workspaceId
-            : typeof row.workspace_id === 'string'
-              ? row.workspace_id
-              : undefined,
-        workspaceName:
-          typeof row.workspaceName === 'string'
-            ? row.workspaceName
-            : typeof row.workspace_name === 'string'
-              ? row.workspace_name
-              : typeof studio?.worktreeFolder === 'string'
-                ? studio.worktreeFolder
-                : undefined,
         studioId:
           typeof row.studioId === 'string'
             ? row.studioId
@@ -1074,14 +1243,12 @@ function formatStudioForDisplay(studioId?: string, mode: 'short' | 'full' = 'sho
 }
 
 function sessionStudioLabel(
-  session: Pick<SessionSummary, 'studioId' | 'studioName' | 'workspaceId' | 'workspaceName'>,
+  session: Pick<SessionSummary, 'studioId' | 'studioName'>,
   mode: 'short' | 'full' = 'short'
 ): string {
-  const name = session.studioName || session.workspaceName;
   // Prefer name over UUID — UUIDs are noise for humans
-  if (name) return name;
-  const id = session.studioId || session.workspaceId;
-  return formatStudioForDisplay(id, mode);
+  if (session.studioName) return session.studioName;
+  return formatStudioForDisplay(session.studioId, mode);
 }
 
 function sessionBackendLabel(session: SessionSummary): string {
@@ -1294,14 +1461,12 @@ function filterSessionsByPolicy(
           sessionId: runtime.sessionId,
           threadKey: runtime.threadKey,
           studioId: runtime.studioId,
-          workspaceId: runtime.workspaceId,
           agentId,
         },
         target: {
           sessionId: session.id,
           threadKey: session.threadKey,
           studioId: session.studioId,
-          workspaceId: session.workspaceId,
           agentId: session.agentId,
         },
       }).allowed
@@ -1329,7 +1494,7 @@ function matchesAttachQuery(session: SessionSummary, query?: string): boolean {
     session.currentPhase || session.status || ''
   } ${session.backend || ''} ${session.model || ''} ${session.backendSessionId || session.claudeSessionId || ''} ${
     session.studioId || ''
-  } ${session.workspaceId || ''}`.toLowerCase();
+  }`.toLowerCase();
   return haystack.includes(query.toLowerCase());
 }
 
@@ -1366,7 +1531,7 @@ async function pickSessionToAttach(
     const historyMeta = sessionHistoryLabel(transcriptMeta);
     const lastMsg = formatTimestampForSessionList(transcriptMeta?.lastMessageAt, options?.timezone);
     const preview = sessionLatestMessagePreview(session, transcriptMeta);
-    const studioName = session.studioName || session.workspaceName;
+    const studioName = session.studioName;
     const thread = session.threadKey || '';
 
     // Compact two-line format: number + id + phase on line 1, details on line 2
@@ -1437,10 +1602,22 @@ async function promptForToolApproval(
   sessionId: string | undefined,
   tool: string,
   reason: string,
-  inkRepl?: InkRepl | null
+  inkRepl?: InkRepl | null,
+  approvalChannel?: ApprovalChannel
 ): Promise<boolean> {
-  let answer: string;
-  if (inkRepl) {
+  let choice: import('../repl/tool-approval.js').ToolApprovalChoice;
+
+  if (approvalChannel) {
+    // JSONL or auto channel — structured approval protocol
+    const response = await approvalChannel.requestApproval({
+      tool,
+      args: {},
+      reason,
+      sessionId,
+    });
+    // Map channel response decision to tool approval choice
+    choice = response.decision as import('../repl/tool-approval.js').ToolApprovalChoice;
+  } else if (inkRepl) {
     // Render a visually distinct permission prompt in Ink
     inkRepl.addMessage(
       'system',
@@ -1452,14 +1629,16 @@ async function promptForToolApproval(
       ].join('\n'),
       { label: '🔐 permission' }
     );
-    answer = (await inkRepl.waitForInput()).trim();
+    const answer = (await inkRepl.waitForInput()).trim();
+    choice = parseToolApprovalInput(answer);
   } else if (rl) {
     console.log(chalk.yellow(`🔐 ${tool} — ${reason}`));
-    answer = (
+    const answer = (
       await rl.question(
         chalk.yellow(`Allow? [y] once, [s] session, [a] always, [d] deny, [n] cancel: `)
       )
     ).trim();
+    choice = parseToolApprovalInput(answer);
   } else {
     return false;
   }
@@ -1468,10 +1647,15 @@ async function promptForToolApproval(
     policy: toolPolicy,
     tool,
     sessionId,
-    choice: parseToolApprovalInput(answer),
+    choice,
   });
   if (result.message) {
-    if (inkRepl) {
+    if (approvalChannel) {
+      // In JSONL mode, emit a log line but don't use TUI
+      console.error(
+        result.approved ? `✅ ${tool}: ${result.message}` : `🚫 ${tool}: ${result.message}`
+      );
+    } else if (inkRepl) {
       const label = result.approved ? '✅ granted' : '🚫 denied';
       inkRepl.addMessage('grant', `${tool}: ${result.message}`, { label });
     } else {
@@ -1559,6 +1743,15 @@ function buildPromptEnvelope(
     includeSources: true,
   });
 
+  const toolInstruction =
+    runtime.toolRouting === 'local'
+      ? 'Backend-native tool calling is disabled for this run. If you need PCP tool access, emit fenced blocks in this exact format: ```pcp-tool {"tool":"tool_name","args":{}} ``` and continue with your plain-text answer.'
+      : runtime.toolMode === 'off'
+        ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
+        : runtime.toolMode === 'privileged'
+          ? 'Backend-native tools are enabled and external actions are allowed when needed.'
+          : '';
+
   return [
     `You are ${agentId}.`,
     'You are running inside sb chat (first-class PCP REPL).',
@@ -1566,15 +1759,8 @@ function buildPromptEnvelope(
     `Current backend: ${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}.`,
     `Tool mode: ${runtime.toolMode}.`,
     `Tool routing: ${runtime.toolRouting}.`,
-    runtime.toolMode === 'off'
-      ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
-      : '',
-    runtime.toolMode === 'privileged'
-      ? 'Backend-native tools are enabled and external actions are allowed when needed.'
-      : '',
-    runtime.toolRouting === 'local'
-      ? 'Backend-native tool calling is disabled for this run. If you need PCP tool access, emit fenced blocks in this exact format: ```pcp-tool {"tool":"tool_name","args":{}} ``` and continue with your plain-text answer.'
-      : '',
+    runtime.strictTools ? 'Strict tools mode: ON.' : '',
+    toolInstruction,
     runtime.activeSkills.length > 0
       ? `Active skills: ${runtime.activeSkills.map((skill) => skill.name).join(', ')}`
       : '',
@@ -1598,6 +1784,16 @@ function buildPromptEnvelope(
 }
 
 export async function runChat(options: ChatOptions): Promise<void> {
+  const debugFile = initSbDebug({
+    enabled: options.sbDebug,
+    context: {
+      command: 'chat',
+      argv: process.argv.slice(2),
+      backend: options.backend,
+      agent: options.agent,
+    },
+  });
+
   if (options.tailTranscript) {
     await tailTranscript(options.tailTranscript);
     return;
@@ -1618,6 +1814,19 @@ export async function runChat(options: ChatOptions): Promise<void> {
     options.maxContextTokens || String(initialBackendTokenWindow),
     10
   );
+  const parsedBackendTimeoutSeconds =
+    options.backendTimeoutSeconds !== undefined
+      ? Number.parseInt(options.backendTimeoutSeconds, 10)
+      : Number.NaN;
+  const backendTurnTimeoutMs =
+    Number.isFinite(parsedBackendTimeoutSeconds) && parsedBackendTimeoutSeconds > 0
+      ? parsedBackendTimeoutSeconds * 1000
+      : options.nonInteractive
+        ? 120_000
+        : undefined;
+
+  // Persisted runtime preferences from .pcp/identity.json — CLI flags override these
+  const persisted = identity?.runtime;
 
   const runtime: ChatRuntime = {
     backend: initialBackend,
@@ -1625,11 +1834,14 @@ export async function runChat(options: ChatOptions): Promise<void> {
     verbose: options.verbose ?? false,
     toolMode:
       options.tools === 'off' ? 'off' : options.tools === 'privileged' ? 'privileged' : 'backend',
-    toolRouting: options.toolRouting === 'local' ? 'local' : 'backend',
+    toolRouting: options.toolRouting
+      ? options.toolRouting === 'backend'
+        ? 'backend'
+        : 'local'
+      : persisted?.toolRouting || 'local',
     uiMode: options.ui === 'scroll' ? 'scroll' : 'live',
     threadKey: options.threadKey,
-    workspaceId: identity?.workspaceId,
-    studioId: identity?.workspaceId,
+    studioId: identity?.studioId,
     userTimezone: undefined,
     backendTokenWindow: initialBackendTokenWindow,
     sessionId: options.sessionId?.trim() || undefined,
@@ -1643,8 +1855,33 @@ export async function runChat(options: ChatOptions): Promise<void> {
     awayMode: false,
     transcriptPath: ensureRuntimeTranscriptPath(),
     activeSkills: [],
+    strictTools: options.sbStrictTools ?? persisted?.strictTools ?? false,
+    backendTurnTimeoutMs,
+    approvalMode:
+      options.approvalMode === 'jsonl' || persisted?.approvalMode === 'jsonl'
+        ? 'jsonl'
+        : options.approvalMode === 'auto-approve'
+          ? 'auto-approve'
+          : options.nonInteractive
+            ? 'auto-deny'
+            : 'interactive',
   };
+  await ensureBackendAuthReady(runtime.backend, {
+    nonInteractive: Boolean(options.nonInteractive),
+    hasMessage: Boolean(options.message?.trim()),
+    verbose: runtime.verbose,
+  });
   const approvalManager = new ApprovalRequestManager();
+
+  // Initialize approval channel based on mode
+  if (runtime.approvalMode === 'jsonl') {
+    runtime.approvalChannel = new JsonlApprovalChannel(process.stderr, process.stdin);
+  } else if (runtime.approvalMode === 'auto-deny') {
+    runtime.approvalChannel = new AutoApprovalChannel('cancel');
+  } else if (runtime.approvalMode === 'auto-approve') {
+    runtime.approvalChannel = new AutoApprovalChannel('once');
+  }
+  // 'interactive' mode uses the existing TUI prompt (no channel needed)
   const policyPathFromEnv = process.env.PCP_TOOL_POLICY_PATH?.trim();
   const toolPolicy = new ToolPolicyState(
     runtime.toolMode,
@@ -1652,13 +1889,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
   );
   toolPolicy.setContext({
     agentId,
-    workspaceId: runtime.workspaceId,
     studioId: runtime.studioId,
   });
   if (runtime.studioId) {
     toolPolicy.setMutationScope('studio');
-  } else if (runtime.workspaceId) {
-    toolPolicy.setMutationScope('workspace');
   } else {
     toolPolicy.setMutationScope('agent');
   }
@@ -1802,9 +2036,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       attachedSessionSummary = selected;
       runtime.sessionId = selected.id;
-      if (selected.workspaceId) {
-        runtime.workspaceId = selected.workspaceId;
-      }
       if (selected.studioId) {
         runtime.studioId = selected.studioId;
       }
@@ -1813,7 +2044,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
       toolPolicy.setContext({
         agentId,
-        workspaceId: runtime.workspaceId,
         studioId: runtime.studioId,
       });
       const currentScope = toolPolicy.getMutationScope();
@@ -1845,9 +2075,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (selected) {
       attachedSessionSummary = selected;
       runtime.sessionId = selected.id;
-      if (selected.workspaceId) {
-        runtime.workspaceId = selected.workspaceId;
-      }
       if (selected.studioId) {
         runtime.studioId = selected.studioId;
       }
@@ -1857,7 +2084,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
       autoAttachedLatest = true;
       toolPolicy.setContext({
         agentId,
-        workspaceId: runtime.workspaceId,
         studioId: runtime.studioId,
       });
       const currentScope = toolPolicy.getMutationScope();
@@ -1872,10 +2098,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
   if (!runtime.sessionId) {
     const startArgs: Record<string, unknown> = { agentId };
     if (runtime.threadKey) startArgs.threadKey = runtime.threadKey;
-    if (identity?.workspaceId) {
-      startArgs.studioId = identity.workspaceId;
-      // Backward compatibility for older server builds.
-      startArgs.workspaceId = identity.workspaceId;
+    if (identity?.studioId) {
+      startArgs.studioId = identity.studioId;
     }
 
     const sessionStartResult = (await pcp
@@ -1892,9 +2116,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
       (session) => session.id === runtime.sessionId
     );
     if (attachedSessionSummary) {
-      if (!runtime.workspaceId && attachedSessionSummary.workspaceId) {
-        runtime.workspaceId = attachedSessionSummary.workspaceId;
-      }
       if (!runtime.studioId && attachedSessionSummary.studioId) {
         runtime.studioId = attachedSessionSummary.studioId;
       }
@@ -1952,7 +2173,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
     threadKey: runtime.threadKey || null,
     sessionId: runtime.sessionId || null,
     studioId: runtime.studioId || null,
-    workspaceId: runtime.workspaceId || null,
     historySource: historyHydration?.source || null,
     attachedBackend: attachedSessionSummary?.backend || null,
     attachedModel: attachedSessionSummary?.model || null,
@@ -1980,8 +2200,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   // Use studio slug/name where available, fall back to short ID
   const studioSlug =
     attachedSessionSummary?.studioName ||
-    attachedSessionSummary?.workspaceName ||
-    (identity?.workspaceId ? formatStudioForDisplay(identity.workspaceId, 'short') : undefined);
+    (identity?.studioId ? formatStudioForDisplay(identity.studioId, 'short') : undefined);
   const bannerParts = [
     chip('agent', agentId, chalk.cyan),
     chip(
@@ -2067,14 +2286,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
               sessionId: runtime.sessionId,
               threadKey: runtime.threadKey,
               studioId: runtime.studioId,
-              workspaceId: runtime.workspaceId,
               agentId,
             },
             target: {
               sessionId: msg.relatedSessionId,
               threadKey: msg.threadKey,
               studioId: msg.recipientStudioId,
-              workspaceId: runtime.workspaceId,
               agentId,
             },
           }).allowed
@@ -2299,14 +2516,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
               sessionId: runtime.sessionId,
               threadKey: runtime.threadKey,
               studioId: runtime.studioId,
-              workspaceId: runtime.workspaceId,
               agentId,
             },
             target: {
               sessionId: activity.sessionId,
               threadKey: runtime.threadKey,
               studioId: runtime.studioId,
-              workspaceId: runtime.workspaceId,
               agentId: activity.agentId,
             },
           }).allowed
@@ -2393,17 +2608,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
         .catch(() => undefined);
     }
 
-    const prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
+    let prompt = buildPromptEnvelope(agentId, runtime, ledger, raw);
     const turnStartedAt = Date.now();
     const backendGate = toolPolicy.getBackendToolGate();
-    const passthroughArgs =
-      runtime.toolRouting !== 'backend'
-        ? ['--allowedTools', '']
-        : backendGate.mode === 'off'
-          ? ['--allowedTools', '']
-          : backendGate.mode === 'privileged'
-            ? []
-            : ['--allowedTools', backendGate.allowedTools.join(',')];
+    const passthroughPlan = buildBackendToolPassthrough(
+      runtime.backend,
+      runtime.toolRouting,
+      backendGate,
+      runtime.strictTools
+    );
+    const passthroughArgs = passthroughPlan.passthroughArgs;
 
     if (runtime.toolRouting === 'backend' && backendGate.mode === 'backend' && runtime.verbose) {
       printLine(
@@ -2416,6 +2630,22 @@ export async function runChat(options: ChatOptions): Promise<void> {
         )
       );
     }
+    if (passthroughPlan.warning && runtime.verbose) {
+      printLine(chalk.yellow(passthroughPlan.warning));
+    }
+    sbDebugLog(
+      'chat',
+      'backend_turn_start',
+      {
+        backend: runtime.backend,
+        sessionId: runtime.sessionId || null,
+        toolRouting: runtime.toolRouting,
+        toolMode: backendGate.mode,
+        passthroughArgs,
+        timeoutMs: runtime.backendTurnTimeoutMs ?? null,
+      },
+      debugFile ? { force: true, file: debugFile } : undefined
+    );
 
     // Ink handles waiting via its own component; legacy uses animated indicator
     const stopWaiting = inkRepl
@@ -2452,18 +2682,33 @@ export async function runChat(options: ChatOptions): Promise<void> {
       }
     };
     process.on('SIGINT', onSigintDuringTurn);
-    const runResult = await runBackendTurn({
+    let runResult = await runBackendTurn({
       backend: runtime.backend,
       agentId,
       model: runtime.model,
       prompt,
       verbose: runtime.verbose,
       passthroughArgs,
+      timeoutMs: runtime.backendTurnTimeoutMs,
     }).finally(() => {
       process.off('SIGINT', onSigintDuringTurn);
       turnDurationSeconds = Math.max(0, Math.round((Date.now() - turnStartedAt) / 1000));
       stopWaiting();
     });
+    sbDebugLog(
+      'chat',
+      'backend_turn_result',
+      {
+        backend: runtime.backend,
+        sessionId: runtime.sessionId || null,
+        success: runResult.success,
+        exitCode: runResult.exitCode,
+        durationMs: runResult.durationMs,
+        command: runResult.command,
+        stderrPreview: runResult.stderr.slice(0, 500),
+      },
+      debugFile ? { force: true, file: debugFile } : undefined
+    );
 
     // Log backend CLI turn completion to activity stream
     if (runtime.sessionId) {
@@ -2506,24 +2751,49 @@ export async function runChat(options: ChatOptions): Promise<void> {
         .catch(() => undefined);
     }
 
-    let responseText = runResult.stdout.trim();
-    if (!responseText && runResult.stderr.trim()) {
-      responseText = runResult.stderr.trim();
-    }
-    if (!responseText) {
-      responseText = '(no output)';
-    }
+    // ── Multi-turn tool loop ──
+    // When local tool routing is active, the backend may emit pcp-tool blocks.
+    // We execute them locally, then re-invoke the backend with the results so it
+    // can reason about them and potentially emit more tool calls. This continues
+    // until the backend produces no tool calls or we hit the iteration limit.
+    const MAX_TOOL_LOOP_ITERATIONS = 5;
+    let toolLoopIteration = 0;
+    let responseText = '';
+    let localToolCalls: ReturnType<typeof extractLocalToolCalls> = [];
+    let allToolResults: Array<{ tool: string; result: unknown; status: string }> = [];
 
-    const localToolCalls =
-      runtime.toolRouting === 'local' ? extractLocalToolCalls(responseText).slice(0, 5) : [];
-    if (localToolCalls.length > 0) {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      responseText = runResult.stdout.trim();
+      if (!responseText && runResult.stderr.trim()) {
+        responseText = runResult.stderr.trim();
+      }
+      if (!responseText) {
+        responseText = '(no output)';
+      }
+
+      localToolCalls =
+        runtime.toolRouting === 'local' ? extractLocalToolCalls(responseText).slice(0, 5) : [];
+
+      if (localToolCalls.length === 0) break;
+
+      // Execute tool calls through sb's policy pipeline
+      const iterationResults: typeof allToolResults = [];
       await executeToolCalls(localToolCalls, {
         policy: toolPolicy,
         callTool: (tool, args) => pcp.callTool(tool, args),
         sessionId: runtime.sessionId,
         promptForApproval: async (tool, reason) => {
           if (!runtime.awayMode) {
-            return promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl);
+            return promptForToolApproval(
+              rl,
+              toolPolicy,
+              runtime.sessionId,
+              tool,
+              reason,
+              inkRepl,
+              runtime.approvalChannel
+            );
           }
           // Remote approval: register request, send to inbox, wait for resolution
           const { request, promise } = approvalManager.register(tool, {}, reason);
@@ -2545,7 +2815,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
               chalk.yellow('Failed to send remote approval request — falling back to local prompt')
             );
             approvalManager.expire(request.id);
-            return promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl);
+            return promptForToolApproval(
+              rl,
+              toolPolicy,
+              runtime.sessionId,
+              tool,
+              reason,
+              inkRepl,
+              runtime.approvalChannel
+            );
           }
           const response = await promise;
           if (response.decision === 'approved') {
@@ -2575,6 +2853,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
               reason: result.reason,
             });
             ledger.addEntry('system', compactForLedger(msg, 400), 'local-tool');
+            iterationResults.push({
+              tool: result.tool,
+              result: result.reason,
+              status: result.status,
+            });
           } else if (result.status === 'executed' || result.status === 'approved') {
             const resultJson = JSON.stringify(result.result);
             printLine(chalk.cyan(`🛠 local tool ${result.tool} ${resultJson}`));
@@ -2590,6 +2873,11 @@ export async function runChat(options: ChatOptions): Promise<void> {
               compactForLedger(`local tool ${result.tool} -> ${resultJson}`, 500),
               'local-tool'
             );
+            iterationResults.push({
+              tool: result.tool,
+              result: result.result,
+              status: result.status,
+            });
           } else if (result.status === 'error') {
             const msg = `Local tool error (${result.tool}): ${result.error}`;
             printLine(chalk.red(msg));
@@ -2601,9 +2889,70 @@ export async function runChat(options: ChatOptions): Promise<void> {
               error: result.error,
             });
             ledger.addEntry('system', compactForLedger(msg, 400), 'local-tool');
+            iterationResults.push({ tool: result.tool, result: result.error, status: 'error' });
           }
         },
       });
+
+      allToolResults.push(...iterationResults);
+      toolLoopIteration++;
+
+      // Check if we should continue the loop
+      const hasExecutedTools = iterationResults.some(
+        (r) => r.status === 'executed' || r.status === 'approved'
+      );
+      if (!hasExecutedTools || toolLoopIteration >= MAX_TOOL_LOOP_ITERATIONS) {
+        if (toolLoopIteration >= MAX_TOOL_LOOP_ITERATIONS) {
+          printLine(
+            chalk.dim(`(tool loop limit reached — ${MAX_TOOL_LOOP_ITERATIONS} iterations)`)
+          );
+        }
+        break;
+      }
+
+      // Build continuation prompt with tool results and re-invoke backend
+      const toolResultsSummary = iterationResults
+        .map((r) => {
+          const resultStr = typeof r.result === 'string' ? r.result : JSON.stringify(r.result);
+          return `Tool ${r.tool} (${r.status}): ${resultStr}`;
+        })
+        .join('\n\n');
+      const continuationPrompt = buildPromptEnvelope(
+        agentId,
+        runtime,
+        ledger,
+        `[Tool results from previous turn]\n${toolResultsSummary}\n\nContinue your response based on these tool results. If you need more tools, emit pcp-tool blocks. Otherwise, provide your final answer.`
+      );
+
+      // Show continuation indicator
+      printLine(
+        chalk.dim(
+          `  ↳ continuing with tool results (${toolLoopIteration}/${MAX_TOOL_LOOP_ITERATIONS})…`
+        )
+      );
+      const stopContinuation = inkRepl
+        ? (() => {
+            return () => {};
+          })()
+        : startWaitingIndicator(runtime.backend, {
+            statusLane,
+            logger: printLine,
+            renderAbovePrompt: true,
+          });
+
+      runResult = await runBackendTurn({
+        backend: runtime.backend,
+        agentId,
+        model: runtime.model,
+        prompt: continuationPrompt,
+        verbose: runtime.verbose,
+        passthroughArgs,
+        timeoutMs: runtime.backendTurnTimeoutMs,
+      }).finally(() => {
+        stopContinuation();
+      });
+
+      if (!runResult.success) break;
     }
 
     const assistantDisplayText =
@@ -2611,7 +2960,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         ? (() => {
             const stripped = stripLocalToolBlocks(responseText);
             if (stripped) return stripped;
-            if (localToolCalls.length > 0)
+            if (localToolCalls.length > 0 || allToolResults.length > 0)
               return '(local tool call emitted; see tool results above)';
             return responseText;
           })()
@@ -2662,6 +3011,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
       printLine('');
     }
   };
+
+  let rl: ReturnType<typeof createInterface> | null = null;
 
   let turnQueue: Promise<void> = Promise.resolve();
   let pendingTurns = 0;
@@ -2766,7 +3117,6 @@ export async function runChat(options: ChatOptions): Promise<void> {
   // ── Mount the REPL input layer (Ink or legacy readline) ──
 
   let readlineClosed = false;
-  let rl: ReturnType<typeof createInterface> | null = null;
   let keepRunning = true;
   let lastUsageTotal: number | undefined;
   let lastCtrlCAt = 0;
@@ -2945,7 +3295,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           '',
           chalk.bold('Quick commands'),
           chalk.dim(
-            '/help  /mcp  /capabilities  /skills  /profile  /policy  /away  /tool-routing  /ui  /trim  /quit'
+            '/help  /mcp  /capabilities  /skills  /profile  /policy  /away  /tool-routing  /save-config  /ui  /trim  /quit'
           ),
           '',
         ].join('\n')
@@ -2970,6 +3320,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/autorun [on|off]          Toggle inbox auto-run execution',
               '/away [on|off]             Toggle remote approval mode (approvals via inbox)',
               '/tool-routing [backend|local]  Toggle backend tools vs local pcp-tool routing',
+              '/save-config                  Save current runtime preferences to .pcp/identity.json',
               '/ui [scroll|live]          Set status rendering mode',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
@@ -2978,6 +3329,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/grant-session <tool>      Allow a tool for this PCP session only',
               '/allow <tool>               Persistently allow PCP tool',
               '/deny <tool>                Persistently deny PCP tool',
+              '/prompt <tool>              Require per-call approval for PCP tool',
               '/policy-scope [global|workspace|agent|studio] [id]  Set rule mutation scope',
               '/policy                     Show tool policy + storage path',
               '/mcp [servers|call ...]     List MCP servers or call PCP tool via /mcp call',
@@ -3083,10 +3435,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               : null;
             const sessionStudio = attachedSessionSummary
               ? sessionStudioLabel(attachedSessionSummary, 'full')
-              : sessionStudioLabel(
-                  { studioId: runtime.studioId, workspaceId: runtime.workspaceId },
-                  'full'
-                );
+              : sessionStudioLabel({ studioId: runtime.studioId }, 'full');
             console.log(
               chalk.dim(
                 `session=${runtime.sessionId || 'none'} backend=${runtime.backend} model=${
@@ -3163,13 +3512,34 @@ export async function runChat(options: ChatOptions): Promise<void> {
             break;
           }
           runtime.toolRouting = mode as 'backend' | 'local';
-          console.log(chalk.green(`Tool routing set to ${runtime.toolRouting}.`));
+          saveRuntimePreferences(process.cwd(), { toolRouting: runtime.toolRouting });
+          console.log(chalk.green(`Tool routing set to ${runtime.toolRouting}. (auto-saved)`));
           if (runtime.toolRouting === 'local') {
             console.log(
               chalk.dim(
                 'Local routing active: backend-native tools disabled; use pcp-tool blocks for local execution.'
               )
             );
+          }
+          break;
+        }
+        case 'save-config': {
+          // Most preferences auto-persist on change, but /save-config captures the full snapshot
+          const prefs: RuntimePreferences = {
+            toolRouting: runtime.toolRouting,
+            strictTools: runtime.strictTools,
+            approvalMode: runtime.approvalMode === 'auto-deny' ? undefined : runtime.approvalMode,
+          };
+          const saved = saveRuntimePreferences(process.cwd(), prefs);
+          if (saved) {
+            console.log(chalk.green('All runtime preferences saved to .pcp/identity.json:'));
+            console.log(chalk.dim(`  toolRouting: ${prefs.toolRouting}`));
+            console.log(chalk.dim(`  strictTools: ${prefs.strictTools}`));
+            if (prefs.approvalMode) {
+              console.log(chalk.dim(`  approvalMode: ${prefs.approvalMode}`));
+            }
+          } else {
+            console.log(chalk.yellow('Failed to save runtime preferences.'));
           }
           break;
         }
@@ -3380,6 +3750,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
           console.log(chalk.green(`Persistently denied ${tool}`));
           break;
         }
+        case 'prompt': {
+          const tool = slash.args[0];
+          if (!tool) {
+            console.log(chalk.yellow('Usage: /prompt <tool>'));
+            break;
+          }
+          toolPolicy.addPromptTool(tool);
+          console.log(chalk.green(`Tool ${tool} now requires per-call approval`));
+          break;
+        }
         case 'policy-scope': {
           const scopeRaw = (slash.args[0] || '').trim().toLowerCase();
           if (!scopeRaw) {
@@ -3494,7 +3874,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
               tool,
               sessionId: runtime.sessionId,
               prompt: (reason) =>
-                promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl),
+                promptForToolApproval(
+                  rl,
+                  toolPolicy,
+                  runtime.sessionId,
+                  tool,
+                  reason,
+                  inkRepl,
+                  runtime.approvalChannel
+                ),
             });
             if (!approved) {
               console.log(chalk.yellow(`Skipped ${tool}`));
@@ -3613,7 +4001,15 @@ export async function runChat(options: ChatOptions): Promise<void> {
             tool,
             sessionId: runtime.sessionId,
             prompt: (reason) =>
-              promptForToolApproval(rl, toolPolicy, runtime.sessionId, tool, reason, inkRepl),
+              promptForToolApproval(
+                rl,
+                toolPolicy,
+                runtime.sessionId,
+                tool,
+                reason,
+                inkRepl,
+                runtime.approvalChannel
+              ),
           });
           if (!approved) {
             console.log(chalk.yellow(`Skipped ${tool}`));
@@ -3808,7 +4204,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               ttlSeconds: Number.isFinite(ttlMinutes) ? Math.max(1, ttlMinutes) * 60 : 15 * 60,
               sessionId: runtime.sessionId,
               threadKey: runtime.threadKey,
-              studioId: identity?.workspaceId,
+              studioId: identity?.studioId,
             },
             secret
           );
@@ -3892,7 +4288,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               ttlSeconds: 15 * 60,
               sessionId: runtime.sessionId,
               threadKey: runtime.threadKey,
-              studioId: identity?.workspaceId,
+              studioId: identity?.studioId,
             },
             secret
           );
@@ -3910,7 +4306,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 runtime.sessionId,
                 'send_to_inbox',
                 reason,
-                inkRepl
+                inkRepl,
+                runtime.approvalChannel
               ),
           });
           if (!approved) {
@@ -4125,6 +4522,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   // Cancel any pending remote approval requests
   approvalManager.cancelAll();
+  runtime.approvalChannel?.dispose();
 
   const summary = summarizeForSessionEnd(ledger);
   if (runtime.sessionId && !attachedToExistingSession) {
@@ -4154,8 +4552,8 @@ export function registerChatCommand(program: Command): void {
       .option('-m, --model <model>', 'Model override for backend')
       .option(
         '--tool-routing <mode>',
-        'Tool routing mode: backend (native backend tools) or local (pcp-tool blocks handled by sb chat)',
-        'backend'
+        'Tool routing mode: local (pcp-tool blocks handled by sb) or backend (native backend tools)',
+        'local'
       )
       .option('--ui <mode>', 'UI mode: live (default) or scroll status rendering', 'live')
       .option('--thread-key <key>', 'Thread key for PCP session routing')
@@ -4177,8 +4575,22 @@ export function registerChatCommand(program: Command): void {
       .option('--message <text>', 'Single-turn message for non-interactive mode')
       .option('--non-interactive', 'Run one turn and exit (requires --message)')
       .option(
+        '--backend-timeout-seconds <n>',
+        'Backend turn timeout in seconds (default: 120 for --non-interactive, otherwise 1200)'
+      )
+      .option('--sb-debug', 'Enable sb debug logging for chat runtime')
+      .option(
+        '--sb-strict-tools',
+        'Harden backend-native tooling (Codex: disable MCP servers + force read-only sandbox in local routing)'
+      )
+      .option(
         '--tail-transcript <pathOrSession>',
         'Tail transcript output by file path or session id'
+      )
+      .option(
+        '--approval-mode <mode>',
+        'Approval mode: interactive (TUI prompt), jsonl (structured I/O on stderr/stdin)',
+        'interactive'
       )
       .option('-v, --verbose', 'Verbose backend passthrough output')
       .option('--fullscreen', 'Fullscreen alternate buffer mode (app-controlled scrolling)')

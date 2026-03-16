@@ -15,6 +15,13 @@ interface PcpConfig {
   agentMapping?: Record<string, string>;
 }
 
+export interface RuntimePreferences {
+  toolRouting?: 'backend' | 'local';
+  strictTools?: boolean;
+  backendTimeoutSeconds?: number;
+  approvalMode?: 'interactive' | 'jsonl' | 'auto-approve';
+}
+
 export interface IdentityJson {
   agentId: string;
   identityId?: string;
@@ -23,10 +30,8 @@ export interface IdentityJson {
   role?: string;
   studioId?: string;
   studio?: string;
-  /** @deprecated Use studioId */
-  workspaceId?: string;
-  /** @deprecated Use studio */
-  workspace?: string;
+  /** Persisted runtime preferences for sb chat */
+  runtime?: RuntimePreferences;
 }
 
 /**
@@ -39,6 +44,22 @@ export function readIdentityJson(cwd: string): IdentityJson | null {
     return JSON.parse(readFileSync(identityPath, 'utf-8'));
   } catch {
     return null;
+  }
+}
+
+/**
+ * Save runtime preferences to .pcp/identity.json.
+ * Merges with existing content — only updates the `runtime` field.
+ */
+export function saveRuntimePreferences(cwd: string, prefs: RuntimePreferences): boolean {
+  const identityPath = join(cwd, '.pcp', 'identity.json');
+  try {
+    const existing = readIdentityJson(cwd) || ({} as Record<string, unknown>);
+    const merged = { ...existing, runtime: { ...(existing.runtime || {}), ...prefs } };
+    writeFileSync(identityPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+    return true;
+  } catch {
+    return false;
   }
 }
 

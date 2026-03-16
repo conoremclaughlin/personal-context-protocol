@@ -15,8 +15,8 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { installHooks } from './hooks.js';
 import { syncMcpConfig } from './mcp.js';
+import { syncSkills } from './skills.js';
 import { loadAuth, decodeJwtPayload, isTokenExpired } from '../auth/tokens.js';
-import { callPcpTool } from '../lib/pcp-mcp.js';
 
 // ============================================================================
 // Helpers
@@ -210,6 +210,26 @@ async function initCommand(options: { force?: boolean }): Promise<void> {
     syncBackendConfigs(cwd),
   ];
 
+  // Async step: sync skills from PCP server (best-effort)
+  try {
+    const skillsResult = await syncSkills(cwd);
+    if (skillsResult.serverUnreachable) {
+      steps.push({ label: 'skills sync', status: 'skipped', detail: 'server not reachable' });
+    } else if (skillsResult.written > 0 || skillsResult.linked > 0) {
+      steps.push({
+        label: 'skills sync',
+        status: 'created',
+        detail: `${skillsResult.written} written, ${skillsResult.linked} symlinked`,
+      });
+    } else if (skillsResult.skipped > 0) {
+      steps.push({ label: 'skills sync', status: 'exists', detail: 'all up to date' });
+    } else {
+      steps.push({ label: 'skills sync', status: 'skipped', detail: 'no MCP skills on server' });
+    }
+  } catch {
+    steps.push({ label: 'skills sync', status: 'skipped', detail: 'error during sync' });
+  }
+
   for (const step of steps) {
     const icon =
       step.status === 'created' || step.status === 'updated'
@@ -229,25 +249,6 @@ async function initCommand(options: { force?: boolean }): Promise<void> {
     console.log(`  ${icon} ${step.label}: ${statusText}${detail}`);
   }
 
-  // Async step: sync MCP-providing skills from PCP server (best-effort)
-  try {
-    const result = await callPcpTool<{
-      success: boolean;
-      skills: Array<{ name: string; mcp?: { name: string; command: string; args: string[] } }>;
-    }>('list_skills', {});
-    if (result.success && result.skills) {
-      const mcpSkills = result.skills.filter((s) => s.mcp);
-      if (mcpSkills.length > 0) {
-        console.log(
-          chalk.dim(`\n  ${mcpSkills.length} MCP-providing skill(s) available on server.`)
-        );
-        console.log(chalk.dim('  Run `sb skills sync` to install them locally.'));
-      }
-    }
-  } catch {
-    // Server not reachable — skip skill hint
-  }
-
   console.log(chalk.dim('\nDone.'));
 }
 
@@ -258,7 +259,7 @@ async function initCommand(options: { force?: boolean }): Promise<void> {
 export function registerInitCommand(program: Command): void {
   program
     .command('init')
-    .description('Initialize PCP in the current repo (hooks, .mcp.json, backend configs)')
+    .description('Initialize PCP in the current repo (hooks, .mcp.json, backend configs, skills)')
     .option('-f, --force', 'Overwrite existing hooks even if non-PCP hooks are present')
     .action(initCommand);
 }

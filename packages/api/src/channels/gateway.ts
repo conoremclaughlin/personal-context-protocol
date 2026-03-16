@@ -17,7 +17,11 @@ import { createTelegramListener, TelegramListener } from './telegram-listener';
 import { createWhatsAppListener, WhatsAppListener } from './whatsapp-listener';
 import { createDiscordListener, DiscordListener } from './discord-listener';
 import { createSlackListener, SlackListener } from './slack-listener';
-import { setResponseCallback, type ResponseCallback } from '../mcp/tools/response-handlers';
+import {
+  setResponseCallback,
+  type ResponseCallback,
+  type ResponseResult,
+} from '../mcp/tools/response-handlers';
 import type { AgentResponse, OutboundMedia } from '../agent/types';
 import type { DataComposer } from '../data/composer';
 import { logger } from '../utils/logger';
@@ -658,7 +662,7 @@ export class ChannelGateway extends EventEmitter {
    */
   private registerResponseCallback(): void {
     const callback: ResponseCallback = async (response: AgentResponse) => {
-      await this.sendResponse(response);
+      return await this.sendResponse(response);
     };
     setResponseCallback(callback);
     logger.info('ChannelGateway registered response callback');
@@ -668,11 +672,14 @@ export class ChannelGateway extends EventEmitter {
    * Send a response to a channel
    * Called by the response callback or directly
    */
-  async sendResponse(response: AgentResponse): Promise<void> {
+  async sendResponse(response: AgentResponse): Promise<ResponseResult | void> {
     const { channel, conversationId, content, format, replyToMessageId, media } = response;
 
     // Stop typing indicator when sending response
     this.stopTypingIndicator(conversationId);
+
+    // Track media results across channels for caller visibility
+    let mediaResult: { sent: number; failed: number; errors: string[] } | undefined;
 
     switch (channel) {
       case 'telegram':
@@ -695,7 +702,27 @@ export class ChannelGateway extends EventEmitter {
           if (content) {
             await this.sendTelegramMessage(conversationId, content, { format, replyToMessageId });
           }
-          await this.sendMediaAttachments('telegram', conversationId, media, { replyToMessageId });
+          mediaResult = await this.sendMediaAttachments('telegram', conversationId, media, {
+            replyToMessageId,
+          });
+          // Always log media attempts to activity stream (success or failure) for debugging
+          await this.logOutgoingTelegram(
+            conversationId,
+            content
+              ? `[+${media.length} media attachment(s)] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+              : `[${media.length} media attachment(s)] sent=${mediaResult.sent} failed=${mediaResult.failed}`,
+            media
+          );
+          if (mediaResult.failed > 0 && mediaResult.sent === 0) {
+            throw new Error(
+              `All media attachments failed to send: ${mediaResult.errors.join('; ')}`
+            );
+          } else if (mediaResult.failed > 0) {
+            logger.warn(
+              `${mediaResult.failed}/${media.length} media attachments failed on telegram`,
+              { errors: mediaResult.errors }
+            );
+          }
         }
         break;
 
@@ -707,21 +734,49 @@ export class ChannelGateway extends EventEmitter {
           await this.whatsappListener.sendMessage(conversationId, content);
         }
         if (media && media.length > 0) {
-          await this.sendMediaAttachments('whatsapp', conversationId, media);
+          mediaResult = await this.sendMediaAttachments('whatsapp', conversationId, media);
+          if (mediaResult.failed > 0 && mediaResult.sent === 0) {
+            throw new Error(
+              `All media attachments failed to send: ${mediaResult.errors.join('; ')}`
+            );
+          } else if (mediaResult.failed > 0) {
+            logger.warn(
+              `${mediaResult.failed}/${media.length} media attachments failed on whatsapp`,
+              { errors: mediaResult.errors }
+            );
+          }
         }
         // Log outgoing WhatsApp message to activity stream
         {
+          const logContent =
+            media && media.length > 0 && mediaResult
+              ? content
+                ? `${content} [+${media.length} media] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+                : `[${media.length} media] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+              : content;
           const userId = await this.resolveUserIdForConversation('whatsapp', conversationId);
           if (this.dataComposer && userId) {
             try {
+              const payload: Record<string, unknown> = {};
+              if (media && media.length > 0) {
+                payload.mediaCount = media.length;
+                payload.media = media.map((m) => ({
+                  type: m.type,
+                  path: m.path || null,
+                  url: m.url || null,
+                  filename: m.filename || null,
+                  contentType: m.contentType || null,
+                }));
+              }
               await this.dataComposer.repositories.activityStream.logMessage({
                 userId,
                 agentId: 'myra',
                 direction: 'out',
-                content,
+                content: logContent,
                 platform: 'whatsapp',
                 platformChatId: conversationId,
                 isDm: true,
+                payload: Object.keys(payload).length > 0 ? payload : undefined,
               });
             } catch (activityError) {
               logger.warn(
@@ -741,21 +796,49 @@ export class ChannelGateway extends EventEmitter {
           await this.discordListener.sendMessage(conversationId, content);
         }
         if (media && media.length > 0) {
-          await this.sendMediaAttachments('discord', conversationId, media);
+          mediaResult = await this.sendMediaAttachments('discord', conversationId, media);
+          if (mediaResult.failed > 0 && mediaResult.sent === 0) {
+            throw new Error(
+              `All media attachments failed to send: ${mediaResult.errors.join('; ')}`
+            );
+          } else if (mediaResult.failed > 0) {
+            logger.warn(
+              `${mediaResult.failed}/${media.length} media attachments failed on discord`,
+              { errors: mediaResult.errors }
+            );
+          }
         }
         // Log outgoing Discord message to activity stream
         {
+          const logContent =
+            media && media.length > 0 && mediaResult
+              ? content
+                ? `${content} [+${media.length} media] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+                : `[${media.length} media] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+              : content;
           const userId = await this.resolveUserIdForConversation('discord', conversationId);
           if (this.dataComposer && userId) {
             try {
+              const payload: Record<string, unknown> = {};
+              if (media && media.length > 0) {
+                payload.mediaCount = media.length;
+                payload.media = media.map((m) => ({
+                  type: m.type,
+                  path: m.path || null,
+                  url: m.url || null,
+                  filename: m.filename || null,
+                  contentType: m.contentType || null,
+                }));
+              }
               await this.dataComposer.repositories.activityStream.logMessage({
                 userId,
                 agentId: 'benson',
                 direction: 'out',
-                content,
+                content: logContent,
                 platform: 'discord',
                 platformChatId: conversationId,
                 isDm: true,
+                payload: Object.keys(payload).length > 0 ? payload : undefined,
               });
             } catch (activityError) {
               logger.warn(
@@ -771,20 +854,49 @@ export class ChannelGateway extends EventEmitter {
         if (!this.slackListener) {
           throw new Error('Slack listener not available');
         }
-        await this.slackListener.sendMessage(conversationId, content);
+        if (content) {
+          await this.slackListener.sendMessage(conversationId, content);
+        }
+        if (media && media.length > 0) {
+          // Slack file uploads not yet implemented — count as failures
+          mediaResult = {
+            sent: 0,
+            failed: media.length,
+            errors: ['Slack media sending not yet implemented'],
+          };
+          logger.warn('Slack media sending not yet implemented', { mediaCount: media.length });
+        }
         // Log outgoing Slack message to activity stream
         {
+          const logContent =
+            media && media.length > 0 && mediaResult
+              ? content
+                ? `${content} [+${media.length} media] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+                : `[${media.length} media] sent=${mediaResult.sent} failed=${mediaResult.failed}`
+              : content;
           const userId = await this.resolveUserIdForConversation('slack', conversationId);
           if (this.dataComposer && userId) {
             try {
+              const payload: Record<string, unknown> = {};
+              if (media && media.length > 0) {
+                payload.mediaCount = media.length;
+                payload.media = media.map((m) => ({
+                  type: m.type,
+                  path: m.path || null,
+                  url: m.url || null,
+                  filename: m.filename || null,
+                  contentType: m.contentType || null,
+                }));
+              }
               await this.dataComposer.repositories.activityStream.logMessage({
                 userId,
-                agentId: 'slack', // Will be resolved by routing
+                agentId: 'slack',
                 direction: 'out',
-                content,
+                content: logContent,
                 platform: 'slack',
                 platformChatId: conversationId,
                 isDm: true,
+                payload: Object.keys(payload).length > 0 ? payload : undefined,
               });
             } catch (activityError) {
               logger.warn(
@@ -805,6 +917,15 @@ export class ChannelGateway extends EventEmitter {
 
     // Check for pending messages that arrived while processing
     await this.processPendingMessages(channel as GatewayChannel, conversationId);
+
+    // Return media delivery results so callers (send_response) can report them
+    if (mediaResult) {
+      return {
+        mediaSent: mediaResult.sent,
+        mediaFailed: mediaResult.failed,
+        mediaErrors: mediaResult.errors.length > 0 ? mediaResult.errors : undefined,
+      };
+    }
   }
 
   /**
@@ -920,11 +1041,26 @@ export class ChannelGateway extends EventEmitter {
     await this.logOutgoingTelegram(conversationId, content);
   }
 
-  private async logOutgoingTelegram(conversationId: string, content: string): Promise<void> {
+  private async logOutgoingTelegram(
+    conversationId: string,
+    content: string,
+    media?: OutboundMedia[]
+  ): Promise<void> {
     // Log outgoing message to activity stream
     const userId = await this.resolveUserIdForConversation('telegram', conversationId);
     if (this.dataComposer && userId) {
       try {
+        const payload: Record<string, unknown> = {};
+        if (media && media.length > 0) {
+          payload.mediaCount = media.length;
+          payload.media = media.map((m) => ({
+            type: m.type,
+            path: m.path || null,
+            url: m.url || null,
+            filename: m.filename || null,
+            contentType: m.contentType || null,
+          }));
+        }
         await this.dataComposer.repositories.activityStream.logMessage({
           userId,
           agentId: 'myra',
@@ -933,6 +1069,7 @@ export class ChannelGateway extends EventEmitter {
           platform: 'telegram',
           platformChatId: conversationId,
           isDm: true, // Will be corrected by context
+          payload: Object.keys(payload).length > 0 ? payload : undefined,
         });
       } catch (activityError) {
         logger.warn('Failed to log outgoing message to activity stream:', activityError);
@@ -1002,12 +1139,20 @@ export class ChannelGateway extends EventEmitter {
    * Routes each attachment to the appropriate channel-specific method.
    * Supports both local file paths and remote URLs.
    */
+  /**
+   * Send media attachments to a channel.
+   * Returns { sent, failed } counts so callers can report accurate status.
+   */
   private async sendMediaAttachments(
     channel: GatewayChannel,
     conversationId: string,
     media: OutboundMedia[],
     options?: { replyToMessageId?: string }
-  ): Promise<void> {
+  ): Promise<{ sent: number; failed: number; errors: string[] }> {
+    let sent = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
     for (const attachment of media) {
       let filePath = attachment.path;
       let tempCleanup: (() => Promise<void>) | null = null;
@@ -1019,16 +1164,19 @@ export class ChannelGateway extends EventEmitter {
           filePath = temp.path;
           tempCleanup = temp.cleanup;
         } catch (error) {
-          logger.error(`Failed to download media URL: ${attachment.url}`, error);
+          const msg = `Failed to download media URL: ${attachment.url}`;
+          logger.error(msg, error);
+          errors.push(msg);
+          failed++;
           continue;
         }
       }
 
       if (!filePath) {
-        logger.warn('Media attachment missing both path and url, skipping', {
-          channel,
-          attachment,
-        });
+        const msg = `Media attachment missing both path and url (type: ${attachment.type})`;
+        logger.warn(msg, { channel, attachment });
+        errors.push(msg);
+        failed++;
         continue;
       }
 
@@ -1040,9 +1188,17 @@ export class ChannelGateway extends EventEmitter {
           replyToMessageId: options?.replyToMessageId,
         };
 
+        let didSend = false;
+
         switch (channel) {
           case 'telegram':
-            if (!this.telegramListener) break;
+            if (!this.telegramListener) {
+              const msg = 'Telegram listener not available for media send';
+              logger.warn(msg);
+              errors.push(msg);
+              failed++;
+              continue;
+            }
             switch (attachment.type) {
               case 'image':
                 await this.telegramListener.sendPhoto(conversationId, filePath, mediaOpts);
@@ -1057,10 +1213,17 @@ export class ChannelGateway extends EventEmitter {
                 await this.telegramListener.sendDocument(conversationId, filePath, mediaOpts);
                 break;
             }
+            didSend = true;
             break;
 
           case 'whatsapp':
-            if (!this.whatsappListener) break;
+            if (!this.whatsappListener) {
+              const msg = 'WhatsApp listener not available for media send';
+              logger.warn(msg);
+              errors.push(msg);
+              failed++;
+              continue;
+            }
             switch (attachment.type) {
               case 'image':
                 await this.whatsappListener.sendImage(conversationId, filePath, mediaOpts);
@@ -1073,26 +1236,46 @@ export class ChannelGateway extends EventEmitter {
                 await this.whatsappListener.sendDocument(conversationId, filePath, mediaOpts);
                 break;
             }
+            didSend = true;
             break;
 
           case 'discord':
-            if (!this.discordListener) break;
+            if (!this.discordListener) {
+              const msg = 'Discord listener not available for media send';
+              logger.warn(msg);
+              errors.push(msg);
+              failed++;
+              continue;
+            }
             // Discord uses a unified file attachment API for all types
             await this.discordListener.sendFile(conversationId, filePath, mediaOpts);
+            didSend = true;
             break;
 
-          case 'slack':
-            // Slack file uploads can be added later
-            logger.warn('Slack media sending not yet implemented');
-            break;
+          case 'slack': {
+            const msg = 'Slack media sending not yet implemented';
+            logger.warn(msg);
+            errors.push(msg);
+            failed++;
+            continue;
+          }
         }
 
-        logger.info(`Sent ${attachment.type} to ${channel}:${conversationId}`, {
-          filename: attachment.filename,
-          source: tempCleanup ? 'url' : 'path',
-        });
+        if (didSend) {
+          sent++;
+          logger.info(`Sent ${attachment.type} to ${channel}:${conversationId}`, {
+            filename: attachment.filename || filePath,
+            source: tempCleanup ? 'url' : 'path',
+          });
+        }
       } catch (error) {
-        logger.error(`Failed to send ${attachment.type} to ${channel}:${conversationId}`, error);
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`Failed to send ${attachment.type} to ${channel}:${conversationId}`, {
+          error: msg,
+          filePath,
+        });
+        errors.push(`${attachment.type}: ${msg}`);
+        failed++;
       } finally {
         // Clean up temp file if we downloaded from URL
         if (tempCleanup) {
@@ -1100,6 +1283,8 @@ export class ChannelGateway extends EventEmitter {
         }
       }
     }
+
+    return { sent, failed, errors };
   }
 
   private async trySendTelegramVoiceReply(response: AgentResponse): Promise<boolean> {

@@ -140,9 +140,7 @@ import {
 
 import {
   handleGetResumableSessions,
-  handleUpdateSessionStatus,
   getResumableSessionsSchema,
-  updateSessionStatusSchema,
 } from './session-orchestration-handlers';
 
 import {
@@ -163,6 +161,15 @@ import {
   handleGetAgentStatus,
   inboxToolDefinitions,
 } from './inbox-handlers';
+
+import {
+  handleGetThreadMessages,
+  handleAddThreadParticipant,
+  handleCloseThread,
+  handleListThreads,
+  handleMarkThreadRead,
+  threadToolDefinitions,
+} from './thread-handlers';
 
 import {
   handleTriggerAgent,
@@ -911,11 +918,22 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'send_response',
     {
-      description: `Send a response to a specific channel. Use this tool to reply to messages from Telegram, terminal, or other channels.
+      description: `Send a response to a specific channel (Telegram, WhatsApp, Discord, etc.).
 
-This is the primary way to send responses back to users. Always use this tool instead of just outputting text.
+This is the PRIMARY way to send messages to users on external channels. You MUST call this tool — just outputting text does nothing.
 
-Supports media attachments (images, videos, documents) via the media parameter. Provide a local file path for each attachment.`,
+## Media Attachments
+
+To send photos, videos, or documents, use the \`media\` array parameter. Each attachment needs a \`type\` and either a \`path\` (local file) or \`url\` (remote).
+
+Example — send a photo with caption:
+  content: "Here's the screenshot"
+  media: [{ type: "image", path: "/absolute/path/to/photo.png", caption: "Routing page" }]
+
+Example — send a document:
+  media: [{ type: "document", path: "/path/to/report.pdf", filename: "report.pdf" }]
+
+Supported types: image, video, audio, document. The \`content\` field is sent as a separate text message before the media.`,
       inputSchema: {
         channel: z
           .enum(['telegram', 'terminal', 'discord', 'whatsapp', 'http', 'api', 'agent'])
@@ -1727,6 +1745,12 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
           .describe(
             'Max high-salience memories to fetch for knowledge summary (default: 50). Critical memories always included regardless.'
           ),
+        postCompact: z
+          .boolean()
+          .optional()
+          .describe(
+            'Set true when bootstrapping after context compaction. Includes the most recent memories regardless of salience to restore context continuity.'
+          ),
         agentId: z
           .string()
           .optional()
@@ -2497,7 +2521,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Get an AI being's identity by agent ID. Returns structured identity data including name, role, values, relationships, and capabilities.
 
-Use the optional 'file' parameter to fetch a single document (heartbeat, soul, values, identity) for minimal token usage. Omit to get everything.
+Use the optional 'file' parameter to fetch a single document (heartbeat, soul, identity) for minimal token usage. Omit to get everything. For the values and process documents, use get_team_constitution instead.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: getIdentitySchema,
@@ -2619,9 +2643,9 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     {
       description: `Save or update shared user-level documents. These are shared across all agents for a user.
 
-- userProfile: USER.md — about the organic human (background, preferences, relationship). This is the primary use of this tool.
-- sharedValues: [Prefer save_team_constitution] VALUES.md — shared principles (legacy path, still works)
-- process: [Prefer save_team_constitution] PROCESS.md — team operational process (legacy path, still works)
+- userProfile: User document — about the organic human (background, preferences, relationship). This is the primary use of this tool.
+- sharedValues: [Prefer save_team_constitution] Values document — shared principles (legacy path, still works)
+- process: [Prefer save_team_constitution] Process document — team operational process (legacy path, still works)
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: saveUserIdentitySchema,
@@ -2650,7 +2674,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'get_user_identity',
     {
-      description: `Get shared user-level documents. Returns USER.md (about the organic human), plus VALUES.md and PROCESS.md (prefer get_team_constitution for those).
+      description: `Get shared user-level documents. Returns the user document (about the organic human), plus values and process documents (prefer get_team_constitution for those).
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: getUserIdentitySchema,
@@ -2735,18 +2759,18 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   );
 
   // =====================================================
-  // TEAM CONSTITUTION TOOLS (workspace-level VALUES.md, PROCESS.md)
+  // TEAM CONSTITUTION TOOLS (workspace-level values, process documents)
   // =====================================================
 
   server.registerTool(
     'save_team_constitution',
     {
-      description: `Update team constitution documents. These are workspace-level shared documents that affect ALL SBs.
+      description: `Update team constitution. These are workspace-level shared documents that affect ALL SBs.
 
-- sharedValues: VALUES.md — shared principles, core truths, boundaries, identity philosophy
-- process: PROCESS.md — team operational process (sessions, memory, handoff, PR conventions)
+- sharedValues: Values document — shared principles, core truths, boundaries, identity philosophy
+- process: Process document — team operational process (sessions, memory, handoff, PR conventions)
 
-⚠️ CONSTITUTION-LEVEL: Changes are versioned and affect every SB's bootstrap context.
+⚠️ Constitution-level change: versioned and affects every SB's bootstrap context.
 Prefer this over save_user_identity for values/process updates.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
@@ -2776,7 +2800,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'get_team_constitution',
     {
-      description: `Get team constitution documents (VALUES.md, PROCESS.md) from workspace storage.
+      description: `Get team constitution (values, process documents) from workspace storage.
 
 Returns the canonical workspace-level versions. Falls back to user_identity if workspace columns are empty.
 
@@ -3116,35 +3140,6 @@ Example workflow for Myra:
     }
   );
 
-  server.registerTool(
-    'update_session_status',
-    {
-      description: `[DEPRECATED] Use update_session_phase instead, which combines phase, status, backendSessionId, context, and workingDir in one tool.
-
-Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.`,
-      inputSchema: updateSessionStatusSchema,
-    },
-    async (args) => {
-      try {
-        return await handleUpdateSessionStatus(args, dataComposer);
-      } catch (error) {
-        logger.error('Error in update_session_status:', error);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-  );
-
   // =====================================================
   // ARTIFACT TOOLS (shared documents, specs, designs)
   // =====================================================
@@ -3366,7 +3361,21 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'send_to_inbox',
     {
-      description: `Send a message to another agent's inbox. Use for cross-agent communication, task handoff, or session resume requests.
+      description: `Send a message to another agent's inbox or reply to a thread. This is the unified tool for all cross-agent messaging.
+
+Recipient modes (provide exactly one):
+- recipientAgentId: Single recipient. Works with or without threadKey.
+- recipients[]: Multiple recipients. Requires threadKey. Creates a group thread automatically.
+
+Thread routing:
+When threadKey is provided, messages are stored in thread tables (inbox_thread_messages). All recipients are auto-added as thread participants. Late joiners see full thread history. Without threadKey, messages go to the simple agent_inbox.
+
+For existing threads, reply semantics are applied automatically:
+- Closed threads are rejected
+- Smart trigger defaults: 1:1 thread → trigger other participant; group thread (non-creator) → trigger creator; group thread (creator) → trigger no one
+- Override with triggerAll (everyone) or triggerAgents (specific agents)
+
+For new threads (first message), all recipients are triggered.
 
 Message types:
 - message: General communication
@@ -3376,7 +3385,9 @@ Message types:
 - permission_grant: Grant or revoke tool permissions (include permissionGrant in metadata)
 
 Trigger behavior:
-All message types trigger the recipient by default. Most agents don't have heartbeats, so untriggered messages may sit unread for hours. Only set trigger=false if the message can genuinely wait 5+ hours.
+All message types trigger by default. Set trigger=false to suppress all triggers. Use triggerAgents for targeted waking, triggerAll for broadcast.
+
+Only set trigger=false if the message can genuinely wait 5+ hours.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: inboxToolDefinitions[0].schema,
@@ -3477,6 +3488,157 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleGetAgentStatus(args, dataComposer);
       } catch (error) {
         logger.error('Error in get_agent_status:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // THREAD TOOLS (group thread messaging)
+  // =====================================================
+
+  server.registerTool(
+    'get_thread_messages',
+    {
+      description: `Get the full message timeline of a thread. Requires participant membership. Automatically marks the thread as read for the requesting agent.
+
+Use to read conversation history in a group thread before replying.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: threadToolDefinitions[0].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleGetThreadMessages(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_thread_messages:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'add_thread_participant',
+    {
+      description: `Add an agent to a thread. Idempotent (no-op if already a participant). Creates an audited system event in the thread. Triggers the new participant by default so they can catch up.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: threadToolDefinitions[1].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleAddThreadParticipant(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in add_thread_participant:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'close_thread',
+    {
+      description: `Close a thread. Closed threads can still be read but new messages are rejected. Any participant can close a thread.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: threadToolDefinitions[2].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleCloseThread(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in close_thread:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_threads',
+    {
+      description: `List threads an agent participates in, with unread counts and last message preview. Useful for heartbeat triage and inbox overview.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: threadToolDefinitions[3].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleListThreads(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_threads:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'mark_thread_read',
+    {
+      description: `Mark a thread as read without fetching messages. Useful when you see thread activity in get_inbox and want to acknowledge it without reading the full history.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: threadToolDefinitions[4].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleMarkThreadRead(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in mark_thread_read:', error);
         return {
           content: [
             {

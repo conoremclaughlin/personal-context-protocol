@@ -22,12 +22,14 @@ describe('summarizeMissionRows', () => {
         id: '1',
         agentId: 'lumen',
         status: 'active',
+        lifecycle: 'running',
         startedAt: '2026-02-20T08:00:00.000Z',
       },
       {
         id: '2',
         agentId: 'lumen',
         status: 'active',
+        lifecycle: 'idle',
         startedAt: '2026-02-20T08:05:00.000Z',
         threadKey: 'pr:70',
         currentPhase: 'implementing',
@@ -37,6 +39,7 @@ describe('summarizeMissionRows', () => {
         id: '3',
         agentId: 'wren',
         status: 'active',
+        lifecycle: 'running',
         startedAt: '2026-02-20T07:55:00.000Z',
       },
     ];
@@ -53,6 +56,7 @@ describe('summarizeMissionRows', () => {
         latestLifecycle: 'idle',
         latestPhase: 'implementing',
         latestBackendSessionId: 'backend-123',
+        sessionsByLifecycle: { running: 1, idle: 1 },
       },
       {
         agent: 'wren',
@@ -60,9 +64,10 @@ describe('summarizeMissionRows', () => {
         unreadInbox: 1,
         latestSessionId: '3',
         latestThreadKey: undefined,
-        latestLifecycle: 'idle',
+        latestLifecycle: 'running',
         latestPhase: undefined,
         latestBackendSessionId: undefined,
+        sessionsByLifecycle: { running: 1 },
       },
       {
         agent: 'aster',
@@ -73,13 +78,18 @@ describe('summarizeMissionRows', () => {
         latestLifecycle: 'idle',
         latestPhase: undefined,
         latestBackendSessionId: undefined,
+        sessionsByLifecycle: undefined,
       },
     ]);
   });
 });
 
 describe('extractUnreadCount', () => {
-  it('reads unreadCount when present', () => {
+  it('prefers totalUnreadCount over unreadCount', () => {
+    expect(extractUnreadCount({ totalUnreadCount: 12, unreadCount: 5 })).toBe(12);
+  });
+
+  it('falls back to unreadCount when totalUnreadCount not present', () => {
     expect(extractUnreadCount({ unreadCount: 5 })).toBe(5);
   });
 
@@ -89,6 +99,10 @@ describe('extractUnreadCount', () => {
 
   it('falls back to nested data.unreadCount', () => {
     expect(extractUnreadCount({ data: { unreadCount: 9 } })).toBe(9);
+  });
+
+  it('ignores non-finite totalUnreadCount', () => {
+    expect(extractUnreadCount({ totalUnreadCount: NaN, unreadCount: 3 })).toBe(3);
   });
 });
 
@@ -589,6 +603,141 @@ describe('extractInboxMessages', () => {
     };
     expect(extractInboxMessages(result)).toHaveLength(1);
   });
+
+  it('extracts thread preview messages from threadsWithUnread', () => {
+    const result = {
+      messages: [],
+      threadsWithUnread: [
+        {
+          threadKey: 'pr:210',
+          title: 'Group threads PR review',
+          participants: ['wren', 'lumen'],
+          unreadCount: 2,
+          previewMessages: [
+            {
+              senderAgentId: 'lumen',
+              content: 'Looking at it now.',
+              messageType: 'message',
+              createdAt: '2026-03-10T02:00:00Z',
+            },
+            {
+              senderAgentId: 'wren',
+              content: 'Thanks for the review!',
+              messageType: 'message',
+              createdAt: '2026-03-10T03:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0]).toMatchObject({
+      senderAgentId: 'lumen',
+      recipientAgentId: 'wren',
+      content: 'Looking at it now.',
+      threadKey: 'pr:210',
+      createdAt: '2026-03-10T02:00:00Z',
+    });
+    expect(msgs[1]).toMatchObject({
+      senderAgentId: 'wren',
+      recipientAgentId: 'lumen',
+      content: 'Thanks for the review!',
+      threadKey: 'pr:210',
+    });
+  });
+
+  it('merges legacy messages and thread preview messages', () => {
+    const result = {
+      messages: [
+        {
+          id: 'msg-1',
+          subject: 'Direct message',
+          senderAgentId: 'myra',
+          recipientAgentId: 'wren',
+          createdAt: '2026-03-10T01:00:00Z',
+        },
+      ],
+      threadsWithUnread: [
+        {
+          threadKey: 'spec:routing',
+          participants: ['wren', 'lumen'],
+          unreadCount: 1,
+          previewMessages: [
+            {
+              senderAgentId: 'lumen',
+              content: 'Thread message',
+              messageType: 'task_request',
+              createdAt: '2026-03-10T02:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(2);
+    expect(msgs[0].id).toBe('msg-1');
+    expect(msgs[1].threadKey).toBe('spec:routing');
+    expect(msgs[1].messageType).toBe('task_request');
+  });
+
+  it('handles missing threadsWithUnread gracefully', () => {
+    const result = {
+      messages: [{ id: 'msg-1', subject: 'Solo' }],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(1);
+  });
+
+  it('skips thread preview messages without createdAt', () => {
+    const result = {
+      messages: [],
+      threadsWithUnread: [
+        {
+          threadKey: 'pr:99',
+          participants: ['wren', 'aster'],
+          unreadCount: 1,
+          previewMessages: [
+            { senderAgentId: 'aster', content: 'No timestamp' },
+            {
+              senderAgentId: 'aster',
+              content: 'Has timestamp',
+              createdAt: '2026-03-10T05:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0].content).toBe('Has timestamp');
+  });
+
+  it('derives recipient from thread participants (excludes sender)', () => {
+    const result = {
+      messages: [],
+      threadsWithUnread: [
+        {
+          threadKey: 'thread:test',
+          participants: ['myra', 'benson', 'wren'],
+          unreadCount: 1,
+          previewMessages: [
+            {
+              senderAgentId: 'myra',
+              content: 'Group message',
+              messageType: 'message',
+              createdAt: '2026-03-10T06:00:00Z',
+            },
+          ],
+        },
+      ],
+    };
+    const msgs = extractInboxMessages(result);
+    expect(msgs).toHaveLength(1);
+    // recipientAgentId should be the first non-sender participant
+    expect(msgs[0].recipientAgentId).toBe('benson');
+    expect(msgs[0].senderAgentId).toBe('myra');
+  });
 });
 
 // ── inboxMessageToFeedEvent ──
@@ -798,5 +947,74 @@ describe('activityToFeedEvent tool_call/tool_result', () => {
     );
     expect(event.content).toBe('log_session(email, sessionId, content, salience)');
     expect(event.type).toBe('activity');
+  });
+});
+
+// ── state_change rendering ──
+
+describe('activityToFeedEvent state_change', () => {
+  const activity = (overrides: Partial<MissionActivity>): MissionActivity => ({
+    id: 'test-sc',
+    ...overrides,
+  });
+
+  it('shows actual values from payload.after', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'lumen',
+        content: 'Session b73acc8f updated (currentPhase, lifecycle)',
+        payload: {
+          sessionId: 'b73acc8f-1234-5678-9abc-def012345678',
+          changedFields: ['currentPhase', 'lifecycle'],
+          before: { currentPhase: 'investigating', lifecycle: 'idle' },
+          after: { currentPhase: 'implementing', lifecycle: 'running' },
+        },
+      })
+    );
+    expect(event.content).toBe('Session b73acc8f → currentPhase: implementing, lifecycle: running');
+  });
+
+  it('falls back to field names when payload.after is missing', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'myra',
+        content: 'Session a1b2c3d4 updated (lifecycle)',
+        payload: {
+          sessionId: 'a1b2c3d4-0000-0000-0000-000000000000',
+          changedFields: ['lifecycle'],
+        },
+      })
+    );
+    expect(event.content).toBe('Session a1b2c3d4 updated (lifecycle)');
+  });
+
+  it('falls back to raw content when no payload at all', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'wren',
+        content: 'Session abc12345 updated (status)',
+      })
+    );
+    expect(event.content).toBe('Session abc12345 updated (status)');
+  });
+
+  it('skips long context values in summary', () => {
+    const longContext = 'a'.repeat(100);
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'lumen',
+        payload: {
+          sessionId: 'deadbeef-0000-0000-0000-000000000000',
+          changedFields: ['currentPhase', 'context'],
+          after: { currentPhase: 'reviewing', context: longContext },
+        },
+      })
+    );
+    // Only shows currentPhase (context is >80 chars, skipped)
+    expect(event.content).toBe('Session deadbeef → currentPhase: reviewing');
   });
 });
