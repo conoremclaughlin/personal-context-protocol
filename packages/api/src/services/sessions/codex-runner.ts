@@ -234,14 +234,20 @@ export class CodexRunner implements IRunner {
               }
             }
 
-            const maybeSessionId = this.extractSessionId(parsed);
-            if (maybeSessionId && maybeSessionId !== resolvedSessionId) {
-              logger.debug('Codex session ID discovered in event stream', {
-                codexSessionId: maybeSessionId,
-                eventType: parsed.type,
-                eventIndex: parsedEventCount,
-              });
-              resolvedSessionId = maybeSessionId;
+            // Only extract session ID if we haven't found one yet.
+            // The first match (typically thread.started) is authoritative;
+            // later events may contain unrelated IDs (e.g., conversationId
+            // from tool calls) that would incorrectly overwrite it.
+            if (!resolvedSessionId) {
+              const maybeSessionId = this.extractSessionId(parsed);
+              if (maybeSessionId) {
+                logger.debug('Codex session ID discovered in event stream', {
+                  codexSessionId: maybeSessionId,
+                  eventType: parsed.type,
+                  eventIndex: parsedEventCount,
+                });
+                resolvedSessionId = maybeSessionId;
+              }
             }
 
             const maybeUsage = this.extractUsage(parsed);
@@ -299,8 +305,10 @@ export class CodexRunner implements IRunner {
                 parsedErrorMessages.shift();
               }
             }
-            const maybeSessionId = this.extractSessionId(parsed);
-            if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            if (!resolvedSessionId) {
+              const maybeSessionId = this.extractSessionId(parsed);
+              if (maybeSessionId) resolvedSessionId = maybeSessionId;
+            }
             const maybeUsage = this.extractUsage(parsed);
             if (maybeUsage) usage = maybeUsage;
             const maybeText = this.extractFinalText(parsed);
@@ -418,8 +426,7 @@ export class CodexRunner implements IRunner {
   }
 
   private extractSessionId(event: Record<string, unknown>): string | undefined {
-    // Codex emits `session_meta` with the session UUID at `payload.id`.
-    // Prioritise this over generic key scanning so we always capture it.
+    // Priority 1: Codex JSONL emits `session_meta` with UUID at `payload.id`.
     if (
       event.type === 'session_meta' &&
       typeof (event.payload as Record<string, unknown>)?.id === 'string'
@@ -427,15 +434,18 @@ export class CodexRunner implements IRunner {
       return (event.payload as Record<string, unknown>).id as string;
     }
 
+    // Priority 2: Codex stdout emits `thread.started` with `thread_id`.
+    // This is the primary session ID source for `codex exec --json`.
+    if (event.type === 'thread.started' && typeof event.thread_id === 'string') {
+      return event.thread_id;
+    }
+
+    // Fallback: BFS scan for common session ID keys.
+    // Only match session/thread IDs — NOT conversationId, which often
+    // contains PCP routing keys (e.g., "trigger:lumen:thread:foo")
+    // that are unrelated to the backend session.
     const queue: unknown[] = [event];
-    const sessionKeys = new Set([
-      'session_id',
-      'sessionId',
-      'conversation_id',
-      'conversationId',
-      'thread_id',
-      'threadId',
-    ]);
+    const sessionKeys = new Set(['session_id', 'sessionId', 'thread_id', 'threadId']);
 
     while (queue.length > 0) {
       const current = queue.shift();
