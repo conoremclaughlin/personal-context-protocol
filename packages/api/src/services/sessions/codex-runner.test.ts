@@ -187,6 +187,34 @@ describe('CodexRunner', () => {
     expect(options.env?.PCP_ACCESS_TOKEN).toBe('test-pcp-token');
   });
 
+  it('should return null claudeSessionId when no session ID is found in stdout', async () => {
+    const mockProc = createMockProcess();
+    (spawn as Mock).mockReturnValue(mockProc);
+
+    const runner = new CodexRunner();
+    const runPromise = runner.run('hello', {
+      config: {
+        workingDirectory: process.cwd(),
+        mcpConfigPath: '',
+        model: 'gpt-5-codex',
+        appendSystemPrompt: 'identity override',
+      },
+    });
+
+    setTimeout(() => {
+      // No session_id, thread_id, or session_meta in the output
+      mockProc.stdout.emit(
+        'data',
+        Buffer.from(`${JSON.stringify({ type: 'item.completed', item: { text: 'hello' } })}\n`)
+      );
+      mockProc.emit('close', 0);
+    }, 5);
+
+    const result = await runPromise;
+    expect(result.success).toBe(true);
+    expect(result.claudeSessionId).toBeNull();
+  });
+
   it('should extract session ID from Codex session_meta event', async () => {
     const mockProc = createMockProcess();
     (spawn as Mock).mockReturnValue(mockProc);
@@ -230,6 +258,46 @@ describe('CodexRunner', () => {
     const result = await runPromise;
     expect(result.success).toBe(true);
     expect(result.claudeSessionId).toBe(codexSessionId);
+  });
+
+  it('should extract session ID from thread.started thread_id (real Codex stdout format)', async () => {
+    const mockProc = createMockProcess();
+    (spawn as Mock).mockReturnValue(mockProc);
+
+    const runner = new CodexRunner();
+    const runPromise = runner.run('hello', {
+      config: {
+        workingDirectory: process.cwd(),
+        mcpConfigPath: '',
+        model: 'gpt-5-codex',
+        appendSystemPrompt: 'identity override',
+      },
+    });
+
+    const codexThreadId = '019cf13d-486a-7bd1-913b-b23490d476cf';
+
+    setTimeout(() => {
+      // This is what Codex exec --json actually outputs on stdout
+      mockProc.stdout.emit(
+        'data',
+        Buffer.from(`${JSON.stringify({ type: 'thread.started', thread_id: codexThreadId })}\n`)
+      );
+      mockProc.stdout.emit('data', Buffer.from(`${JSON.stringify({ type: 'turn.started' })}\n`));
+      mockProc.stdout.emit(
+        'data',
+        Buffer.from(
+          `${JSON.stringify({
+            type: 'turn.completed',
+            usage: { input_tokens: 100, output_tokens: 20 },
+          })}\n`
+        )
+      );
+      mockProc.emit('close', 0);
+    }, 5);
+
+    const result = await runPromise;
+    expect(result.success).toBe(true);
+    expect(result.claudeSessionId).toBe(codexThreadId);
   });
 
   it('should prefer session_meta payload.id over generic session_id keys', async () => {

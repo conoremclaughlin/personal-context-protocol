@@ -49,8 +49,6 @@ export class CodexRunner implements IClaudeRunner {
     const { claudeSessionId, injectedContext, config } = options;
     const isResume = !!claudeSessionId;
 
-    let sessionId = claudeSessionId || randomUUID();
-
     let fullMessage = message;
     if (injectedContext && !isResume) {
       const contextBlock = formatInjectedContext(injectedContext);
@@ -62,9 +60,12 @@ export class CodexRunner implements IClaudeRunner {
     );
 
     try {
-      const args = this.buildArgs(sessionId, isResume, fullMessage, config, promptPath);
+      // Only pass a session ID to buildArgs when resuming a known backend session.
+      // For fresh runs, Codex assigns its own session UUID — we extract it from stdout.
+      const argsSessionId = isResume ? claudeSessionId! : undefined;
+      const args = this.buildArgs(argsSessionId, isResume, fullMessage, config, promptPath);
       logger.info('Spawning Codex CLI', {
-        sessionId,
+        resumeSessionId: argsSessionId || null,
         isResume,
         workingDirectory: config.workingDirectory,
         messageLength: fullMessage.length,
@@ -72,13 +73,14 @@ export class CodexRunner implements IClaudeRunner {
       });
 
       const result = await this.spawnProcess(args, config);
-      if (result.sessionId) {
-        sessionId = result.sessionId;
-      }
+
+      // Only return a backend session ID if we actually extracted one from
+      // the Codex event stream, or if we were resuming an existing session.
+      const resolvedBackendSessionId = result.sessionId || argsSessionId || undefined;
 
       return {
         success: true,
-        claudeSessionId: sessionId,
+        claudeSessionId: resolvedBackendSessionId || null,
         responses: result.responses,
         usage: result.usage,
         finalTextResponse: result.finalTextResponse,
@@ -86,12 +88,12 @@ export class CodexRunner implements IClaudeRunner {
       };
     } catch (error) {
       logger.error('Codex process failed', {
-        sessionId,
+        resumeSessionId: claudeSessionId || null,
         error: error instanceof Error ? error.message : String(error),
       });
       return {
         success: false,
-        claudeSessionId: sessionId,
+        claudeSessionId: claudeSessionId || null,
         responses: [],
         error: error instanceof Error ? error.message : 'Unknown error',
       };
@@ -101,7 +103,7 @@ export class CodexRunner implements IClaudeRunner {
   }
 
   private buildArgs(
-    sessionId: string,
+    resumeSessionId: string | undefined,
     isResume: boolean,
     message: string,
     config: ClaudeRunnerConfig,
@@ -124,8 +126,8 @@ export class CodexRunner implements IClaudeRunner {
       args.push('-m', config.model);
     }
 
-    if (isResume) {
-      args.push(sessionId);
+    if (isResume && resumeSessionId) {
+      args.push(resumeSessionId);
       args.push(message);
     } else {
       args.push(message);
