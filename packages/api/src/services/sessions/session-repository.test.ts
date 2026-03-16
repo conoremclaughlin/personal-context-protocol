@@ -86,6 +86,43 @@ describe('SessionRepository', () => {
     expect(updateCall.backend_session_id).toBe('019ceb00-codex-uuid');
   });
 
+  it('markCompacted with null should not overwrite backend_session_id', async () => {
+    const { supabase, builder, fakeRow } = createMockSupabase();
+    // Simulate a session that already has a backend session ID
+    builder.single.mockResolvedValueOnce({
+      data: {
+        ...fakeRow,
+        backend_session_id: 'codex-thread-uuid',
+        claude_session_id: 'codex-thread-uuid',
+      },
+      error: null,
+    });
+    const repo = new SessionRepository(supabase as never);
+
+    await repo.markCompacted('sess-1', null);
+
+    // The update call (second .from() call) should NOT include claude_session_id or backend_session_id
+    const updateCall = builder.update.mock.calls[0][0] as Record<string, unknown>;
+    expect(updateCall).not.toHaveProperty('claude_session_id');
+    expect(updateCall).not.toHaveProperty('backend_session_id');
+    expect(updateCall.metadata).toBeDefined();
+  });
+
+  it('markCompacted with a new session ID should write both columns', async () => {
+    const { supabase, builder, fakeRow } = createMockSupabase();
+    builder.single.mockResolvedValueOnce({
+      data: { ...fakeRow, backend_session_id: 'old-uuid', claude_session_id: 'old-uuid' },
+      error: null,
+    });
+    const repo = new SessionRepository(supabase as never);
+
+    await repo.markCompacted('sess-1', 'new-session-uuid');
+
+    const updateCall = builder.update.mock.calls[0][0] as Record<string, unknown>;
+    expect(updateCall.claude_session_id).toBe('new-session-uuid');
+    expect(updateCall.backend_session_id).toBe('new-session-uuid');
+  });
+
   it('should not set backend_session_id when claudeSessionId is not in the update', async () => {
     const { supabase, builder } = createMockSupabase();
     const repo = new SessionRepository(supabase as never);

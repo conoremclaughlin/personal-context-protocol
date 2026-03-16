@@ -340,7 +340,7 @@ export interface ISessionRepository {
     usage: { contextTokens: number; inputTokens: number; outputTokens: number }
   ): Promise<void>;
 
-  markCompacted(id: string, newClaudeSessionId: string): Promise<void>;
+  markCompacted(id: string, newClaudeSessionId: string | null): Promise<void>;
 
   /**
    * Atomically acquire a compaction lock for a session.
@@ -401,7 +401,7 @@ export interface ClaudeRunnerConfig {
 
 export interface ClaudeRunnerResult {
   success: boolean;
-  claudeSessionId: string;
+  claudeSessionId: string | null;
   responses: ChannelResponse[];
   usage?: SessionResult['usage'];
   error?: string;

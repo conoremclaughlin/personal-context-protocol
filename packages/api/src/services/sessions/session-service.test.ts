@@ -798,7 +798,7 @@ describe('SessionService', () => {
       // Should have acquired lock, run compaction, and released lock
       expect(mockRepository.tryAcquireCompactionLock).toHaveBeenCalledWith('session-123');
       expect(mockClaudeRunner.run).toHaveBeenCalledTimes(1);
-      expect(mockRepository.markCompacted).toHaveBeenCalledWith('session-123', '');
+      expect(mockRepository.markCompacted).toHaveBeenCalledWith('session-123', 'claude-abc');
       expect(mockRepository.releaseCompactionLock).toHaveBeenCalledWith('session-123');
     });
 
@@ -855,7 +855,7 @@ describe('SessionService', () => {
       // Phase 1: Compaction responses should be routed
       expect(mockResponseHandler).toHaveBeenCalledWith(compactionResponses);
       // Phase 2: Session should be marked as compacted after responses routed
-      expect(mockRepository.markCompacted).toHaveBeenCalledWith('session-123', '');
+      expect(mockRepository.markCompacted).toHaveBeenCalledWith('session-123', 'claude-abc');
     });
 
     it('should still complete compaction if response routing fails', async () => {
@@ -891,7 +891,7 @@ describe('SessionService', () => {
       await serviceWithHandler.triggerCompaction('session-123');
 
       // Compaction should still complete
-      expect(mockRepository.markCompacted).toHaveBeenCalledWith('session-123', '');
+      expect(mockRepository.markCompacted).toHaveBeenCalledWith('session-123', 'claude-abc');
     });
   });
 

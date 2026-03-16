@@ -392,22 +392,29 @@ export class SessionRepository implements ISessionRepository {
     logger.debug('Updated token usage', { id, usage });
   }
 
-  async markCompacted(id: string, newClaudeSessionId: string): Promise<void> {
+  async markCompacted(id: string, newClaudeSessionId: string | null): Promise<void> {
     const current = await this.findById(id);
     if (!current) {
       throw new Error(`Session not found: ${id}`);
     }
 
-    await this.update(id, {
-      claudeSessionId: newClaudeSessionId,
+    const updates: Partial<Session> = {
       lastCompactionAt: new Date(),
       compactionCount: current.compactionCount + 1,
       contextTokens: 0, // Reset after compaction
-    });
+    };
+
+    // Only rotate the backend session ID if a new one was provided.
+    // null means "keep the existing ID" (e.g., Codex reuses the same thread UUID).
+    if (newClaudeSessionId) {
+      updates.claudeSessionId = newClaudeSessionId;
+    }
+
+    await this.update(id, updates);
 
     logger.info('Marked session as compacted', {
       id,
-      newClaudeSessionId,
+      newClaudeSessionId: newClaudeSessionId || '(preserved)',
       compactionCount: current.compactionCount + 1,
     });
   }

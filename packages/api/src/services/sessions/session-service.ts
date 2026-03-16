@@ -1051,8 +1051,10 @@ This session will continue with a fresh context after compaction. Your identity,
       }
 
       if (result.success) {
-        // Phase 2: Rotate Claude session — only after agent has persisted context
-        await this.repository.markCompacted(sessionId, '');
+        // Phase 2: Mark compaction complete. Pass the backend session ID from the
+        // compaction run so we preserve it (Codex reuses the same thread UUID).
+        // Passing null means "don't rotate the session ID" — only update compaction metadata.
+        await this.repository.markCompacted(sessionId, result.claudeSessionId || null);
         logger.info('Compaction completed (two-phase)', {
           sessionId,
           responsesRouted: result.responses.length,
