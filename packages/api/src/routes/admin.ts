@@ -905,10 +905,12 @@ function isSessionInWorkspace(
   return false;
 }
 
-function extractTranscriptFormat(payload: unknown): TranscriptFormat | null {
-  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return null;
-  const value = (payload as Record<string, unknown>).format;
-  if (value === 'json' || value === 'jsonl') return value;
+function inferTranscriptFormatFromPath(
+  sourcePath: string | null | undefined
+): TranscriptFormat | null {
+  if (!sourcePath) return null;
+  if (sourcePath.endsWith('.jsonl')) return 'jsonl';
+  if (sourcePath.endsWith('.json')) return 'json';
   return null;
 }
 
@@ -5034,7 +5036,7 @@ router.get('/sessions/synced', async (req: Request, res: Response) => {
     const { data: archiveRows, error: archiveError } = await supabase
       .from('session_transcript_archives')
       .select(
-        'id, session_id, backend, backend_session_id, line_count, byte_count, source_path, synced_at, payload'
+        'id, session_id, backend, backend_session_id, line_count, byte_count, source_path, synced_at'
       )
       .eq('user_id', authReq.pcpUserId)
       .order('synced_at', { ascending: false })
@@ -5101,7 +5103,7 @@ router.get('/sessions/synced', async (req: Request, res: Response) => {
         const session = sessionsById.get(row.session_id);
         if (!session || !isSessionInWorkspace(session, scope)) return null;
 
-        const format = extractTranscriptFormat(row.payload);
+        const format = inferTranscriptFormatFromPath(row.source_path);
         const identity = session.agent_id ? identityByAgentId.get(session.agent_id) : null;
         return {
           archiveId: row.id,

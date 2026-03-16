@@ -645,6 +645,29 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       const handler = findRouteHandler('get', '/sessions/synced');
       expect(handler).not.toBeNull();
 
+      const archiveQuery = createQueryChain([
+        {
+          id: 'archive-1',
+          session_id: 'session-in-workspace',
+          backend: 'claude',
+          backend_session_id: 'backend-1',
+          line_count: 42,
+          byte_count: 4200,
+          source_path: '/tmp/backend-1.jsonl',
+          synced_at: '2026-03-11T10:00:00Z',
+        },
+        {
+          id: 'archive-2',
+          session_id: 'session-outside-workspace',
+          backend: 'claude',
+          backend_session_id: 'backend-2',
+          line_count: 12,
+          byte_count: 1200,
+          source_path: '/tmp/backend-2.jsonl',
+          synced_at: '2026-03-10T10:00:00Z',
+        },
+      ]);
+
       mockSupabaseFrom.mockImplementation((table: string) => {
         if (table === 'agent_identities') {
           return createQueryChain([
@@ -653,30 +676,7 @@ describe('admin endpoint handlers (no-500 regression)', () => {
         }
 
         if (table === 'session_transcript_archives') {
-          return createQueryChain([
-            {
-              id: 'archive-1',
-              session_id: 'session-in-workspace',
-              backend: 'claude',
-              backend_session_id: 'backend-1',
-              line_count: 42,
-              byte_count: 4200,
-              source_path: '/tmp/backend-1.jsonl',
-              synced_at: '2026-03-11T10:00:00Z',
-              payload: { format: 'jsonl' },
-            },
-            {
-              id: 'archive-2',
-              session_id: 'session-outside-workspace',
-              backend: 'claude',
-              backend_session_id: 'backend-2',
-              line_count: 12,
-              byte_count: 1200,
-              source_path: '/tmp/backend-2.jsonl',
-              synced_at: '2026-03-10T10:00:00Z',
-              payload: { format: 'jsonl' },
-            },
-          ]);
+          return archiveQuery;
         }
 
         if (table === 'sessions') {
@@ -722,6 +722,9 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       await handler!(req, res);
 
       expect(res._status).toBe(200);
+      expect((archiveQuery.select as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]).toBe(
+        'id, session_id, backend, backend_session_id, line_count, byte_count, source_path, synced_at'
+      );
       expect(res._json).toEqual({
         archives: [
           {
