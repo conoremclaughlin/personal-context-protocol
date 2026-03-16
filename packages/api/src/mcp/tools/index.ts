@@ -140,9 +140,7 @@ import {
 
 import {
   handleGetResumableSessions,
-  handleUpdateSessionStatus,
   getResumableSessionsSchema,
-  updateSessionStatusSchema,
 } from './session-orchestration-handlers';
 
 import {
@@ -3106,35 +3104,6 @@ Example workflow for Myra:
         return await handleGetResumableSessions(args, dataComposer);
       } catch (error) {
         logger.error('Error in get_resumable_sessions:', error);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  server.registerTool(
-    'update_session_status',
-    {
-      description: `[DEPRECATED] Use update_session_phase instead, which combines phase, status, backendSessionId, context, and workingDir in one tool.
-
-Update a PCP session's status and Claude session ID. Use this to mark your session as resumable when pausing work.`,
-      inputSchema: updateSessionStatusSchema,
-    },
-    async (args) => {
-      try {
-        return await handleUpdateSessionStatus(args, dataComposer);
-      } catch (error) {
-        logger.error('Error in update_session_status:', error);
         return {
           content: [
             {

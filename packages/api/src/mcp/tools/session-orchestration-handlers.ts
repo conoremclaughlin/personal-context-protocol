@@ -2,7 +2,7 @@
  * Session Orchestration Handlers
  *
  * Tools for agent-to-agent collaboration, particularly for resuming
- * Claude Code sessions from other agents like Myra.
+ * sessions from other agents like Myra.
  */
 
 import { createClient } from '@supabase/supabase-js';
@@ -22,20 +22,6 @@ export const getResumableSessionsSchema = {
     .enum(['active', 'paused', 'resumable'])
     .optional()
     .describe('[Deprecated] Filter by status (default: resumable)'),
-};
-
-// Schema for update_session_status
-export const updateSessionStatusSchema = {
-  sessionId: z.string().uuid().describe('PCP session ID to update'),
-  claudeSessionId: z
-    .string()
-    .optional()
-    .describe(
-      '[Deprecated] Backend session ID for --resume. Use update_session_phase.backendSessionId instead.'
-    ),
-  status: z.enum(['active', 'paused', 'resumable', 'completed']).optional().describe('New status'),
-  workingDir: z.string().optional().describe('Working directory'),
-  context: z.string().optional().describe('Brief context of current work'),
 };
 
 interface ResumableSession {
@@ -128,97 +114,6 @@ export async function handleGetResumableSessions(
     };
   } catch (error) {
     logger.error('Error in get_resumable_sessions:', error);
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            success: false,
-            error: error instanceof Error ? error.message : 'Unknown error',
-          }),
-        },
-      ],
-    };
-  }
-}
-
-/**
- * Update a session's status and Claude session ID
- * Called by agents to mark their session as resumable
- */
-export async function handleUpdateSessionStatus(
-  args: {
-    sessionId: string;
-    claudeSessionId?: string;
-    status?: string;
-    workingDir?: string;
-    context?: string;
-  },
-  _dataComposer: DataComposer
-): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
-  try {
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY);
-
-    const updates: Record<string, unknown> = {
-      updated_at: new Date().toISOString(),
-    };
-
-    if (args.claudeSessionId !== undefined) {
-      updates.claude_session_id = args.claudeSessionId;
-      updates.backend_session_id = args.claudeSessionId;
-    }
-    if (args.status !== undefined) {
-      updates.status = args.status;
-      // Map status to lifecycle for dual-write
-      if (args.status === 'completed') updates.lifecycle = 'completed';
-      else if (args.status === 'active') updates.lifecycle = 'idle';
-    }
-    if (args.workingDir !== undefined) {
-      updates.working_dir = args.workingDir;
-    }
-    if (args.context !== undefined) {
-      updates.context = args.context;
-    }
-
-    const { data, error } = await supabase
-      .from('sessions')
-      .update(updates)
-      .eq('id', args.sessionId)
-      .select()
-      .single();
-
-    if (error) {
-      logger.error('Failed to update session status:', error);
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify({ success: false, error: error.message }),
-          },
-        ],
-      };
-    }
-
-    return {
-      content: [
-        {
-          type: 'text',
-          text: JSON.stringify({
-            success: true,
-            session: {
-              id: data.id,
-              agentId: data.agent_id,
-              backendSessionId: data.backend_session_id || data.claude_session_id,
-              status: data.status,
-              workingDir: data.working_dir,
-              context: data.context,
-            },
-          }),
-        },
-      ],
-    };
-  } catch (error) {
-    logger.error('Error in update_session_status:', error);
     return {
       content: [
         {
