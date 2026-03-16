@@ -943,3 +943,72 @@ describe('activityToFeedEvent tool_call/tool_result', () => {
     expect(event.type).toBe('activity');
   });
 });
+
+// ── state_change rendering ──
+
+describe('activityToFeedEvent state_change', () => {
+  const activity = (overrides: Partial<MissionActivity>): MissionActivity => ({
+    id: 'test-sc',
+    ...overrides,
+  });
+
+  it('shows actual values from payload.after', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'lumen',
+        content: 'Session b73acc8f updated (currentPhase, lifecycle)',
+        payload: {
+          sessionId: 'b73acc8f-1234-5678-9abc-def012345678',
+          changedFields: ['currentPhase', 'lifecycle'],
+          before: { currentPhase: 'investigating', lifecycle: 'idle' },
+          after: { currentPhase: 'implementing', lifecycle: 'running' },
+        },
+      })
+    );
+    expect(event.content).toBe('Session b73acc8f → currentPhase: implementing, lifecycle: running');
+  });
+
+  it('falls back to field names when payload.after is missing', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'myra',
+        content: 'Session a1b2c3d4 updated (lifecycle)',
+        payload: {
+          sessionId: 'a1b2c3d4-0000-0000-0000-000000000000',
+          changedFields: ['lifecycle'],
+        },
+      })
+    );
+    expect(event.content).toBe('Session a1b2c3d4 updated (lifecycle)');
+  });
+
+  it('falls back to raw content when no payload at all', () => {
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'wren',
+        content: 'Session abc12345 updated (status)',
+      })
+    );
+    expect(event.content).toBe('Session abc12345 updated (status)');
+  });
+
+  it('skips long context values in summary', () => {
+    const longContext = 'a'.repeat(100);
+    const event = activityToFeedEvent(
+      activity({
+        type: 'state_change',
+        agentId: 'lumen',
+        payload: {
+          sessionId: 'deadbeef-0000-0000-0000-000000000000',
+          changedFields: ['currentPhase', 'context'],
+          after: { currentPhase: 'reviewing', context: longContext },
+        },
+      })
+    );
+    // Only shows currentPhase (context is >80 chars, skipped)
+    expect(event.content).toBe('Session deadbeef → currentPhase: reviewing');
+  });
+});

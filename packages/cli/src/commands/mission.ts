@@ -323,6 +323,41 @@ export function formatWorktreeLabel(folder: string): string {
   return folder;
 }
 
+/**
+ * Format a state_change activity into a human-readable summary showing actual values.
+ * Payload shape: { changedFields, before, after, ... }
+ */
+function formatStateChange(activity: MissionActivity): string {
+  const p = activity.payload;
+  const after = p?.after as Record<string, unknown> | undefined;
+  const changedFields = p?.changedFields as string[] | undefined;
+
+  if (!after || !changedFields?.length) {
+    // Fallback to raw content if payload is missing
+    return (activity.content || 'session updated').replace(/\s+/g, ' ').trim();
+  }
+
+  const sessionId =
+    typeof p?.sessionId === 'string' ? p.sessionId.slice(0, 8) : activity.sessionId?.slice(0, 8);
+
+  // Show the values that changed, not just the field names
+  const parts: string[] = [];
+  for (const field of changedFields) {
+    const val = after[field];
+    if (val == null || val === '') continue;
+    const strVal = String(val);
+    // Skip very long values (like context blobs) in the summary line
+    if (strVal.length > 80) continue;
+    parts.push(`${field}: ${strVal}`);
+  }
+
+  if (parts.length === 0) {
+    return `Session ${sessionId || '?'} updated (${changedFields.join(', ')})`;
+  }
+
+  return `Session ${sessionId || '?'} → ${parts.join(', ')}`;
+}
+
 function compactPreview(value?: string, max = 110): string {
   const normalized = (value || '').replace(/\s+/g, ' ').trim();
   if (!normalized) return '-';
@@ -775,7 +810,7 @@ export function activityToFeedEvent(
   } else if (activity.type === 'message_out') {
     content = `→ ${activity.platform || 'unknown'}: ${compactPreview(activity.content, maxPreview)}`;
   } else if (activity.type === 'state_change') {
-    content = compactPreview(activity.content, maxPreview);
+    content = formatStateChange(activity);
   } else if (activity.type === 'tool_call' || activity.type === 'tool_result') {
     const ap = activity.payload;
     const isBackendCli = activity.subtype?.startsWith('backend_cli:');
