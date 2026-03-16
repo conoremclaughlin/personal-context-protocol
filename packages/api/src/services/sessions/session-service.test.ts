@@ -772,6 +772,27 @@ describe('SessionService', () => {
       expect(result.compactionTriggered).toBe(false);
     });
 
+    it('should not trigger compaction for codex-cli backend even when tokens exceed threshold', async () => {
+      const session = createMockSession({ backend: 'codex' });
+      vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(session);
+
+      vi.mocked(mockClaudeRunner.run).mockResolvedValue(
+        createMockClaudeResult({
+          usage: { contextTokens: 300000, inputTokens: 300000, outputTokens: 2000 }, // Way above threshold
+        })
+      );
+
+      const request = createMockRequest();
+      const result = await sessionService.handleMessage(request);
+
+      expect(result.success).toBe(true);
+      // Token usage should still be recorded
+      expect(mockRepository.updateTokenUsage).toHaveBeenCalled();
+      // But compaction should NOT be triggered — native backends manage their own context
+      expect(mockRepository.findById).not.toHaveBeenCalled();
+      expect(mockRepository.tryAcquireCompactionLock).not.toHaveBeenCalled();
+    });
+
     it('should skip compaction when lock is already held (re-entry guard)', async () => {
       const session = createMockSession({ backendSessionId: 'claude-abc' });
       vi.mocked(mockRepository.findById).mockResolvedValue(session);

@@ -504,8 +504,13 @@ export class SessionService implements ISessionService {
         outputTokens: result.usage.outputTokens,
       });
 
-      // 6. Check if compaction is needed
-      if (result.usage.contextTokens >= this.config.compactionThreshold) {
+      // 6. Check if compaction is needed — only for claude-code backend where
+      // PCP controls the context window (via sb chat). Native CLI backends
+      // (codex-cli, gemini) manage their own context lifecycle.
+      if (
+        resolvedBackend === 'claude-code' &&
+        result.usage.contextTokens >= this.config.compactionThreshold
+      ) {
         logger.info('Session approaching context limit, triggering compaction', {
           sessionId: session.id,
           contextTokens: result.usage.contextTokens,
