@@ -784,7 +784,9 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
                 backend: existingSession.backend || null,
                 model: existingSession.model || null,
                 backendSessionId: existingSession.backendSessionId || null,
-                claudeSessionId: existingSession.claudeSessionId || null,
+                /** @deprecated Use backendSessionId */
+                claudeSessionId:
+                  existingSession.backendSessionId || existingSession.claudeSessionId || null,
                 startedAt: existingSession.startedAt.toISOString(),
                 isExisting: true,
               },
@@ -833,7 +835,8 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
               backend: session.backend || null,
               model: session.model || null,
               backendSessionId: session.backendSessionId || null,
-              claudeSessionId: session.claudeSessionId || null,
+              /** @deprecated Use backendSessionId */
+              claudeSessionId: session.backendSessionId || session.claudeSessionId || null,
               startedAt: session.startedAt.toISOString(),
             },
           },
@@ -983,7 +986,8 @@ export async function handleEndSession(args: unknown, dataComposer: DataComposer
               backend: session.backend || null,
               model: session.model || null,
               backendSessionId: session.backendSessionId || null,
-              claudeSessionId: session.claudeSessionId || null,
+              /** @deprecated Use backendSessionId */
+              claudeSessionId: session.backendSessionId || session.claudeSessionId || null,
               context: session.context || null,
               workingDir: session.workingDir || null,
               startedAt: session.startedAt.toISOString(),
@@ -1118,7 +1122,8 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
               backend: s.backend || null,
               model: s.model || null,
               backendSessionId: s.backendSessionId || null,
-              claudeSessionId: s.claudeSessionId || null,
+              /** @deprecated Use backendSessionId */
+              claudeSessionId: s.backendSessionId || s.claudeSessionId || null,
               context: s.context || null,
               workingDir: s.workingDir || null,
               startedAt: s.startedAt.toISOString(),

@@ -105,7 +105,7 @@ describe('CodexRunner', () => {
 
     const result = await runPromise;
     expect(result.success).toBe(true);
-    expect(result.claudeSessionId).toBe('codex-session-123');
+    expect(result.backendSessionId).toBe('codex-session-123');
     expect(result.responses).toEqual([
       {
         channel: 'telegram',
@@ -131,7 +131,7 @@ describe('CodexRunner', () => {
 
     const runner = new CodexRunner();
     const runPromise = runner.run('resume msg', {
-      claudeSessionId: 'existing-session-abc',
+      backendSessionId: 'existing-session-abc',
       config: {
         workingDirectory: process.cwd(),
         mcpConfigPath: '',
@@ -187,7 +187,7 @@ describe('CodexRunner', () => {
     expect(options.env?.PCP_ACCESS_TOKEN).toBe('test-pcp-token');
   });
 
-  it('should return null claudeSessionId when no session ID is found in stdout', async () => {
+  it('should return null backendSessionId when no session ID is found in stdout', async () => {
     const mockProc = createMockProcess();
     (spawn as Mock).mockReturnValue(mockProc);
 
@@ -212,7 +212,7 @@ describe('CodexRunner', () => {
 
     const result = await runPromise;
     expect(result.success).toBe(true);
-    expect(result.claudeSessionId).toBeNull();
+    expect(result.backendSessionId).toBeNull();
   });
 
   it('should extract session ID from Codex session_meta event', async () => {
@@ -257,7 +257,7 @@ describe('CodexRunner', () => {
 
     const result = await runPromise;
     expect(result.success).toBe(true);
-    expect(result.claudeSessionId).toBe(codexSessionId);
+    expect(result.backendSessionId).toBe(codexSessionId);
   });
 
   it('should extract session ID from thread.started thread_id (real Codex stdout format)', async () => {
@@ -297,7 +297,7 @@ describe('CodexRunner', () => {
 
     const result = await runPromise;
     expect(result.success).toBe(true);
-    expect(result.claudeSessionId).toBe(codexThreadId);
+    expect(result.backendSessionId).toBe(codexThreadId);
   });
 
   it('should prefer session_meta payload.id over generic session_id keys', async () => {
@@ -346,8 +346,8 @@ describe('CodexRunner', () => {
     // The generic session_id from the later event overwrites it (last-write-wins),
     // but that's expected — the important thing is session_meta is parsed at all.
     // In practice, Codex only emits session_meta with the real ID.
-    expect(result.claudeSessionId).toBeDefined();
-    expect(result.claudeSessionId).not.toBe('');
+    expect(result.backendSessionId).toBeDefined();
+    expect(result.backendSessionId).not.toBe('');
   });
 
   it('includes parsed startup events in diagnostics when codex exits non-zero without stderr', async () => {

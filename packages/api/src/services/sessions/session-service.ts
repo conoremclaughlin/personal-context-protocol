@@ -22,7 +22,7 @@ import type {
   ChannelResponse,
   ISessionService,
   ClaudeRunnerConfig,
-  IClaudeRunner,
+  IRunner,
   ISessionRepository,
   IContextBuilder,
   ToolCall,
@@ -105,9 +105,9 @@ interface PendingMessage {
 export class SessionService implements ISessionService {
   private repository: ISessionRepository;
   private contextBuilder: IContextBuilder;
-  private claudeRunner: IClaudeRunner;
-  private codexRunner: IClaudeRunner;
-  private geminiRunner: IClaudeRunner;
+  private claudeRunner: IRunner;
+  private codexRunner: IRunner;
+  private geminiRunner: IRunner;
   private activityStream: IActivityStream;
   private config: SessionServiceConfig;
   private supabase: SupabaseClient<Database> | null;
@@ -135,12 +135,12 @@ export class SessionService implements ISessionService {
   constructor(
     repository: ISessionRepository,
     contextBuilder: IContextBuilder,
-    claudeRunner: IClaudeRunner,
+    claudeRunner: IRunner,
     activityStream: IActivityStream,
     config: Partial<SessionServiceConfig> = {},
-    codexRunner?: IClaudeRunner,
+    codexRunner?: IRunner,
     supabase?: SupabaseClient<Database>,
-    geminiRunner?: IClaudeRunner
+    geminiRunner?: IRunner
   ) {
     this.repository = repository;
     this.contextBuilder = contextBuilder;
@@ -246,7 +246,7 @@ export class SessionService implements ISessionService {
       return {
         success: false,
         sessionId: '',
-        claudeSessionId: null,
+        backendSessionId: null,
         responses: [],
         sessionStatus: 'failed',
         compactionTriggered: false,
@@ -411,8 +411,8 @@ export class SessionService implements ISessionService {
     const turnStartMs = Date.now();
     try {
       result = await runner.run(formattedMessage, {
-        claudeSessionId: session.claudeSessionId || undefined,
-        injectedContext: session.claudeSessionId ? undefined : injectedContext,
+        backendSessionId: session.backendSessionId || undefined,
+        injectedContext: session.backendSessionId ? undefined : injectedContext,
         config: runnerConfig,
       });
       turnDurationMs = Date.now() - turnStartMs;
@@ -475,16 +475,16 @@ export class SessionService implements ISessionService {
     // 7. Update session with new Claude session ID, usage, message count, and lifecycle
     // idle (not completed) after success — session stays reusable. completed only via end_session.
     const postRunLifecycle = result.success ? 'idle' : 'failed';
-    if (result.claudeSessionId !== session.claudeSessionId) {
+    if (result.backendSessionId !== session.backendSessionId) {
       logger.info('Backend session ID linked to PCP session', {
         pcpSessionId: session.id,
-        backendSessionId: result.claudeSessionId,
-        previousBackendSessionId: session.claudeSessionId || null,
+        backendSessionId: result.backendSessionId,
+        previousBackendSessionId: session.backendSessionId || null,
         backend: resolvedBackend,
         agentId: session.agentId,
       });
       await this.repository.update(session.id, {
-        claudeSessionId: result.claudeSessionId,
+        backendSessionId: result.backendSessionId,
         messageCount: session.messageCount + 1,
         backend: resolvedBackend,
         lifecycle: postRunLifecycle as Session['lifecycle'],
@@ -521,7 +521,7 @@ export class SessionService implements ISessionService {
     return {
       success: result.success,
       sessionId: session.id,
-      claudeSessionId: result.claudeSessionId,
+      backendSessionId: result.backendSessionId,
       responses: result.responses,
       usage: result.usage,
       sessionStatus: session.status,
@@ -655,7 +655,7 @@ export class SessionService implements ISessionService {
         if (existing) {
           logger.debug('Found existing session', {
             sessionId: existing.id,
-            claudeSessionId: existing.claudeSessionId,
+            backendSessionId: existing.backendSessionId,
             studioId: existing.studioId || null,
           });
           return existing;
@@ -674,7 +674,7 @@ export class SessionService implements ISessionService {
       userId,
       agentId,
       identityId,
-      claudeSessionId: null,
+      backendSessionId: null,
       type,
       lifecycle: 'idle',
       status: 'active',
@@ -949,8 +949,8 @@ export class SessionService implements ISessionService {
       throw new Error(`Session not found: ${sessionId}`);
     }
 
-    if (!session.claudeSessionId) {
-      logger.warn('Cannot compact session without Claude session ID', { sessionId });
+    if (!session.backendSessionId) {
+      logger.warn('Cannot compact session without backend session ID', { sessionId });
       return;
     }
 
@@ -962,7 +962,7 @@ export class SessionService implements ISessionService {
     }
 
     try {
-      logger.info('Starting compaction', { sessionId, claudeSessionId: session.claudeSessionId });
+      logger.info('Starting compaction', { sessionId, backendSessionId: session.backendSessionId });
 
       // Build compaction prompt
       const compactionPrompt = `## CONTEXT COMPACTION REQUIRED
@@ -1039,7 +1039,7 @@ This session will continue with a fresh context after compaction. Your identity,
 
       // Phase 1: Send compaction prompt — agent saves context, notifies users, ends session
       const result = await runner.run(compactionPrompt, {
-        claudeSessionId: session.claudeSessionId,
+        backendSessionId: session.backendSessionId,
         config: runnerConfig,
       });
 
@@ -1054,7 +1054,7 @@ This session will continue with a fresh context after compaction. Your identity,
         // Phase 2: Mark compaction complete. Pass the backend session ID from the
         // compaction run so we preserve it (Codex reuses the same thread UUID).
         // Passing null means "don't rotate the session ID" — only update compaction metadata.
-        await this.repository.markCompacted(sessionId, result.claudeSessionId || null);
+        await this.repository.markCompacted(sessionId, result.backendSessionId || null);
         logger.info('Compaction completed (two-phase)', {
           sessionId,
           responsesRouted: result.responses.length,

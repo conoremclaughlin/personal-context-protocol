@@ -53,7 +53,7 @@ describe('SessionService', () => {
     id: 'session-123',
     userId: 'user-456',
     agentId: 'myra',
-    claudeSessionId: 'claude-abc',
+    backendSessionId: 'claude-abc',
     type: 'primary',
     status: 'active',
     contextTokens: 1000,
@@ -115,7 +115,7 @@ describe('SessionService', () => {
     overrides: Partial<ClaudeRunnerResult> = {}
   ): ClaudeRunnerResult => ({
     success: true,
-    claudeSessionId: 'claude-abc',
+    backendSessionId: 'claude-abc',
     responses: [],
     usage: { contextTokens: 5000, inputTokens: 1000, outputTokens: 500 },
     finalTextResponse: 'Hello! How can I help?',
@@ -156,7 +156,7 @@ describe('SessionService', () => {
     mockCodexRunner = {
       run: vi
         .fn()
-        .mockResolvedValue(createMockClaudeResult({ claudeSessionId: 'codex-session-1' })),
+        .mockResolvedValue(createMockClaudeResult({ backendSessionId: 'codex-session-1' })),
     };
 
     mockActivityStream = {
@@ -490,7 +490,7 @@ describe('SessionService', () => {
       const codexSession = createMockSession({
         id: 'codex-session',
         backend: 'codex-cli',
-        claudeSessionId: null,
+        backendSessionId: null,
       });
       vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(codexSession);
 
@@ -567,11 +567,11 @@ describe('SessionService', () => {
     });
 
     it('should update Claude session ID when it changes', async () => {
-      const session = createMockSession({ claudeSessionId: 'old-claude-id' });
+      const session = createMockSession({ backendSessionId: 'old-claude-id' });
       vi.mocked(mockRepository.findByUserAndAgent).mockResolvedValue(session);
 
       vi.mocked(mockClaudeRunner.run).mockResolvedValue(
-        createMockClaudeResult({ claudeSessionId: 'new-claude-id' })
+        createMockClaudeResult({ backendSessionId: 'new-claude-id' })
       );
 
       const request = createMockRequest();
@@ -580,7 +580,7 @@ describe('SessionService', () => {
       expect(mockRepository.update).toHaveBeenCalledWith(
         'session-123',
         expect.objectContaining({
-          claudeSessionId: 'new-claude-id',
+          backendSessionId: 'new-claude-id',
           messageCount: 1,
           backend: 'claude-code',
         })
@@ -773,7 +773,7 @@ describe('SessionService', () => {
     });
 
     it('should skip compaction when lock is already held (re-entry guard)', async () => {
-      const session = createMockSession({ claudeSessionId: 'claude-abc' });
+      const session = createMockSession({ backendSessionId: 'claude-abc' });
       vi.mocked(mockRepository.findById).mockResolvedValue(session);
       vi.mocked(mockRepository.tryAcquireCompactionLock).mockResolvedValue(false);
 
@@ -787,7 +787,7 @@ describe('SessionService', () => {
     });
 
     it('should acquire and release lock around compaction', async () => {
-      const session = createMockSession({ claudeSessionId: 'claude-abc' });
+      const session = createMockSession({ backendSessionId: 'claude-abc' });
       vi.mocked(mockRepository.findById).mockResolvedValue(session);
       vi.mocked(mockRepository.tryAcquireCompactionLock).mockResolvedValue(true);
 
@@ -803,7 +803,7 @@ describe('SessionService', () => {
     });
 
     it('should release lock even when compaction fails', async () => {
-      const session = createMockSession({ claudeSessionId: 'claude-abc' });
+      const session = createMockSession({ backendSessionId: 'claude-abc' });
       vi.mocked(mockRepository.findById).mockResolvedValue(session);
       vi.mocked(mockRepository.tryAcquireCompactionLock).mockResolvedValue(true);
 
@@ -834,7 +834,7 @@ describe('SessionService', () => {
         }
       );
 
-      const session = createMockSession({ claudeSessionId: 'claude-abc' });
+      const session = createMockSession({ backendSessionId: 'claude-abc' });
       vi.mocked(mockRepository.findById).mockResolvedValue(session);
       vi.mocked(mockRepository.tryAcquireCompactionLock).mockResolvedValue(true);
 
@@ -874,7 +874,7 @@ describe('SessionService', () => {
         }
       );
 
-      const session = createMockSession({ claudeSessionId: 'claude-abc' });
+      const session = createMockSession({ backendSessionId: 'claude-abc' });
       vi.mocked(mockRepository.findById).mockResolvedValue(session);
       vi.mocked(mockRepository.tryAcquireCompactionLock).mockResolvedValue(true);
 
@@ -1009,7 +1009,7 @@ describe('SessionService', () => {
       const existingThreadSession = createMockSession({
         id: 'existing-thread-session',
         threadKey: 'pr:43',
-        claudeSessionId: 'claude-thread-abc',
+        backendSessionId: 'claude-thread-abc',
       });
 
       // Add findByThreadKey to mock repository
@@ -1059,7 +1059,7 @@ describe('SessionService', () => {
           createMockSession({
             id: 'new-thread-session',
             threadKey: 'pr:999',
-            claudeSessionId: null,
+            backendSessionId: null,
           })
         ),
       };

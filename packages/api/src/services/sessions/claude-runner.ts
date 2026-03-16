@@ -10,10 +10,10 @@ import { randomUUID } from 'crypto';
 import type {
   InjectedContext,
   ClaudeRunnerConfig,
-  ClaudeRunnerResult,
+  RunnerResult,
   ChannelResponse,
   ChannelType,
-  IClaudeRunner,
+  IRunner,
   ToolCall,
 } from './types.js';
 import { formatInjectedContext } from './context-builder.js';
@@ -41,20 +41,20 @@ interface ClaudeUsageStats {
   cacheWriteTokens?: number;
 }
 
-export class ClaudeRunner implements IClaudeRunner {
+export class ClaudeRunner implements IRunner {
   async run(
     message: string,
     options: {
-      claudeSessionId?: string;
+      backendSessionId?: string;
       injectedContext?: InjectedContext;
       config: ClaudeRunnerConfig;
     }
-  ): Promise<ClaudeRunnerResult> {
-    const { claudeSessionId, injectedContext, config } = options;
+  ): Promise<RunnerResult> {
+    const { backendSessionId, injectedContext, config } = options;
 
     // Determine if resuming or starting new session
-    const isResume = !!claudeSessionId;
-    let sessionId = claudeSessionId || randomUUID();
+    const isResume = !!backendSessionId;
+    let sessionId = backendSessionId || randomUUID();
 
     // Build the message with injected context
     let fullMessage = message;
@@ -98,7 +98,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
         return {
           success: true,
-          claudeSessionId: sessionId,
+          backendSessionId: sessionId,
           responses: retryResult.responses,
           usage: retryResult.usage,
           finalTextResponse: retryResult.finalTextResponse,
@@ -108,7 +108,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
       return {
         success: true,
-        claudeSessionId: sessionId,
+        backendSessionId: sessionId,
         responses: result.responses,
         usage: result.usage,
         finalTextResponse: result.finalTextResponse,
@@ -122,7 +122,7 @@ export class ClaudeRunner implements IClaudeRunner {
 
       return {
         success: false,
-        claudeSessionId: sessionId,
+        backendSessionId: sessionId,
         responses: [],
         error: error instanceof Error ? error.message : 'Unknown error',
       };

@@ -72,12 +72,12 @@ describe('SessionRepository', () => {
     vi.clearAllMocks();
   });
 
-  it('should write both claude_session_id and backend_session_id when updating claudeSessionId', async () => {
+  it('should write both claude_session_id and backend_session_id when updating backendSessionId', async () => {
     const { supabase, builder } = createMockSupabase();
     const repo = new SessionRepository(supabase as never);
 
     await repo.update('sess-1', {
-      claudeSessionId: '019ceb00-codex-uuid',
+      backendSessionId: '019ceb00-codex-uuid',
     });
 
     // The first call to builder.update should have both columns
@@ -123,7 +123,7 @@ describe('SessionRepository', () => {
     expect(updateCall.backend_session_id).toBe('new-session-uuid');
   });
 
-  it('should not set backend_session_id when claudeSessionId is not in the update', async () => {
+  it('should not set backend_session_id when backendSessionId is not in the update', async () => {
     const { supabase, builder } = createMockSupabase();
     const repo = new SessionRepository(supabase as never);
 

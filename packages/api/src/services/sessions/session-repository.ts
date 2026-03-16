@@ -37,7 +37,7 @@ function mapDbToSession(row: DbSession): Session {
     agentId: row.agent_id || '',
     identityId: row.identity_id || undefined,
     studioId: row.studio_id || undefined,
-    claudeSessionId: row.claude_session_id,
+    backendSessionId: row.backend_session_id || row.claude_session_id,
 
     type: (metadata.type as SessionType) || 'primary',
     lifecycle: (row.lifecycle as SessionLifecycle) || 'idle',
@@ -87,7 +87,8 @@ function mapSessionToDb(
     user_id: session.userId,
     agent_id: session.agentId,
     identity_id: session.identityId || null,
-    claude_session_id: session.claudeSessionId,
+    claude_session_id: session.backendSessionId,
+    backend_session_id: session.backendSessionId,
     lifecycle: session.lifecycle,
     status: session.status,
     ended_at: session.endedAt?.toISOString() || null,
@@ -284,10 +285,10 @@ export class SessionRepository implements ISessionRepository {
 
     const dbUpdates: DbSessionUpdate = {};
 
-    if (updates.claudeSessionId !== undefined) {
-      dbUpdates.claude_session_id = updates.claudeSessionId;
-      // Keep backend_session_id in sync — it is the canonical column
-      dbUpdates.backend_session_id = updates.claudeSessionId;
+    if (updates.backendSessionId !== undefined) {
+      dbUpdates.backend_session_id = updates.backendSessionId;
+      // Keep legacy column in sync during migration
+      dbUpdates.claude_session_id = updates.backendSessionId;
     }
 
     if (updates.lifecycle !== undefined) {
@@ -392,7 +393,7 @@ export class SessionRepository implements ISessionRepository {
     logger.debug('Updated token usage', { id, usage });
   }
 
-  async markCompacted(id: string, newClaudeSessionId: string | null): Promise<void> {
+  async markCompacted(id: string, newBackendSessionId: string | null): Promise<void> {
     const current = await this.findById(id);
     if (!current) {
       throw new Error(`Session not found: ${id}`);
@@ -406,15 +407,15 @@ export class SessionRepository implements ISessionRepository {
 
     // Only rotate the backend session ID if a new one was provided.
     // null means "keep the existing ID" (e.g., Codex reuses the same thread UUID).
-    if (newClaudeSessionId) {
-      updates.claudeSessionId = newClaudeSessionId;
+    if (newBackendSessionId) {
+      updates.backendSessionId = newBackendSessionId;
     }
 
     await this.update(id, updates);
 
     logger.info('Marked session as compacted', {
       id,
-      newClaudeSessionId: newClaudeSessionId || '(preserved)',
+      newBackendSessionId: newBackendSessionId || '(preserved)',
       compactionCount: current.compactionCount + 1,
     });
   }

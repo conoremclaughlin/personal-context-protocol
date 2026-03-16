@@ -13,10 +13,10 @@ import { tmpdir } from 'os';
 import type {
   InjectedContext,
   ClaudeRunnerConfig,
-  ClaudeRunnerResult,
+  RunnerResult,
   ChannelResponse,
   ChannelType,
-  IClaudeRunner,
+  IRunner,
   ToolCall,
 } from './types.js';
 import { formatInjectedContext } from './context-builder.js';
@@ -37,17 +37,17 @@ interface CodexUsageStats {
   outputTokens: number;
 }
 
-export class CodexRunner implements IClaudeRunner {
+export class CodexRunner implements IRunner {
   async run(
     message: string,
     options: {
-      claudeSessionId?: string;
+      backendSessionId?: string;
       injectedContext?: InjectedContext;
       config: ClaudeRunnerConfig;
     }
-  ): Promise<ClaudeRunnerResult> {
-    const { claudeSessionId, injectedContext, config } = options;
-    const isResume = !!claudeSessionId;
+  ): Promise<RunnerResult> {
+    const { backendSessionId, injectedContext, config } = options;
+    const isResume = !!backendSessionId;
 
     let fullMessage = message;
     if (injectedContext && !isResume) {
@@ -62,7 +62,7 @@ export class CodexRunner implements IClaudeRunner {
     try {
       // Only pass a session ID to buildArgs when resuming a known backend session.
       // For fresh runs, Codex assigns its own session UUID — we extract it from stdout.
-      const argsSessionId = isResume ? claudeSessionId! : undefined;
+      const argsSessionId = isResume ? backendSessionId! : undefined;
       const args = this.buildArgs(argsSessionId, isResume, fullMessage, config, promptPath);
       logger.info('Spawning Codex CLI', {
         resumeSessionId: argsSessionId || null,
@@ -80,7 +80,7 @@ export class CodexRunner implements IClaudeRunner {
 
       return {
         success: true,
-        claudeSessionId: resolvedBackendSessionId || null,
+        backendSessionId: resolvedBackendSessionId || null,
         responses: result.responses,
         usage: result.usage,
         finalTextResponse: result.finalTextResponse,
@@ -88,12 +88,12 @@ export class CodexRunner implements IClaudeRunner {
       };
     } catch (error) {
       logger.error('Codex process failed', {
-        resumeSessionId: claudeSessionId || null,
+        resumeSessionId: backendSessionId || null,
         error: error instanceof Error ? error.message : String(error),
       });
       return {
         success: false,
-        claudeSessionId: claudeSessionId || null,
+        backendSessionId: backendSessionId || null,
         responses: [],
         error: error instanceof Error ? error.message : 'Unknown error',
       };
