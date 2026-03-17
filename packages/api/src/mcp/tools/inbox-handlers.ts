@@ -203,30 +203,62 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   const reqCtx = getRequestContext();
   const sessCtx = getSessionContext();
   let senderSessionId: string | null = reqCtx?.sessionId || sessCtx?.sessionId || null;
-  const senderStudioId = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
+  let senderStudioId: string | null = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
 
   // When the caller's session ID wasn't provided via request context headers
-  // (x-pcp-session-id), fall back to threadKey-scoped lookup only. The
-  // previous getActiveSession() fallback (most-recent session) was
-  // non-deterministic and could route replies to the wrong session.
-  if (!senderSessionId && senderAgentId && threadKey) {
+  // (x-pcp-session-id), resolve it server-side so thread messages carry
+  // sender session context for reply routing.
+  if (!senderSessionId && senderAgentId) {
     try {
-      const threadSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
-        resolved.user.id,
-        senderAgentId,
-        threadKey,
-        senderStudioId
-      );
-      if (threadSession) {
-        senderSessionId = threadSession.id;
-        logger.debug('Resolved sender session from threadKey match (no header)', {
+      // 1) ThreadKey-scoped lookup: find session already scoped to this thread
+      if (threadKey) {
+        const threadSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
+          resolved.user.id,
           senderAgentId,
           threadKey,
-          senderSessionId,
-        });
+          senderStudioId
+        );
+        if (threadSession) {
+          senderSessionId = threadSession.id;
+          logger.debug('Resolved sender session from threadKey match (no header)', {
+            senderAgentId,
+            threadKey,
+            senderSessionId,
+          });
+        }
+      }
+
+      // 2) Interactive session fallback: find the agent's most recent active
+      //    session without a threadKey (the interactive/general-purpose session).
+      //    This handles the common case where a user runs Claude Code directly
+      //    (not via `sb`) and sends thread messages — the session headers are
+      //    missing but we can still attach the correct session for reply routing.
+      if (!senderSessionId) {
+        const { data: interactiveSession } = await supabase
+          .from('sessions')
+          .select('id, studio_id')
+          .eq('user_id', resolved.user.id)
+          .eq('agent_id', senderAgentId)
+          .is('ended_at', null)
+          .is('thread_key', null)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (interactiveSession) {
+          senderSessionId = interactiveSession.id;
+          if (!senderStudioId && interactiveSession.studio_id) {
+            senderStudioId = interactiveSession.studio_id;
+          }
+          logger.debug('Resolved sender session from interactive session fallback', {
+            senderAgentId,
+            senderSessionId,
+            studioId: interactiveSession.studio_id,
+          });
+        }
       }
     } catch (err) {
-      logger.warn('Failed to resolve sender session from threadKey', {
+      logger.warn('Failed to resolve sender session', {
         error: err instanceof Error ? err.message : String(err),
         senderAgentId,
         threadKey,
