@@ -1121,7 +1121,7 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
         const { data } = await supabase
           .from('sessions')
           .select(
-            'id, agent_id, lifecycle, current_phase, started_at, ended_at, workspace_id, updated_at'
+            'id, agent_id, lifecycle, current_phase, started_at, ended_at, studio_id, updated_at'
           )
           .eq('user_id', userId)
           .eq('agent_id', agentId)
@@ -1231,7 +1231,7 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       current_phase: string | null;
       started_at: string | null;
       ended_at: string | null;
-      workspace_id: string | null;
+      studio_id: string | null;
       updated_at: string | null;
     }>
   >();
@@ -1265,8 +1265,8 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       return !Number.isNaN(updatedMs) && now.getTime() - updatedMs < staleThresholdMs;
     }).length;
 
-    // Count distinct studios (workspace_ids)
-    const studioIds = new Set(sessions.map((s) => s.workspace_id).filter(Boolean));
+    // Count distinct studios
+    const studioIds = new Set(sessions.map((s) => s.studio_id).filter(Boolean));
 
     const inboxUnread = inboxCountMap.get(agentId) || 0;
     const threadUnread = threadUnreadByAgent[agentId] || 0;
@@ -1288,7 +1288,7 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
             phase: latest.current_phase,
             startedAt: latest.started_at,
             endedAt: latest.ended_at,
-            workspaceId: latest.workspace_id,
+            studioId: latest.studio_id,
           }
         : null,
     };
