@@ -33,5 +33,6 @@ describe('registerAllTools lifecycle visibility', () => {
     expect(server.registeredTools).toContain('end_session');
     expect(server.registeredTools).not.toContain('log_session');
     expect(server.registeredTools).toContain('update_session_phase');
+    expect(server.registeredTools).toContain('get_agent_summaries');
   });
 });

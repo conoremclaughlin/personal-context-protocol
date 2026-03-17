@@ -159,6 +159,7 @@ import {
   handleGetInbox,
   handleUpdateInboxMessage,
   handleGetAgentStatus,
+  handleGetAgentSummaries,
   inboxToolDefinitions,
 } from './inbox-handlers';
 
@@ -3468,6 +3469,35 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleGetAgentStatus(args, dataComposer);
       } catch (error) {
         logger.error('Error in get_agent_status:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_agent_summaries',
+    {
+      description: `Get summaries for all agents in one call. Returns per-agent unread counts (legacy inbox + thread-aware), generating count, sessions today, studio count, and latest session lifecycle/phase. Ideal for dashboards and mission control. Omit agentIds to auto-discover all agents.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: inboxToolDefinitions[4].schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleGetAgentSummaries(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_agent_summaries:', error);
         return {
           content: [
             {
