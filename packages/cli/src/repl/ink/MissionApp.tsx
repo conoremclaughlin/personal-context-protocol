@@ -241,12 +241,7 @@ export const MissionApp = React.forwardRef<MissionAppHandle, MissionAppProps>(fu
             }
             const sessionLabel = parts.join(' · ');
 
-            const line = [
-              a.agent.padEnd(8),
-              (a.phase || '-').padEnd(14),
-              sessionLabel,
-              a.latestThread || '',
-            ]
+            const line = [a.agent.padEnd(8), sessionLabel, a.latestThread || '']
               .filter(Boolean)
               .join('  ');
             return (

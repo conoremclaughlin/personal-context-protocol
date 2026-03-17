@@ -562,19 +562,19 @@ function formatTime(iso?: string): string {
 function renderMissionTable(rows: MissionRow[]): string[] {
   const lines: string[] = [];
 
-  lines.push(chalk.dim('SB       phase          generating  today  studios  thread'));
+  lines.push(chalk.dim('SB       status                    today  studios  thread'));
   for (const row of rows) {
     const gen = row.generating ?? 0;
     const compacting = row.sessionsByLifecycle?.['compacting'] ?? 0;
-    let genLabel: string;
-    if (compacting > 0) {
-      genLabel = gen > 0 ? `⚡ ${gen} 🔄 ${compacting}` : `🔄 ${compacting}`;
-    } else {
-      genLabel = gen > 0 ? `⚡ ${gen}` : '0';
-    }
+    const parts: string[] = [];
+    if (gen > 0) parts.push(`⚡ ${gen} generating`);
+    if (compacting > 0) parts.push(`🔄 ${compacting} compacting`);
+    if (parts.length === 0) parts.push('idle');
+    const statusLabel = parts.join(' · ');
+
     lines.push(
       chalk.dim(
-        `${pad(row.agent, 8)} ${pad(row.latestPhase || '-', 14)} ${pad(genLabel, 10)} ${pad(String(row.sessionsToday ?? 0), 5)} ${pad(String(row.studioCount ?? 0), 7)} ${pad(row.latestThreadKey || '-', 12)}`
+        `${pad(row.agent, 8)} ${pad(statusLabel, 24)} ${pad(String(row.sessionsToday ?? 0), 5)} ${pad(String(row.studioCount ?? 0), 7)} ${pad(row.latestThreadKey || '-', 12)}`
       )
     );
   }
