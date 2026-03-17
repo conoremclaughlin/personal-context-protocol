@@ -158,6 +158,7 @@ import {
   handleSendToInbox,
   handleGetInbox,
   handleUpdateInboxMessage,
+  handleMarkInboxRead,
   handleGetAgentStatus,
   handleGetAgentSummaries,
   inboxToolDefinitions,
@@ -3371,7 +3372,7 @@ All message types trigger by default. Set trigger=false to suppress all triggers
 Only set trigger=false if the message can genuinely wait 5+ hours.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
-      inputSchema: inboxToolDefinitions[0].schema,
+      inputSchema: inboxToolDefinitions.find((d) => d.name === 'send_to_inbox')!.schema,
     },
     async (args: Record<string, unknown>) => {
       try {
@@ -3402,7 +3403,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
 Use to check for messages from other agents or task requests.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
-      inputSchema: inboxToolDefinitions[1].schema,
+      inputSchema: inboxToolDefinitions.find((d) => d.name === 'get_inbox')!.schema,
     },
     async (args: Record<string, unknown>) => {
       try {
@@ -3431,13 +3432,42 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       description: `Update inbox message status. Mark as read, acknowledged, or completed.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
-      inputSchema: inboxToolDefinitions[2].schema,
+      inputSchema: inboxToolDefinitions.find((d) => d.name === 'update_inbox_message')!.schema,
     },
     async (args: Record<string, unknown>) => {
       try {
         return await handleUpdateInboxMessage(args, dataComposer);
       } catch (error) {
         logger.error('Error in update_inbox_message:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'mark_inbox_read',
+    {
+      description: `Advance the agent's inbox read pointer. All messages created before the pointer are considered read. Defaults to now (marks everything read). Use 'before' to mark up to a specific timestamp.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: inboxToolDefinitions.find((d) => d.name === 'mark_inbox_read')!.schema,
+    },
+    async (args: Record<string, unknown>) => {
+      try {
+        return await handleMarkInboxRead(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in mark_inbox_read:', error);
         return {
           content: [
             {
@@ -3462,7 +3492,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
 Use to check if another agent is available before sending messages.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
-      inputSchema: inboxToolDefinitions[3].schema,
+      inputSchema: inboxToolDefinitions.find((d) => d.name === 'get_agent_status')!.schema,
     },
     async (args: Record<string, unknown>) => {
       try {
@@ -3491,7 +3521,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
       description: `Get summaries for all agents in one call. Returns per-agent unread counts (legacy inbox + thread-aware), generating count, sessions today, studio count, and latest session lifecycle/phase. Ideal for dashboards and mission control. Omit agentIds to auto-discover all agents.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
-      inputSchema: inboxToolDefinitions[4].schema,
+      inputSchema: inboxToolDefinitions.find((d) => d.name === 'get_agent_summaries')!.schema,
     },
     async (args: Record<string, unknown>) => {
       try {
