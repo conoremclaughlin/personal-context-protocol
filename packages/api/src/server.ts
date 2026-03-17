@@ -1071,12 +1071,13 @@ async function shutdown(): Promise<void> {
     }
 
     logger.info('Shutdown complete');
+    clearTimeout(forceKillTimer);
+    process.exit(0);
   } catch (error) {
     logger.error('Error during shutdown:', error);
+    clearTimeout(forceKillTimer);
+    process.exit(1);
   }
-
-  clearTimeout(forceKillTimer);
-  process.exit(0);
 }
 
 // Handle shutdown signals
