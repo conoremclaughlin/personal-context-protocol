@@ -12,7 +12,7 @@
 import chalk from 'chalk';
 import ora from 'ora';
 import { confirm, input, select } from '@inquirer/prompts';
-import { execSync, spawn, type ChildProcess } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -379,7 +379,7 @@ async function startServer(state: ProgressState): Promise<boolean> {
   console.log(chalk.dim('    Starting PCP server + web dashboard in the background...'));
 
   // Spawn detached so it survives our exit
-  const child = spawn('bash', ['-c', 'yarn dev 2>&1'], {
+  const child = spawn('bash', ['-c', 'yarn dev'], {
     cwd: state.targetDir,
     stdio: 'ignore',
     detached: true,
@@ -579,6 +579,18 @@ type StepDef = {
   required: boolean;
 };
 
+const STEP_LABELS: Record<string, string> = {
+  prereqs: 'Checking prerequisites',
+  clone: 'Clone repository',
+  install: 'Install dependencies',
+  database: 'Set up database',
+  server: 'Start server',
+  auth: 'Authenticate',
+  init: 'Initialize PCP',
+  memory: 'Semantic memory (optional)',
+  awaken: 'Awaken your first SB',
+};
+
 const STEPS: StepDef[] = [
   { id: 'prereqs', fn: async (s) => checkPrereqs(), required: true },
   { id: 'clone', fn: cloneRepo, required: true },
@@ -618,6 +630,10 @@ async function main(): Promise<void> {
   // Always re-check prerequisites (don't skip on resume)
   for (const step of STEPS) {
     if (step.id !== 'prereqs' && isComplete(state, step.id)) {
+      // Show what we're skipping so the user knows where we are
+      const stepIndex = STEPS.findIndex((s) => s.id === step.id) + 1;
+      const label = STEP_LABELS[step.id] || step.id;
+      console.log(chalk.dim(`  [${stepIndex}/${TOTAL_STEPS}] ${label} — already complete`));
       continue;
     }
 
@@ -637,6 +653,11 @@ async function main(): Promise<void> {
 }
 
 main().catch((err: unknown) => {
+  // @inquirer/prompts throws ExitPromptError on Ctrl+C
+  if (err && typeof err === 'object' && 'name' in err && err.name === 'ExitPromptError') {
+    console.log(chalk.dim('\n  Interrupted. Re-run to resume where you left off.'));
+    process.exit(0);
+  }
   const msg = err instanceof Error ? err.message : String(err);
   console.error(chalk.red(`\n  Unexpected error: ${msg}`));
   process.exit(1);
