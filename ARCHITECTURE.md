@@ -165,17 +165,17 @@ Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.
 
 60+ tools organized by domain:
 
-| Domain                   | Tools                                                            |
-| ------------------------ | ---------------------------------------------------------------- |
-| **Bootstrap & Sessions** | `bootstrap`, `start_session`, `log_session`, `end_session`       |
-| **Memory**               | `remember`, `recall`, `forget`, `update_memory`, history/restore |
-| **Context & Projects**   | `save_context`, `get_context`, `save_project`, `set_focus`       |
-| **Communication**        | `send_response`, `send_to_inbox`, `trigger_agent`                |
-| **Data**                 | `save_link`, `create_task`, `create_reminder`, calendar, email   |
-| **Identity**             | `save_identity`, `get_identity`, permissions, audit log          |
-| **Skills**               | `list_skills`, `publish_skill`, `fork_skill`                     |
-| **Artifacts**            | `create_artifact`, `update_artifact` (versioned shared docs)     |
-| **Workspaces**           | `create_workspace`, `list_workspaces`, `adopt_workspace`         |
+| Domain                   | Tools                                                               |
+| ------------------------ | ------------------------------------------------------------------- |
+| **Bootstrap & Sessions** | `bootstrap`, `update_session_phase`, `get_session`, `list_sessions` |
+| **Memory**               | `remember`, `recall`, `forget`, `update_memory`, history/restore    |
+| **Context & Projects**   | `save_context`, `get_context`, `save_project`, `set_focus`          |
+| **Communication**        | `send_response`, `send_to_inbox`, `trigger_agent`                   |
+| **Data**                 | `save_link`, `create_task`, `create_reminder`, calendar, email      |
+| **Identity**             | `save_identity`, `get_identity`, permissions, audit log             |
+| **Skills**               | `list_skills`, `publish_skill`, `fork_skill`                        |
+| **Artifacts**            | `create_artifact`, `update_artifact` (versioned shared docs)        |
+| **Workspaces**           | `create_workspace`, `list_workspaces`, `adopt_workspace`            |
 
 ## Data Layer
 

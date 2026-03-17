@@ -1097,8 +1097,12 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
     };
   }
 
-  // Batch queries: legacy inbox unreads, sessions, thread unreads
-  const [inboxCounts, sessionResults] = await Promise.all([
+  // Batch queries: legacy inbox unreads, active sessions, sessions today, thread unreads
+  const now = new Date();
+  const staleThresholdMs = 30 * 60 * 1000; // 30 minutes
+  const todayCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+  const [inboxCounts, sessionResults, todayResults] = await Promise.all([
     // Legacy inbox unreads per agent
     Promise.all(
       agentIds.map(async (agentId) => {
@@ -1111,17 +1115,31 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
         return { agentId, count: count || 0 };
       })
     ),
-    // Active (non-ended) sessions per agent — no limit so we get accurate counts
+    // Active (non-ended) sessions per agent — includes updated_at for staleness check
     Promise.all(
       agentIds.map(async (agentId) => {
         const { data } = await supabase
           .from('sessions')
-          .select('id, agent_id, lifecycle, current_phase, started_at, ended_at, workspace_id')
+          .select(
+            'id, agent_id, lifecycle, current_phase, started_at, ended_at, workspace_id, updated_at'
+          )
           .eq('user_id', userId)
           .eq('agent_id', agentId)
           .is('ended_at', null)
           .order('started_at', { ascending: false });
         return { agentId, sessions: data || [] };
+      })
+    ),
+    // Sessions started or active in the last 24h (including ended ones)
+    Promise.all(
+      agentIds.map(async (agentId) => {
+        const { count } = await supabase
+          .from('sessions')
+          .select('*', { count: 'exact', head: true })
+          .eq('user_id', userId)
+          .eq('agent_id', agentId)
+          .gte('started_at', todayCutoff);
+        return { agentId, count: count || 0 };
       })
     ),
   ]);
@@ -1214,10 +1232,17 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       started_at: string | null;
       ended_at: string | null;
       workspace_id: string | null;
+      updated_at: string | null;
     }>
   >();
   for (const { agentId, sessions } of sessionResults) {
     sessionMap.set(agentId, sessions);
+  }
+
+  // Build per-agent sessions-today count
+  const todayCountMap = new Map<string, number>();
+  for (const { agentId, count } of todayResults) {
+    todayCountMap.set(agentId, count);
   }
 
   // Assemble summaries
@@ -1232,6 +1257,17 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       byLifecycle[lc] = (byLifecycle[lc] || 0) + 1;
     }
 
+    // Count sessions actively generating: lifecycle=running AND updated within staleness window
+    const generating = sessions.filter((s) => {
+      if (s.lifecycle !== 'running') return false;
+      if (!s.updated_at) return true; // no updated_at → assume fresh (just created)
+      const updatedMs = Date.parse(s.updated_at);
+      return !Number.isNaN(updatedMs) && now.getTime() - updatedMs < staleThresholdMs;
+    }).length;
+
+    // Count distinct studios (workspace_ids)
+    const studioIds = new Set(sessions.map((s) => s.workspace_id).filter(Boolean));
+
     const inboxUnread = inboxCountMap.get(agentId) || 0;
     const threadUnread = threadUnreadByAgent[agentId] || 0;
 
@@ -1242,6 +1278,9 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       totalUnread: inboxUnread + threadUnread,
       activeSessions: sessions.length,
       sessionsByLifecycle: byLifecycle,
+      generating,
+      sessionsToday: todayCountMap.get(agentId) || 0,
+      studioCount: studioIds.size,
       latestSession: latest
         ? {
             id: latest.id,

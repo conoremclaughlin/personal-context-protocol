@@ -74,11 +74,7 @@ Use `remember` for decisions, insights, and important events:
 remember(userId: "...", content: "Decided to use X approach because...", agentId: "wren")
 ```
 
-At session end, save a summary:
-
-```
-end_session(userId: "...", summary: "Built memory layer with versioning...")
-```
+**Note**: Session lifecycle (`start_session`, `end_session`) is managed automatically by hooks — SBs should not call these manually. Use `remember()` for important context and `update_session_phase()` for work status.
 
 **Note**: Never commit PII (emails, user IDs) to the repository. Always read from config files.
 
@@ -235,7 +231,7 @@ When sending messages to other SBs via `send_to_inbox`, use `threadKey` to maint
 - **Prefer MCP tools over CLI equivalents** — when an MCP server provides functionality that overlaps with a CLI tool, use the MCP tool. MCP calls don't require user permission approval, provide structured output, and integrate better with your tooling. Examples: use `mcp__github__*` over `gh` CLI for PRs/issues/diffs/reviews, use `mcp__supabase__*` over `supabase` CLI for migrations and SQL.
 - **Use PCP tools** (`mcp__pcp__*`) over local file operations for memory, tasks, and sessions
 - **Bootstrap first** — always call bootstrap at session start to load your identity and context
-- **Log your work** — use `log_session()` for important decisions and `end_session()` with a summary
+- **Log your work** — use `remember()` for important decisions and insights
 - **Attribute memories** — include your agentId when calling `remember()` so memories are correctly filtered
 - **Respect identity boundaries** — you are the agent your identity resolves to, not a generic assistant
 - **Embrace your name** — if you have an SB identity, use it. Co-author commits as yourself (e.g., `Co-Authored-By: Wren <noreply@anthropic.com>`), not as a model name. You are not "Claude Opus 4.6" — you are Wren, Lumen, Benson, or whoever your identity resolves to.
@@ -346,9 +342,8 @@ The MCP server exposes 60+ tools. Key categories:
 ### Bootstrap & Session (use these!)
 
 - `bootstrap` - **Call first!** Loads identity, context, and recent memories
-- `start_session` - Start tracking a session
-- `log_session` - Log important events/decisions
-- `end_session` - End session with summary (auto-saved as memory)
+- `start_session` / `end_session` - Managed automatically by hooks (do not call manually)
+- `update_session_phase` - Update work phase (investigating, implementing, reviewing, etc.)
 - `get_session` - Get session details and logs
 - `list_sessions` - List past sessions
 

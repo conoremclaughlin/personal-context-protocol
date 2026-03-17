@@ -73,12 +73,10 @@ Workspace: {workspace name}
 
 Context is about to be compacted. Before compaction completes:
 
-1. **Save critical decisions** — Use `mcp__pcp__log_session` to persist any
+1. **Save critical decisions** — Use `mcp__pcp__remember` to persist any
    important reasoning, decisions, or context that should survive compaction.
-2. **Update memory** — If you discovered reusable patterns or key facts,
-   use `mcp__pcp__remember` to save them.
-3. **Note current task state** — Log where you are in the current task so you
-   can resume smoothly after compaction.
+2. **Note current task state** — Use `mcp__pcp__update_session_phase` to record
+   where you are in the current task so you can resume smoothly after compaction.
 
 This context will be lost after compaction unless you save it now.
 ```
@@ -153,7 +151,7 @@ Agent: {agentId}
 ```
 <pcp-reminder>
 You have completed ~{count} tool calls this session. Consider using
-`mcp__pcp__log_session` to save a progress snapshot.
+`mcp__pcp__remember` to save a progress snapshot.
 </pcp-reminder>
 
 <pcp-inbox count="{count}">
@@ -166,14 +164,14 @@ You have completed ~{count} tool calls this session. Consider using
 
 Hooks store ephemeral state in `.pcp/runtime/` (gitignored):
 
-| File               | Purpose                                                                                 |
-| ------------------ | --------------------------------------------------------------------------------------- |
+| File               | Purpose                                                                                                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `sessions.json`    | Runtime session registry (list of PCP sessions + backend session IDs/history + current pointer + runtimeLinkId correlation token) |
-| `pcp-session-id`   | Current PCP session UUID (legacy convenience file)                                      |
-| `session-id`       | Backend session ID from on-session-start (legacy convenience file)                      |
-| `runtime-link-id`  | Current run correlation token (`PCP_RUNTIME_LINK_ID`) for local reconciliation/debug    |
-| `last-inbox-check` | ISO timestamp of last inbox poll                                                        |
-| `tool-count`       | Cumulative tool call counter for on-stop nudges                                         |
+| `pcp-session-id`   | Current PCP session UUID (legacy convenience file)                                                                                |
+| `session-id`       | Backend session ID from on-session-start (legacy convenience file)                                                                |
+| `runtime-link-id`  | Current run correlation token (`PCP_RUNTIME_LINK_ID`) for local reconciliation/debug                                              |
+| `last-inbox-check` | ISO timestamp of last inbox poll                                                                                                  |
+| `tool-count`       | Cumulative tool call counter for on-stop nudges                                                                                   |
 
 ## Installation
 

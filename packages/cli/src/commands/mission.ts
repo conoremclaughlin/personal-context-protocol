@@ -28,6 +28,9 @@ interface MissionRow {
   latestPhase?: string;
   latestBackendSessionId?: string;
   sessionsByLifecycle?: Record<string, number>;
+  generating?: number;
+  sessionsToday?: number;
+  studioCount?: number;
 }
 
 interface MissionSnapshot {
@@ -493,7 +496,10 @@ function newestSession(sessions: Session[]): Session | undefined {
 export function summarizeMissionRows(
   sessions: Session[],
   unreadByAgent: Record<string, number>,
-  lifecycleByAgent?: Record<string, Record<string, number>>
+  lifecycleByAgent?: Record<string, Record<string, number>>,
+  generatingByAgent?: Record<string, number>,
+  todayByAgent?: Record<string, number>,
+  studiosByAgent?: Record<string, number>
 ): MissionRow[] {
   const grouped = new Map<string, Session[]>();
 
@@ -530,6 +536,9 @@ export function summarizeMissionRows(
         sessionsByLifecycle:
           lifecycleByAgent?.[agent] ||
           (Object.keys(byLifecycle).length > 0 ? byLifecycle : undefined),
+        generating: generatingByAgent?.[agent],
+        sessionsToday: todayByAgent?.[agent],
+        studioCount: studiosByAgent?.[agent],
       } satisfies MissionRow;
     })
     .sort((a, b) => {
@@ -553,21 +562,13 @@ function formatTime(iso?: string): string {
 function renderMissionTable(rows: MissionRow[]): string[] {
   const lines: string[] = [];
 
-  lines.push(
-    chalk.dim(
-      'SB       active  unread  latest-id  lifecycle   phase                 thread        backend-id '
-    )
-  );
+  lines.push(chalk.dim('SB       phase          generating  today  studios  unread  thread'));
   for (const row of rows) {
+    const gen = row.generating ?? 0;
+    const genLabel = gen > 0 ? `⚡ ${gen}` : '0';
     lines.push(
       chalk.dim(
-        `${pad(row.agent, 8)} ${pad(String(row.activeSessions), 6)} ${pad(String(row.unreadInbox), 6)} ${pad(
-          row.latestSessionId?.slice(0, 8) || '-',
-          9
-        )} ${pad(row.latestLifecycle || 'idle', 10)} ${pad(row.latestPhase || '-', 20)} ${pad(row.latestThreadKey || '-', 12)} ${pad(
-          row.latestBackendSessionId || '-',
-          10
-        )}`
+        `${pad(row.agent, 8)} ${pad(row.latestPhase || '-', 14)} ${pad(genLabel, 10)} ${pad(String(row.sessionsToday ?? 0), 5)} ${pad(String(row.studioCount ?? 0), 7)} ${pad(String(row.unreadInbox), 6)} ${pad(row.latestThreadKey || '-', 12)}`
       )
     );
   }
@@ -626,10 +627,13 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
   const allInboxMessages: InboxMessage[] = [];
   const fetchAllInbox = options.feed || options.watch;
 
-  // Use get_agent_summaries for accurate per-agent unread counts and session breakdowns.
-  // This computes thread unreads with proper per-agent last_read_at (no inflation).
+  // Use get_agent_summaries for accurate per-agent unread counts, session breakdowns,
+  // generating counts, sessions today, and studio counts.
   const unreadByAgent: Record<string, number> = {};
   const lifecycleByAgent: Record<string, Record<string, number>> = {};
+  const generatingByAgent: Record<string, number> = {};
+  const todayByAgent: Record<string, number> = {};
+  const studiosByAgent: Record<string, number> = {};
   try {
     const summariesResult = (await pcp.callTool('get_agent_summaries', {
       email: config.email,
@@ -643,6 +647,11 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
       const totalUnread = typeof agent.totalUnread === 'number' ? agent.totalUnread : 0;
       unreadByAgent[agentId] = totalUnread;
       allAgents.add(agentId);
+
+      // Extract new summary fields
+      if (typeof agent.generating === 'number') generatingByAgent[agentId] = agent.generating;
+      if (typeof agent.sessionsToday === 'number') todayByAgent[agentId] = agent.sessionsToday;
+      if (typeof agent.studioCount === 'number') studiosByAgent[agentId] = agent.studioCount;
 
       // Extract session lifecycle breakdown
       const byLc = agent.sessionsByLifecycle;
@@ -719,7 +728,14 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
   }
 
   return {
-    rows: summarizeMissionRows(sessions, unreadByAgent, lifecycleByAgent),
+    rows: summarizeMissionRows(
+      sessions,
+      unreadByAgent,
+      lifecycleByAgent,
+      generatingByAgent,
+      todayByAgent,
+      studiosByAgent
+    ),
     sessions,
     feed,
     inboxMessages: allInboxMessages,
@@ -979,6 +995,9 @@ async function runInkMission(options: MissionOptions): Promise<void> {
         unread: row.unreadInbox,
         sessions: row.activeSessions,
         sessionsByLifecycle: row.sessionsByLifecycle,
+        generating: row.generating,
+        sessionsToday: row.sessionsToday,
+        studioCount: row.studioCount,
         latestThread: row.latestThreadKey,
       }));
       mission.setAgents(agentSummaries);
