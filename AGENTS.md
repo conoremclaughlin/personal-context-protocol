@@ -303,6 +303,28 @@ yarn pm2 logs pcp          # View PCP logs
 yarn pm2 start ecosystem.config.cjs  # Start all processes
 ```
 
+## Testing with an Isolated Server (IMPORTANT)
+
+**Never kill or restart the main dev server.** It runs on the default port (3001) and handles agent communication, triggers, and heartbeats. Disrupting it breaks other SBs' active sessions.
+
+To test API or MCP changes without affecting the main server, run a **separate instance** on a different port using `PCP_PORT_BASE`:
+
+```bash
+# From the repo root — starts API on 4001, web on 4002, myra on 4003
+PCP_PORT_BASE=4001 yarn dev
+
+# Point the CLI at your test server
+PCP_SERVER_URL=http://localhost:4001 sb mission
+```
+
+Port derivation from `PCP_PORT_BASE`:
+
+- **MCP/API**: `PCP_PORT_BASE` (e.g., 4001)
+- **Web**: `PCP_PORT_BASE + 1` (e.g., 4002)
+- **Myra**: `PCP_PORT_BASE + 2` (e.g., 4003)
+
+Both servers share the same Supabase database, so data changes are visible to both. The main server stays untouched on 3001.
+
 ## Database Migrations
 
 Migrations live in `supabase/migrations/` and use **timestamp-prefixed filenames**:
