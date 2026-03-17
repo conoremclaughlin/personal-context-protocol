@@ -57,6 +57,13 @@ vi.mock('../routes/chat', () => ({
   }),
 }));
 
+vi.mock('../routes/hook-lifecycle', () => ({
+  createHookLifecycleRouter: vi.fn(() => {
+    const { Router } = require('express');
+    return Router();
+  }),
+}));
+
 vi.mock('../channels/gateway', () => ({
   ChannelGateway: vi.fn(),
   createChannelGateway: vi.fn(() => null),

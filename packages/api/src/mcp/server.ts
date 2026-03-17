@@ -24,6 +24,7 @@ import {
 import adminRouter, { setWhatsAppListener } from '../routes/admin';
 import agentTriggerRouter, { getAgentGateway } from '../routes/agent-trigger';
 import { createChatRouter } from '../routes/chat';
+import { createHookLifecycleRouter } from '../routes/hook-lifecycle';
 import {
   ChannelGateway,
   createChannelGateway,
@@ -725,6 +726,10 @@ export class MCPServer {
 
     app.use('/api/agent', agentTriggerRouter);
     logger.info('Agent trigger routes registered at /api/agent');
+
+    const hookLifecycleRouter = createHookLifecycleRouter(this.dataComposer);
+    app.use('/api/hooks', hookLifecycleRouter);
+    logger.info('Hook lifecycle routes registered at /api/hooks');
 
     if (this.config.getSessionService) {
       const chatRouter = createChatRouter(this.config.getSessionService);

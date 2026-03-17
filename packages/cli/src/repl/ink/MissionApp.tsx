@@ -245,7 +245,6 @@ export const MissionApp = React.forwardRef<MissionAppHandle, MissionAppProps>(fu
               a.agent.padEnd(8),
               (a.phase || '-').padEnd(14),
               sessionLabel,
-              a.unread > 0 ? `${a.unread} unread` : '',
               a.latestThread || '',
             ]
               .filter(Boolean)

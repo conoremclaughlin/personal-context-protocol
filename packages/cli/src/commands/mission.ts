@@ -562,7 +562,7 @@ function formatTime(iso?: string): string {
 function renderMissionTable(rows: MissionRow[]): string[] {
   const lines: string[] = [];
 
-  lines.push(chalk.dim('SB       phase          generating  today  studios  unread  thread'));
+  lines.push(chalk.dim('SB       phase          generating  today  studios  thread'));
   for (const row of rows) {
     const gen = row.generating ?? 0;
     const compacting = row.sessionsByLifecycle?.['compacting'] ?? 0;
@@ -574,7 +574,7 @@ function renderMissionTable(rows: MissionRow[]): string[] {
     }
     lines.push(
       chalk.dim(
-        `${pad(row.agent, 8)} ${pad(row.latestPhase || '-', 14)} ${pad(genLabel, 10)} ${pad(String(row.sessionsToday ?? 0), 5)} ${pad(String(row.studioCount ?? 0), 7)} ${pad(String(row.unreadInbox), 6)} ${pad(row.latestThreadKey || '-', 12)}`
+        `${pad(row.agent, 8)} ${pad(row.latestPhase || '-', 14)} ${pad(genLabel, 10)} ${pad(String(row.sessionsToday ?? 0), 5)} ${pad(String(row.studioCount ?? 0), 7)} ${pad(row.latestThreadKey || '-', 12)}`
       )
     );
   }
