@@ -306,12 +306,19 @@ yarn logs:pcp:errors       # Errors only
 To test API or MCP changes without affecting the main server, run a **separate instance** on a different port using `PCP_PORT_BASE`:
 
 ```bash
-# From the repo root — starts API on 4001, web on 4002, myra on 4003
-PCP_PORT_BASE=4001 yarn dev
+# Isolated test server — disable services the main server already handles
+ENABLE_HEARTBEAT_SERVICE=false \
+ENABLE_TELEGRAM=false \
+ENABLE_WHATSAPP=false \
+ENABLE_DISCORD=false \
+PCP_PORT_BASE=4001 \
+yarn dev
 
 # Point the CLI at your test server
 PCP_SERVER_URL=http://localhost:4001 sb mission
 ```
+
+**Disable services you aren't testing.** Telegram, WhatsApp, Discord, and the heartbeat service should stay `false` on isolated servers — the main server already owns those connections. Only enable them if you're explicitly testing that functionality _and_ you've stopped it on the main server first (e.g., two Telegram listeners will conflict).
 
 Port derivation from `PCP_PORT_BASE`:
 
