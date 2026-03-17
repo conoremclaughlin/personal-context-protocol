@@ -321,6 +321,15 @@ Port derivation from `PCP_PORT_BASE`:
 
 Both servers share the same Supabase database, so data changes are visible to both. The main server stays untouched on 3001.
 
+## Supabase Project ID
+
+The Supabase project ID is stored in two places:
+
+1. **`supabase/config.toml`** — `project_id` field at the top of the file (canonical, committed)
+2. **`.env.local`** — embedded in `SUPABASE_URL` (e.g., `https://<project_id>.supabase.co`)
+
+When using MCP Supabase tools (`execute_sql`, `apply_migration`, `list_tables`, etc.), read the project ID from `supabase/config.toml` or extract it from `SUPABASE_URL` in `.env.local`. **Do not hardcode project IDs** — always read from config.
+
 ## Database Migrations
 
 Migrations live in `supabase/migrations/` and use **timestamp-prefixed filenames**:
@@ -517,7 +526,7 @@ npx @modelcontextprotocol/inspector packages/api/dist/index.js
 
 ### Debugging & Logs
 
-Winston writes to **both** the console and persistent log files:
+Winston writes to **both** the console and persistent log files at `~/.pcp/logs/`:
 
 | Log            | Path                         | Contents                                  |
 | -------------- | ---------------------------- | ----------------------------------------- |
@@ -526,16 +535,18 @@ Winston writes to **both** the console and persistent log files:
 | **exceptions** | `~/.pcp/logs/exceptions.log` | Uncaught exceptions                       |
 | **rejections** | `~/.pcp/logs/rejections.log` | Unhandled promise rejections              |
 
-Logs rotate at 10MB (combined) or 5MB (error), keeping 5 files each. `tailable: true` means the base filename (`combined.log`) is always the active log — `tail -f ~/.pcp/logs/combined.log` always works.
+Logs rotate at 10MB (combined) or 5MB (error), keeping 5 files each. `tailable: true` means the base filename (`combined.log`) is always the active log.
+
+**Yarn scripts for watching logs:**
 
 ```bash
-# Tail live server logs
+yarn logs:pcp              # Structured JSON: timestamp + level + message
+yarn logs:pcp:raw          # Raw JSON lines (for piping to jq, etc.)
+yarn logs:pcp:errors       # Errors only
+
+# Or tail/search directly
 tail -f ~/.pcp/logs/combined.log
-
-# Search for trigger activity
 grep "trigger\|Dispatching" ~/.pcp/logs/combined.log
-
-# Search for a specific thread
 grep "pr:218" ~/.pcp/logs/combined.log
 ```
 
