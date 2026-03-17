@@ -214,30 +214,62 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   const reqCtx = getRequestContext();
   const sessCtx = getSessionContext();
   let senderSessionId: string | null = reqCtx?.sessionId || sessCtx?.sessionId || null;
-  const senderStudioId = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
+  let senderStudioId: string | null = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
 
   // When the caller's session ID wasn't provided via request context headers
-  // (x-pcp-session-id), fall back to threadKey-scoped lookup only. The
-  // previous getActiveSession() fallback (most-recent session) was
-  // non-deterministic and could route replies to the wrong session.
-  if (!senderSessionId && senderAgentId && threadKey) {
+  // (x-pcp-session-id), resolve it server-side so thread messages carry
+  // sender session context for reply routing.
+  if (!senderSessionId && senderAgentId) {
     try {
-      const threadSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
-        resolved.user.id,
-        senderAgentId,
-        threadKey,
-        senderStudioId
-      );
-      if (threadSession) {
-        senderSessionId = threadSession.id;
-        logger.debug('Resolved sender session from threadKey match (no header)', {
+      // 1) ThreadKey-scoped lookup: find session already scoped to this thread
+      if (threadKey) {
+        const threadSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
+          resolved.user.id,
           senderAgentId,
           threadKey,
-          senderSessionId,
-        });
+          senderStudioId
+        );
+        if (threadSession) {
+          senderSessionId = threadSession.id;
+          logger.debug('Resolved sender session from threadKey match (no header)', {
+            senderAgentId,
+            threadKey,
+            senderSessionId,
+          });
+        }
+      }
+
+      // 2) Interactive session fallback: find the agent's most recent active
+      //    session without a threadKey (the interactive/general-purpose session).
+      //    This handles the common case where a user runs Claude Code directly
+      //    (not via `sb`) and sends thread messages — the session headers are
+      //    missing but we can still attach the correct session for reply routing.
+      if (!senderSessionId) {
+        const { data: interactiveSession } = await supabase
+          .from('sessions')
+          .select('id, studio_id')
+          .eq('user_id', resolved.user.id)
+          .eq('agent_id', senderAgentId)
+          .is('ended_at', null)
+          .is('thread_key', null)
+          .order('updated_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (interactiveSession) {
+          senderSessionId = interactiveSession.id;
+          if (!senderStudioId && interactiveSession.studio_id) {
+            senderStudioId = interactiveSession.studio_id;
+          }
+          logger.debug('Resolved sender session from interactive session fallback', {
+            senderAgentId,
+            senderSessionId,
+            studioId: interactiveSession.studio_id,
+          });
+        }
       }
     } catch (err) {
-      logger.warn('Failed to resolve sender session from threadKey', {
+      logger.warn('Failed to resolve sender session', {
         error: err instanceof Error ? err.message : String(err),
         senderAgentId,
         threadKey,
@@ -745,6 +777,25 @@ export async function handleGetInbox(args: unknown, dataComposer: DataComposer) 
     throw new Error(`Failed to get inbox: ${error.message}`);
   }
 
+  // Auto-advance read pointer: when an agent reads their inbox, advance
+  // the pointer to the latest message timestamp. No need for explicit
+  // mark_inbox_read calls.
+  if (agentId && messages?.length) {
+    const maxCreatedAt = (messages as Array<{ created_at: string }>).reduce(
+      (max: string, m) => (m.created_at > max ? m.created_at : max),
+      (messages[0] as { created_at: string }).created_at
+    );
+    await threadTable(supabase, 'agent_inbox_read_status').upsert(
+      {
+        user_id: resolved.user.id,
+        agent_id: agentId,
+        last_read_at: maxCreatedAt,
+      },
+      { onConflict: 'user_id,agent_id' }
+    );
+    logger.debug('Auto-advanced inbox read pointer', { agentId, lastReadAt: maxCreatedAt });
+  }
+
   // Count unread using pointer-based tracking (agent_inbox_read_status)
   // Uses the same untyped table helper as thread tables (not yet in generated types)
   let inboxUnread = 0;
@@ -1188,12 +1239,12 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
     };
   }
 
-  // ── Round 1: three independent bulk queries in parallel ──────────────
+  // ── Round 1: four independent bulk queries in parallel ──────────────
   const now = new Date();
   const staleThresholdMs = 30 * 60 * 1000; // 30 minutes
   const todayCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
-  const [readPointers, allSessions, allParticipation] = await Promise.all([
+  const [readPointers, allSessions, allParticipation, allStudios] = await Promise.all([
     // 1. All inbox read pointers for this user
     threadTable(supabase, 'agent_inbox_read_status')
       .select('agent_id, last_read_at')
@@ -1216,6 +1267,15 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       .in('agent_id', agentIds)
       .then((r: { data: unknown }) => r.data || [])
       .catch(() => []), // Thread tables may not exist yet
+
+    // 4. Studios per agent (ownership-based, not session-based)
+    supabase
+      .from('studios')
+      .select('id, agent_id')
+      .eq('user_id', userId)
+      .in('agent_id', agentIds)
+      .in('status', ['active', 'idle'])
+      .then((r: { data: unknown }) => r.data || []),
   ]);
 
   // Build read pointer map
@@ -1358,6 +1418,12 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
     }
   }
 
+  // Studios: count per agent from the studios table (ownership-based)
+  const studioCountMap = new Map<string, number>();
+  for (const s of allStudios as Array<{ id: string; agent_id: string }>) {
+    studioCountMap.set(s.agent_id, (studioCountMap.get(s.agent_id) || 0) + 1);
+  }
+
   // Assemble summaries
   const agents = agentIds.map((agentId) => {
     const sessions = sessionsByAgent.get(agentId) || [];
@@ -1376,8 +1442,6 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       return !Number.isNaN(updatedMs) && now.getTime() - updatedMs < staleThresholdMs;
     }).length;
 
-    const studioIds = new Set(sessions.map((s) => s.studio_id).filter(Boolean));
-
     const inboxUnread = inboxUnreadMap.get(agentId) || 0;
     const threadUnread = threadUnreadMap.get(agentId) || 0;
 
@@ -1390,7 +1454,7 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       sessionsByLifecycle: byLifecycle,
       generating,
       sessionsToday: todayCountMap.get(agentId) || 0,
-      studioCount: studioIds.size,
+      studioCount: studioCountMap.get(agentId) || 0,
       latestSession: latest
         ? {
             id: latest.id,
