@@ -744,6 +744,22 @@ export async function handleGetInbox(args: unknown, dataComposer: DataComposer) 
     throw new Error(`Failed to get inbox: ${error.message}`);
   }
 
+  // Auto-advance read pointer: mark returned unread messages as read.
+  // When an agent calls get_inbox, they've "seen" the messages — no need
+  // for a separate mark_inbox_read call.
+  if (agentId && messages?.length) {
+    const unreadIds = messages.filter((m) => m.status === 'unread').map((m) => m.id);
+    if (unreadIds.length > 0) {
+      const now = new Date().toISOString();
+      await supabase
+        .from('agent_inbox')
+        .update({ status: 'read', read_at: now })
+        .in('id', unreadIds)
+        .eq('status', 'unread');
+      logger.debug('Auto-advanced inbox read pointer', { agentId, count: unreadIds.length });
+    }
+  }
+
   // Count unread for context
   let unreadQuery = supabase
     .from('agent_inbox')
@@ -1097,8 +1113,8 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
     };
   }
 
-  // Batch queries: legacy inbox unreads, sessions, thread unreads
-  const [inboxCounts, sessionResults] = await Promise.all([
+  // Batch queries: legacy inbox unreads, sessions, studios, thread unreads
+  const [inboxCounts, sessionResults, studioResults] = await Promise.all([
     // Legacy inbox unreads per agent
     Promise.all(
       agentIds.map(async (agentId) => {
@@ -1122,6 +1138,18 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
           .is('ended_at', null)
           .order('started_at', { ascending: false });
         return { agentId, sessions: data || [] };
+      })
+    ),
+    // Studios per agent (from studios table — ownership-based, not session-based)
+    Promise.all(
+      agentIds.map(async (agentId) => {
+        const { data } = await supabase
+          .from('studios')
+          .select('id, branch, status')
+          .eq('user_id', userId)
+          .eq('agent_id', agentId)
+          .in('status', ['active', 'idle']);
+        return { agentId, studios: data || [] };
       })
     ),
   ]);
@@ -1220,6 +1248,12 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
     sessionMap.set(agentId, sessions);
   }
 
+  // Build per-agent studio count map (ownership-based from studios table)
+  const studioCountMap = new Map<string, number>();
+  for (const { agentId, studios } of studioResults) {
+    studioCountMap.set(agentId, studios.length);
+  }
+
   // Assemble summaries
   const agents = agentIds.map((agentId) => {
     const sessions = sessionMap.get(agentId) || [];
@@ -1242,6 +1276,7 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       totalUnread: inboxUnread + threadUnread,
       activeSessions: sessions.length,
       sessionsByLifecycle: byLifecycle,
+      studioCount: studioCountMap.get(agentId) || 0,
       latestSession: latest
         ? {
             id: latest.id,
