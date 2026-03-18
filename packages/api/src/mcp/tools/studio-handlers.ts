@@ -107,6 +107,12 @@ const updateStudioSchema = userIdentifierBaseSchema.extend({
     .boolean()
     .optional()
     .describe('If true, unlink the current session and set status to idle'),
+  routePatterns: z
+    .array(z.string().max(200))
+    .optional()
+    .describe(
+      'ThreadKey glob patterns this studio handles for trigger routing. Examples: "pr:*", "spec:*", "branch:wren/feat/auth". Use "*" for catch-all (one per agent). Replaces existing patterns.'
+    ),
 });
 
 const closeStudioSchema = userIdentifierBaseSchema.extend({
@@ -130,6 +136,10 @@ const adoptStudioSchema = userIdentifierBaseSchema.extend({
   studioId: z.string().uuid().optional().describe('Studio UUID to adopt'),
   branch: z.string().optional().describe('Branch name to look up the studio'),
   worktreePath: z.string().optional().describe('Worktree path to look up the studio'),
+  routePatterns: z
+    .array(z.string().max(200))
+    .optional()
+    .describe('ThreadKey glob patterns this studio handles. Sets initial patterns on adoption.'),
 });
 
 // ============== Helpers ==============
@@ -375,6 +385,7 @@ export async function handleUpdateStudio(args: unknown, dataComposer: DataCompos
     slug,
     sessionId,
     unlinkSession,
+    routePatterns,
   } = parsed;
   const studiosRepo = dataComposer.repositories.studios;
 
@@ -406,6 +417,9 @@ export async function handleUpdateStudio(args: unknown, dataComposer: DataCompos
     }
     if (slug !== undefined) {
       updateObj.slug = slug;
+    }
+    if (routePatterns !== undefined) {
+      updateObj.routePatterns = routePatterns;
     }
     updated = await studiosRepo.update(studioId, updateObj);
   }
@@ -509,7 +523,7 @@ export async function handleAdoptStudio(args: unknown, dataComposer: DataCompose
   const parsed = adoptStudioSchema.parse(args);
   await resolveUserOrThrow(parsed, dataComposer);
 
-  const { agentId, sessionId } = parsed;
+  const { agentId, sessionId, routePatterns } = parsed;
   const studiosRepo = dataComposer.repositories.studios;
 
   // Find studio by ID, branch, or path
@@ -529,7 +543,12 @@ export async function handleAdoptStudio(args: unknown, dataComposer: DataCompose
   }
 
   // Link session and set to active
-  const updated = await studiosRepo.linkSession(studio.id, sessionId);
+  let updated = await studiosRepo.linkSession(studio.id, sessionId);
+
+  // Set route patterns if provided
+  if (routePatterns !== undefined) {
+    updated = await studiosRepo.update(studio.id, { routePatterns });
+  }
 
   logger.info('Studio adopted', {
     studioId: updated.id,
