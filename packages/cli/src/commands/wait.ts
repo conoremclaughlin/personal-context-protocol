@@ -157,7 +157,9 @@ export function registerWaitCommand(program: Command): void {
               unknown
             >;
 
-            const messages = (threadResult.messages as Array<Record<string, unknown>>) || [];
+            const allMessages = (threadResult.messages as Array<Record<string, unknown>>) || [];
+            // Filter out own messages — we're waiting for someone ELSE to reply
+            const messages = allMessages.filter((m) => m.senderAgentId !== agentId);
             if (messages.length > 0) {
               console.log(`[sb wait] ${messages.length} new message(s) on ${threadKey}`);
               for (const msg of messages) {
