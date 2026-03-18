@@ -138,6 +138,18 @@ To backfill embeddings for existing memories after enabling semantic recall:
 sb memory backfill
 ```
 
+Each backfill run now writes a dedicated job log by default at:
+
+```bash
+~/.pcp/logs/jobs/memory-backfill-<timestamp>.log
+```
+
+To override the destination for a specific run:
+
+```bash
+sb memory backfill --log-file /tmp/memory-backfill.log
+```
+
 If you want to explicitly keep PCP memory in text-only mode, set:
 
 ```bash
