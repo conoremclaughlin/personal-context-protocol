@@ -11,7 +11,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type {
@@ -66,6 +66,53 @@ export class GeminiRunner implements IRunner {
       config.appendSystemPrompt || config.systemPrompt || ''
     );
 
+    // Build Gemini system settings with PCP MCP server config (including auth).
+    // Gemini CLI reads MCP config from settings.json, NOT .mcp.json.
+    // We use GEMINI_CLI_SYSTEM_SETTINGS_PATH to point to a temp settings file
+    // that overrides the mcpServers section. Other user settings (model, auth,
+    // etc.) are preserved since system settings only override matching keys.
+    let geminiSettingsPath: string | undefined;
+    if (config.pcpAccessToken) {
+      const mcpJsonPath = join(config.workingDirectory, '.mcp.json');
+      // Start from workspace .mcp.json servers (includes supabase, github, etc.)
+      let mcpServers: Record<string, unknown> = {};
+      if (existsSync(mcpJsonPath)) {
+        try {
+          const parsed = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
+          mcpServers = parsed.mcpServers || {};
+        } catch {
+          // ignore parse errors
+        }
+      }
+
+      // Ensure PCP server has auth + session headers
+      const pcpConfig = (mcpServers.pcp || {}) as Record<string, unknown>;
+      const existingHeaders = (pcpConfig.headers || {}) as Record<string, string>;
+      mcpServers.pcp = {
+        ...pcpConfig,
+        type: pcpConfig.type || 'http',
+        url: pcpConfig.url || 'http://localhost:3001/mcp',
+        headers: {
+          ...existingHeaders,
+          Authorization: 'Bearer ${PCP_ACCESS_TOKEN}',
+          'x-pcp-session-id': '${PCP_SESSION_ID}',
+          'x-pcp-studio-id': '${PCP_STUDIO_ID}',
+        },
+      };
+
+      const settingsDir = join(tmpdir(), 'sb-gemini');
+      mkdirSync(settingsDir, { recursive: true });
+      const settingsFile = join(settingsDir, `settings-${process.pid}-${Date.now()}.json`);
+      try {
+        writeFileSync(settingsFile, JSON.stringify({ mcpServers }, null, 2));
+        geminiSettingsPath = settingsFile;
+      } catch (err) {
+        logger.warn('Failed to write Gemini system settings', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     try {
       const args = this.buildArgs(fullMessage, config, policyPath, backendSessionId);
       logger.info('Spawning Gemini CLI', {
@@ -74,9 +121,14 @@ export class GeminiRunner implements IRunner {
         workingDirectory: config.workingDirectory,
         messageLength: fullMessage.length,
         hasPcpAccessToken: !!config.pcpAccessToken,
+        geminiSettingsOverride: !!geminiSettingsPath,
       });
 
-      const result = await this.spawnProcess(args, config);
+      const result = await this.spawnProcess(
+        args,
+        config,
+        geminiSettingsPath ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: geminiSettingsPath } : undefined
+      );
 
       // Use session ID from Gemini's init event, fall back to the one we passed in
       const resolvedSessionId = result.sessionId || backendSessionId || undefined;
@@ -101,6 +153,14 @@ export class GeminiRunner implements IRunner {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     } finally {
+      // Clean up temp Gemini settings file
+      if (geminiSettingsPath) {
+        try {
+          rmSync(geminiSettingsPath, { force: true });
+        } catch {
+          // best-effort cleanup
+        }
+      }
       cleanup();
     }
   }
@@ -130,7 +190,8 @@ export class GeminiRunner implements IRunner {
 
   private async spawnProcess(
     args: string[],
-    config: ClaudeRunnerConfig
+    config: ClaudeRunnerConfig,
+    extraEnv?: Record<string, string>
   ): Promise<{
     responses: ChannelResponse[];
     usage?: GeminiUsageStats;
@@ -148,12 +209,12 @@ export class GeminiRunner implements IRunner {
           ...cleanEnv,
           HOME: process.env.HOME,
           PATH: buildSpawnPath(geminiBin),
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
+          ...(extraEnv || {}),
           ...buildSessionEnv({
             pcpSessionId: config.pcpSessionId,
             studioId: config.studioId,
             accessToken: config.pcpAccessToken,
-            agentId: config.agentId,
-            runtime: 'gemini',
           }),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
