@@ -2,6 +2,7 @@ import { env } from '../../config/env';
 import { logger } from '../../utils/logger';
 import {
   getDefaultVettedModel,
+  getVettedEmbeddingModel,
   VETTED_EMBEDDING_MODELS,
   type EmbeddingProviderKind,
   type VettedEmbeddingModel,
@@ -29,17 +30,6 @@ export interface EmbeddingRuntimeConfig {
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com';
 const MEMORY_EMBEDDING_SCHEMA_DIMENSIONS = 1024;
 
-function findVettedModel(
-  provider: EmbeddingProviderKind,
-  model: string
-): VettedEmbeddingModel | null {
-  return (
-    VETTED_EMBEDDING_MODELS.find(
-      (candidate) => candidate.provider === provider && candidate.model === model
-    ) || null
-  );
-}
-
 function assertExpectedDimensions(
   vector: number[],
   expectedDimensions: number,
@@ -52,6 +42,12 @@ function assertExpectedDimensions(
     );
   }
   return vector;
+}
+
+function clampEmbeddingInput(text: string, vettedModel: VettedEmbeddingModel | null): string {
+  const maxInputChars = vettedModel?.maxInputChars;
+  if (!maxInputChars || text.length <= maxInputChars) return text;
+  return `${text.slice(0, maxInputChars)}...`;
 }
 
 function buildRuntimeConfig(): EmbeddingRuntimeConfig {
@@ -67,7 +63,7 @@ function buildRuntimeConfig(): EmbeddingRuntimeConfig {
     });
   }
 
-  const vettedModel = findVettedModel(provider, model);
+  const vettedModel = getVettedEmbeddingModel(provider, model);
   if (vettedModel && !vettedModel.dimensions.includes(dimensions)) {
     logger.warn('Selected embedding model does not advertise support for schema dimensions', {
       provider,
@@ -121,12 +117,23 @@ export class EmbeddingRouter {
     if (!this.config.enabled) return null;
     const input = text.trim();
     if (!input) return null;
+    const vettedModel = getVettedEmbeddingModel(this.config.provider, this.config.model);
+    const providerInput = clampEmbeddingInput(input, vettedModel);
+
+    if (providerInput !== input) {
+      logger.info('Clamped embedding input to vetted model limit', {
+        provider: this.config.provider,
+        model: this.config.model,
+        originalChars: input.length,
+        clampedChars: providerInput.length,
+      });
+    }
 
     try {
       if (this.config.provider === 'openai') {
-        return await this.embedWithOpenAI(input);
+        return await this.embedWithOpenAI(providerInput);
       }
-      return await this.embedWithOllama(input);
+      return await this.embedWithOllama(providerInput);
     } catch (primaryError) {
       logger.warn('Primary embedding provider failed, attempting fallback', {
         provider: this.config.provider,
@@ -137,7 +144,7 @@ export class EmbeddingRouter {
       try {
         if (this.config.provider === 'ollama' && this.config.hasOpenAIKey) {
           const fallback = await this.embedWithOpenAI(
-            input,
+            providerInput,
             getDefaultVettedModel('openai'),
             this.config.dimensions
           );
@@ -151,7 +158,7 @@ export class EmbeddingRouter {
 
         if (this.config.provider === 'openai') {
           const fallback = await this.embedWithOllama(
-            input,
+            providerInput,
             getDefaultVettedModel('ollama'),
             this.config.dimensions
           );

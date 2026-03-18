@@ -144,6 +144,8 @@ export interface MemoryRow {
   salience: Salience;
   topics: string[];
   agent_id: string | null;
+  embedding_chunks_version?: number | null;
+  embedding_chunk_count?: number | null;
   embedding: number[] | null;
   metadata: Record<string, unknown>;
   version: number;
