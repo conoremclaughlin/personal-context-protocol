@@ -55,8 +55,11 @@ export function registerWaitCommand(program: Command): void {
         `[sb wait] Watching ${threadKey ? `thread ${threadKey}` : 'inbox'} for ${agentId} (timeout: ${timeoutSec}s, interval: ${intervalSec}s)`
       );
 
-      // Get baseline counts
-      let baselineThreadMessageCount = 0;
+      // ── Baseline anchors ──
+      // Thread: anchor on the last message ID (not count — count from limited
+      // results is unreliable). Use afterMessageId for subsequent polls.
+      // Inbox: anchor on totalUnreadCount.
+      let baselineLastMessageId: string | undefined;
       let baselineInboxCount = 0;
 
       if (threadKey) {
@@ -66,11 +69,17 @@ export function registerWaitCommand(program: Command): void {
             agentId,
             threadKey,
             markRead: false,
-            limit: 1,
+            limit: 200,
           })) as Record<string, unknown>;
-          baselineThreadMessageCount = (threadResult.messageCount as number) || 0;
+          const messages = (threadResult.messages as Array<Record<string, unknown>>) || [];
+          if (messages.length > 0) {
+            baselineLastMessageId = messages[messages.length - 1].id as string;
+          }
+          console.log(
+            `[sb wait] Baseline: ${messages.length} messages in thread${baselineLastMessageId ? ` (anchor: ${(baselineLastMessageId as string).slice(0, 8)})` : ''}`
+          );
         } catch {
-          // Thread may not exist yet — baseline is 0
+          console.log('[sb wait] Baseline: thread not found (watching for creation)');
         }
       } else {
         try {
@@ -85,28 +94,31 @@ export function registerWaitCommand(program: Command): void {
         } catch {
           // Baseline is 0
         }
+        console.log(`[sb wait] Baseline: ${baselineInboxCount} unread`);
       }
-
-      console.log(
-        `[sb wait] Baseline: ${threadKey ? `${baselineThreadMessageCount} messages in thread` : `${baselineInboxCount} unread`}`
-      );
 
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, intervalSec * 1000));
 
         try {
-          // Check pending queue first (CLI-attached triggers)
-          if (options.pending !== false) {
+          // Check pending queue only when --pending is explicitly passed
+          if (options.pending) {
             const pendingResult = (await pcp.callTool('get_pending_messages', {
               channel: 'agent',
               limit: 5,
+              since: startedAt,
             })) as Record<string, unknown>;
             const pendingMessages = pendingResult.messages as
               | Array<Record<string, unknown>>
               | undefined;
-            if (pendingMessages?.length) {
-              console.log(`[sb wait] ${pendingMessages.length} pending trigger message(s) found`);
-              for (const msg of pendingMessages) {
+            // Filter to messages created after we started waiting
+            const newPending = (pendingMessages || []).filter((m) => {
+              const ts = m.timestamp as string | undefined;
+              return !ts || ts >= startedAt;
+            });
+            if (newPending.length) {
+              console.log(`[sb wait] ${newPending.length} pending trigger message(s) found`);
+              for (const msg of newPending) {
                 const sender =
                   typeof msg.sender === 'object'
                     ? (msg.sender as Record<string, unknown>).id || 'unknown'
@@ -114,30 +126,37 @@ export function registerWaitCommand(program: Command): void {
                 const preview = typeof msg.content === 'string' ? msg.content.slice(0, 200) : '';
                 console.log(`  from ${sender}: ${preview}`);
               }
+              // Mark as read so next sb wait doesn't re-trigger on them
+              const ids = newPending.map((m) => m.id as string).filter(Boolean);
+              if (ids.length) {
+                await pcp.callTool('mark_messages_read', { messageIds: ids }).catch(() => {});
+              }
               process.exit(0);
             }
           }
 
           if (threadKey) {
-            // Watch specific thread
-            const threadResult = (await pcp.callTool('get_thread_messages', {
+            // Watch specific thread — use afterMessageId to only get NEW messages
+            const pollArgs: Record<string, unknown> = {
               email: config.email,
               agentId,
               threadKey,
               markRead: false,
-              limit: 5,
-              ...(baselineThreadMessageCount > 0 ? {} : {}),
-            })) as Record<string, unknown>;
+              limit: 10,
+            };
+            if (baselineLastMessageId) {
+              pollArgs.afterMessageId = baselineLastMessageId;
+            }
 
-            const currentCount = (threadResult.messageCount as number) || 0;
-            if (currentCount > baselineThreadMessageCount) {
-              const messages = threadResult.messages as Array<Record<string, unknown>> | undefined;
-              const newMessages = messages?.slice(baselineThreadMessageCount) || [];
+            const threadResult = (await pcp.callTool('get_thread_messages', pollArgs)) as Record<
+              string,
+              unknown
+            >;
 
-              console.log(
-                `[sb wait] ${currentCount - baselineThreadMessageCount} new message(s) on ${threadKey}`
-              );
-              for (const msg of newMessages) {
+            const messages = (threadResult.messages as Array<Record<string, unknown>>) || [];
+            if (messages.length > 0) {
+              console.log(`[sb wait] ${messages.length} new message(s) on ${threadKey}`);
+              for (const msg of messages) {
                 const sender = msg.senderAgentId || 'unknown';
                 const preview = typeof msg.content === 'string' ? msg.content.slice(0, 200) : '';
                 console.log(`  from ${sender}: ${preview}`);
@@ -165,7 +184,6 @@ export function registerWaitCommand(program: Command): void {
 
               console.log(`[sb wait] ${currentUnread - baselineInboxCount} new unread message(s)`);
 
-              // Show inbox messages
               if (messages?.length) {
                 for (const msg of messages.slice(0, 3)) {
                   const sender = msg.senderAgentId || 'unknown';
@@ -174,7 +192,6 @@ export function registerWaitCommand(program: Command): void {
                 }
               }
 
-              // Show thread unreads
               if (threads?.length) {
                 for (const t of threads.slice(0, 3)) {
                   console.log(`  thread ${t.threadKey}: ${t.unreadCount} unread`);
@@ -187,7 +204,6 @@ export function registerWaitCommand(program: Command): void {
 
           console.log('[sb wait] No new messages yet...');
         } catch (error) {
-          // Silent poll failure — retry on next interval
           const msg = error instanceof Error ? error.message : String(error);
           console.log(`[sb wait] Poll error (will retry): ${msg.slice(0, 100)}`);
         }
