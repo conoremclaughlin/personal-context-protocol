@@ -244,6 +244,18 @@ To backfill embeddings for existing memories after enabling them:
 sb memory backfill
 ```
 
+Each backfill run now writes a dedicated job log by default at:
+
+```bash
+~/.pcp/logs/jobs/memory-backfill-<timestamp>.log
+```
+
+To override the destination for a specific run:
+
+```bash
+sb memory backfill --log-file /tmp/memory-backfill.log
+```
+
 To explicitly disable embeddings and keep text-only recall:
 
 ```bash

@@ -1,8 +1,8 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { createWriteStream, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { dirname, join } from 'path';
 import { homedir } from 'os';
 import { execSync, spawn } from 'child_process';
 import { parseEnvFile } from './mcp.js';
@@ -10,6 +10,7 @@ import { parseEnvFile } from './mcp.js';
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
 const DEFAULT_OLLAMA_MODEL = 'mxbai-embed-large';
 const DEFAULT_BACKFILL_BATCH_SIZE = 100;
+const DEFAULT_JOB_LOG_DIR = join(homedir(), '.pcp', 'logs', 'jobs');
 
 interface InstallOptions {
   model?: string;
@@ -23,6 +24,7 @@ interface BackfillOptions {
   limit?: string;
   batchSize?: string;
   dryRun?: boolean;
+  logFile?: string;
 }
 
 function formatInstallInstructions(): string[] {
@@ -105,23 +107,67 @@ async function commandExists(command: string): Promise<boolean> {
   });
 }
 
+function formatJobTimestamp(date: Date): string {
+  return date.toISOString().replace(/[:.]/g, '-');
+}
+
+export function buildDefaultJobLogPath(jobName: string, date = new Date()): string {
+  return join(DEFAULT_JOB_LOG_DIR, `${jobName}-${formatJobTimestamp(date)}.log`);
+}
+
 async function runStreamingCommand(
   command: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; logFile?: string } = {}
 ): Promise<void> {
   await new Promise<void>((resolve, reject) => {
+    if (!options.logFile) {
+      const child = spawn(command, args, {
+        cwd: options.cwd,
+        env: options.env,
+        stdio: 'inherit',
+        shell: false,
+      });
+
+      child.once('error', reject);
+      child.once('exit', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+      });
+      return;
+    }
+
+    mkdirSync(dirname(options.logFile), { recursive: true });
+    const logStream = createWriteStream(options.logFile, { flags: 'a' });
+    logStream.write(
+      `[${new Date().toISOString()}] Starting command in ${options.cwd || process.cwd()}: ${command} ${args.join(' ')}\n`
+    );
+
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      stdio: 'inherit',
+      stdio: ['inherit', 'pipe', 'pipe'],
       shell: false,
     });
 
-    child.once('error', reject);
+    const writeChunk = (target: NodeJS.WriteStream, chunk: string | Buffer) => {
+      target.write(chunk);
+      logStream.write(chunk);
+    };
+
+    child.stdout?.on('data', (chunk) => writeChunk(process.stdout, chunk));
+    child.stderr?.on('data', (chunk) => writeChunk(process.stderr, chunk));
+
+    child.once('error', (error) => {
+      logStream.write(`[${new Date().toISOString()}] Command failed to start: ${error.message}\n`);
+      logStream.end(() => reject(error));
+    });
     child.once('exit', (code) => {
-      if (code === 0) resolve();
-      else reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+      logStream.write(`[${new Date().toISOString()}] Command exited with code ${code ?? 'null'}\n`);
+      logStream.end(() => {
+        if (code === 0) resolve();
+        else reject(new Error(`${command} ${args.join(' ')} exited with code ${code}`));
+      });
     });
   });
 }
@@ -208,10 +254,13 @@ async function backfillCommand(options: BackfillOptions): Promise<void> {
   if (options.batchSize) env.BACKFILL_MEMORY_BATCH_SIZE = options.batchSize;
   if (options.dryRun) env.BACKFILL_MEMORY_DRY_RUN = 'true';
 
+  const logFile = options.logFile || buildDefaultJobLogPath('memory-backfill');
+  console.log(chalk.dim(`Writing job log to ${logFile}`));
+
   await runStreamingCommand(
     'yarn',
     ['workspace', '@personal-context/api', 'backfill:memory-embeddings'],
-    { cwd, env }
+    { cwd, env, logFile }
   );
 }
 
@@ -244,6 +293,10 @@ export function registerMemoryCommands(program: Command): void {
       String(DEFAULT_BACKFILL_BATCH_SIZE)
     )
     .option('--dry-run', 'Show what would be backfilled without writing embeddings')
+    .option(
+      '--log-file <path>',
+      'Write a dedicated job log for this run (defaults to ~/.pcp/logs/jobs/memory-backfill-<timestamp>.log)'
+    )
     .action((options: BackfillOptions) => {
       backfillCommand(options).catch((error) => {
         const message = error instanceof Error ? error.message : String(error);
