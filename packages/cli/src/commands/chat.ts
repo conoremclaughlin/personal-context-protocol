@@ -2876,11 +2876,16 @@ export async function runChat(options: ChatOptions): Promise<void> {
               status: result.status,
               result: result.result,
             });
-            ledger.addEntry(
-              'system',
-              compactForLedger(`local tool ${result.tool} -> ${resultJson}`, 500),
-              'local-tool'
-            );
+            // Context-management tools (list_context, evict_context) must NOT
+            // persist their results back into the ledger — doing so pollutes the
+            // context they're managing and reintroduces evicted content.
+            if (!isClientLocalTool(result.tool)) {
+              ledger.addEntry(
+                'system',
+                compactForLedger(`local tool ${result.tool} -> ${resultJson}`, 500),
+                'local-tool'
+              );
+            }
             iterationResults.push({
               tool: result.tool,
               result: result.result,
