@@ -131,6 +131,17 @@ const updateInboxMessageSchema = userIdentifierBaseSchema.extend({
   status: z.enum(['read', 'acknowledged', 'completed']).describe('New status'),
 });
 
+const markInboxReadSchema = userIdentifierBaseSchema.extend({
+  agentId: z.string().describe('Agent ID whose inbox to mark as read'),
+  before: z
+    .string()
+    .datetime()
+    .optional()
+    .describe(
+      'Mark messages as read up to this timestamp (ISO 8601). Defaults to now — marks all current messages as read.'
+    ),
+});
+
 const getAgentStatusSchema = userIdentifierBaseSchema.extend({
   agentId: z.string().describe('Agent ID to check status for'),
 });
@@ -206,9 +217,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   const senderStudioId = reqCtx?.workspaceId || sessCtx?.workspaceId || null;
 
   // When the caller's session ID wasn't provided via request context headers
-  // (x-pcp-session-id), fall back to threadKey-scoped lookup only. The
-  // previous getActiveSession() fallback (most-recent session) was
-  // non-deterministic and could route replies to the wrong session.
+  // (x-pcp-session-id), try threadKey-scoped lookup as a deterministic fallback.
+  // We intentionally do NOT fall back to "most recent active session" — that's
+  // non-deterministic and can route replies to the wrong worktree/studio.
   if (!senderSessionId && senderAgentId && threadKey) {
     try {
       const threadSession = await dataComposer.repositories.memory.getActiveSessionByThreadKey(
@@ -233,6 +244,11 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       });
     }
   }
+
+  // Track whether session context is missing — used to suppress triggers
+  // and warn the sender. Without session context, reply routing is broken
+  // (recipients can't auto-resolve back to the sender's session/studio).
+  const missingSenderSession = !senderSessionId && !!senderAgentId;
 
   // ── Thread-first path: when threadKey is provided, route to thread tables ──
   // Unified handler for both new thread creation and replies to existing threads.
@@ -358,7 +374,7 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     // For new threads, trigger all recipients (existing behavior).
     let agentsToTrigger: string[] = [];
 
-    if (trigger !== false) {
+    if (trigger !== false && !missingSenderSession) {
       if (existingThread && senderAgentId) {
         // Reply: fetch current participants from DB for accurate trigger resolution
         const currentParticipants = await getParticipants(supabase, thread.id);
@@ -466,6 +482,12 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
             priority,
             triggered: triggeredAgents,
             createdAt: threadMessage.created_at,
+            ...(missingSenderSession
+              ? {
+                  warning:
+                    'Session context missing (no x-pcp-session-id header). Triggers suppressed — recipients will not be woken. They will see this message on their next inbox check. To fix: launch via `sb` CLI which injects session headers, or ensure PCP_SESSION_ID is set.',
+                }
+              : {}),
           }),
         },
       ],
@@ -567,7 +589,7 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     triggered: false,
   };
 
-  if (trigger) {
+  if (trigger && !missingSenderSession) {
     const gateway = getAgentGateway();
     const payload: AgentTriggerPayload = {
       fromAgentId: triggerSenderId,
@@ -603,16 +625,6 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       accepted: result.accepted,
       error: result.error,
     };
-
-    // Auto-mark as read: if the trigger was accepted, the recipient agent
-    // has been woken up to process this message.
-    if (result.accepted) {
-      await supabase
-        .from('agent_inbox')
-        .update({ status: 'read', read_at: new Date().toISOString() })
-        .eq('id', message.id)
-        .eq('status', 'unread'); // Only transition unread → read
-    }
   }
 
   return {
@@ -636,6 +648,12 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
             ? {
                 routingHint:
                   'Actionable handoff is missing a routing anchor. Add one of: threadKey, recipientSessionId, recipientStudioId, or recipientStudioHint.',
+              }
+            : {}),
+          ...(missingSenderSession
+            ? {
+                warning:
+                  'Session context missing (no x-pcp-session-id header). Triggers suppressed — recipient will not be woken. They will see this message on their next inbox check. To fix: launch via `sb` CLI which injects session headers.',
               }
             : {}),
           hint: 'Consider adding a threadKey (e.g., "pr:32", "spec:cli-hooks") to route this message to a group thread.',
@@ -744,16 +762,74 @@ export async function handleGetInbox(args: unknown, dataComposer: DataComposer) 
     throw new Error(`Failed to get inbox: ${error.message}`);
   }
 
-  // Count unread for context
-  let unreadQuery = supabase
-    .from('agent_inbox')
-    .select('*', { count: 'exact', head: true })
-    .eq('recipient_user_id', resolved.user.id)
-    .eq('status', 'unread');
-  if (agentId) {
-    unreadQuery = unreadQuery.eq('recipient_agent_id', agentId);
+  // Auto-advance read pointer: when an agent reads their inbox, advance
+  // the pointer to the latest message timestamp. No need for explicit
+  // mark_inbox_read calls.
+  if (agentId && messages?.length) {
+    const maxCreatedAt = (messages as Array<{ created_at: string }>).reduce(
+      (max: string, m) => (m.created_at > max ? m.created_at : max),
+      (messages[0] as { created_at: string }).created_at
+    );
+    await threadTable(supabase, 'agent_inbox_read_status').upsert(
+      {
+        user_id: resolved.user.id,
+        agent_id: agentId,
+        last_read_at: maxCreatedAt,
+      },
+      { onConflict: 'user_id,agent_id' }
+    );
+    logger.debug('Auto-advanced inbox read pointer', { agentId, lastReadAt: maxCreatedAt });
   }
-  const { count: unreadCount } = await unreadQuery;
+
+  // Count unread using pointer-based tracking (agent_inbox_read_status)
+  // Uses the same untyped table helper as thread tables (not yet in generated types)
+  let inboxUnread = 0;
+  if (agentId) {
+    // Single agent: one pointer lookup + one count
+    const { data: readStatus } = await threadTable(supabase, 'agent_inbox_read_status')
+      .select('last_read_at')
+      .eq('user_id', resolved.user.id)
+      .eq('agent_id', agentId)
+      .maybeSingle();
+
+    let countQuery = supabase
+      .from('agent_inbox')
+      .select('*', { count: 'exact', head: true })
+      .eq('recipient_user_id', resolved.user.id)
+      .eq('recipient_agent_id', agentId);
+
+    if (readStatus?.last_read_at) {
+      countQuery = countQuery.gt('created_at', readStatus.last_read_at);
+    }
+    // Exclude expired messages from unread count
+    countQuery = countQuery.or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    const { count } = await countQuery;
+    inboxUnread = count || 0;
+  } else {
+    // All agents: fall back to aggregate count
+    const { data: readStatuses } = await threadTable(supabase, 'agent_inbox_read_status')
+      .select('agent_id, last_read_at')
+      .eq('user_id', resolved.user.id);
+
+    const oldestPointer = (readStatuses || []).reduce(
+      (oldest: string | null, rs: { last_read_at: string }) =>
+        !oldest || rs.last_read_at < oldest ? rs.last_read_at : oldest,
+      null
+    );
+
+    // Count messages after the oldest pointer (overcount, but correct for "any unread")
+    let countQuery = supabase
+      .from('agent_inbox')
+      .select('*', { count: 'exact', head: true })
+      .eq('recipient_user_id', resolved.user.id);
+    if (oldestPointer) {
+      countQuery = countQuery.gt('created_at', oldestPointer);
+    }
+    countQuery = countQuery.or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    const { count } = await countQuery;
+    inboxUnread = count || 0;
+  }
+  const unreadCount = inboxUnread;
 
   // Get threads with unread counts and preview messages.
   // Works with or without agentId — when omitted, finds threads for ALL agents
@@ -982,6 +1058,45 @@ export async function handleUpdateInboxMessage(args: unknown, dataComposer: Data
   };
 }
 
+export async function handleMarkInboxRead(args: unknown, dataComposer: DataComposer) {
+  const supabase = dataComposer.getClient();
+  const parsed = markInboxReadSchema.parse(args);
+  const resolved = await resolveUserOrThrow(parsed, dataComposer);
+
+  const agentId = getEffectiveAgentId(parsed.agentId) ?? parsed.agentId;
+  const lastReadAt = parsed.before || new Date().toISOString();
+
+  // Upsert the read pointer — only advance forward, never backwards
+  const { error } = await threadTable(supabase, 'agent_inbox_read_status').upsert(
+    {
+      user_id: resolved.user.id,
+      agent_id: agentId,
+      last_read_at: lastReadAt,
+    },
+    { onConflict: 'user_id,agent_id' }
+  );
+
+  if (error) {
+    throw new Error(`Failed to mark inbox read: ${error.message}`);
+  }
+
+  logger.info('Inbox marked as read', { agentId, lastReadAt });
+
+  return {
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          success: true,
+          agentId,
+          lastReadAt,
+          message: 'Inbox read pointer advanced. Messages before this timestamp are now read.',
+        }),
+      },
+    ],
+  };
+}
+
 export async function handleGetAgentStatus(args: unknown, dataComposer: DataComposer) {
   const supabase = dataComposer.getClient();
   const parsed = getAgentStatusSchema.parse(args);
@@ -999,22 +1114,34 @@ export async function handleGetAgentStatus(args: unknown, dataComposer: DataComp
     .limit(1)
     .maybeSingle();
 
-  // Get unread message count
-  const { count: unreadCount } = await supabase
-    .from('agent_inbox')
-    .select('*', { count: 'exact', head: true })
-    .eq('recipient_user_id', resolved.user.id)
-    .eq('recipient_agent_id', agentId)
-    .eq('status', 'unread');
+  // Get unread message count (pointer-based)
+  const { data: readStatus } = await threadTable(supabase, 'agent_inbox_read_status')
+    .select('last_read_at')
+    .eq('user_id', resolved.user.id)
+    .eq('agent_id', agentId)
+    .maybeSingle();
 
-  // Get urgent message count
-  const { count: urgentCount } = await supabase
+  let unreadQuery = supabase
+    .from('agent_inbox')
+    .select('*', { count: 'exact', head: true })
+    .eq('recipient_user_id', resolved.user.id)
+    .eq('recipient_agent_id', agentId);
+  if (readStatus?.last_read_at) {
+    unreadQuery = unreadQuery.gt('created_at', readStatus.last_read_at);
+  }
+  const { count: unreadCount } = await unreadQuery;
+
+  // Get urgent unread message count (pointer-based)
+  let urgentQuery = supabase
     .from('agent_inbox')
     .select('*', { count: 'exact', head: true })
     .eq('recipient_user_id', resolved.user.id)
     .eq('recipient_agent_id', agentId)
-    .eq('status', 'unread')
     .eq('priority', 'urgent');
+  if (readStatus?.last_read_at) {
+    urgentQuery = urgentQuery.gt('created_at', readStatus.last_read_at);
+  }
+  const { count: urgentCount } = await urgentQuery;
 
   // Get active workspaces for this agent
   const { data: workspaces } = await supabase
@@ -1097,143 +1224,211 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
     };
   }
 
-  // Batch queries: legacy inbox unreads, sessions, thread unreads
-  const [inboxCounts, sessionResults] = await Promise.all([
-    // Legacy inbox unreads per agent
-    Promise.all(
-      agentIds.map(async (agentId) => {
-        const { count } = await supabase
-          .from('agent_inbox')
-          .select('*', { count: 'exact', head: true })
-          .eq('recipient_user_id', userId)
-          .eq('recipient_agent_id', agentId)
-          .eq('status', 'unread');
-        return { agentId, count: count || 0 };
-      })
-    ),
-    // Active (non-ended) sessions per agent — no limit so we get accurate counts
-    Promise.all(
-      agentIds.map(async (agentId) => {
-        const { data } = await supabase
-          .from('sessions')
-          .select('id, agent_id, lifecycle, current_phase, started_at, ended_at, workspace_id')
-          .eq('user_id', userId)
-          .eq('agent_id', agentId)
-          .is('ended_at', null)
-          .order('started_at', { ascending: false });
-        return { agentId, sessions: data || [] };
-      })
-    ),
+  // ── Round 1: four independent bulk queries in parallel ──────────────
+  const now = new Date();
+  const staleThresholdMs = 30 * 60 * 1000; // 30 minutes
+  const todayCutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+
+  const [readPointers, allSessions, allParticipation, allStudios] = await Promise.all([
+    // 1. All inbox read pointers for this user
+    threadTable(supabase, 'agent_inbox_read_status')
+      .select('agent_id, last_read_at')
+      .eq('user_id', userId)
+      .then((r: { data: unknown }) => r.data || []),
+
+    // 2. All sessions: non-ended OR started today (covers active + today counts)
+    supabase
+      .from('sessions')
+      .select('id, agent_id, lifecycle, current_phase, started_at, ended_at, studio_id, updated_at')
+      .eq('user_id', userId)
+      .in('agent_id', agentIds)
+      .or(`ended_at.is.null,started_at.gte.${todayCutoff}`)
+      .order('started_at', { ascending: false })
+      .then((r: { data: unknown }) => r.data || []),
+
+    // 3. All thread participation for these agents
+    threadTable(supabase, 'inbox_thread_participants')
+      .select('thread_id, agent_id')
+      .in('agent_id', agentIds)
+      .then((r: { data: unknown }) => r.data || [])
+      .catch(() => []), // Thread tables may not exist yet
+
+    // 4. Studios per agent (ownership-based, not session-based)
+    supabase
+      .from('studios')
+      .select('id, agent_id')
+      .eq('user_id', userId)
+      .in('agent_id', agentIds)
+      .in('status', ['active', 'idle'])
+      .then((r: { data: unknown }) => r.data || []),
   ]);
 
-  // Thread unreads per agent (with proper per-agent last_read_at)
-  const threadUnreadByAgent: Record<string, number> = {};
-  try {
-    // Get all threads this user's agents participate in
-    const participantData = await Promise.all(
-      agentIds.map(async (agentId) => {
-        const { data: rows } = await threadTable(supabase, 'inbox_thread_participants')
-          .select('thread_id')
-          .eq('agent_id', agentId);
-        return { agentId, threadIds: (rows || []).map((r: { thread_id: string }) => r.thread_id) };
-      })
-    );
-
-    // For each agent's threads, compute unread count using their last_read_at
-    await Promise.all(
-      participantData.map(async ({ agentId, threadIds }) => {
-        if (!threadIds.length) {
-          threadUnreadByAgent[agentId] = 0;
-          return;
-        }
-
-        // Filter to open threads owned by this user
-        const { data: openThreads } = await threadTable(supabase, 'inbox_threads')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('status', 'open')
-          .in('id', threadIds);
-
-        const openThreadIds = (openThreads || []).map((t: { id: string }) => t.id);
-        if (!openThreadIds.length) {
-          threadUnreadByAgent[agentId] = 0;
-          return;
-        }
-
-        // Get read status for each thread
-        const { data: readStatuses } = await threadTable(supabase, 'inbox_thread_read_status')
-          .select('thread_id, last_read_at')
-          .eq('agent_id', agentId)
-          .in('thread_id', openThreadIds);
-
-        const readMap = new Map<string, string>();
-        for (const rs of readStatuses || []) {
-          readMap.set(
-            (rs as { thread_id: string }).thread_id,
-            (rs as { last_read_at: string }).last_read_at
-          );
-        }
-
-        // Count unread messages per thread
-        let totalUnread = 0;
-        await Promise.all(
-          openThreadIds.map(async (threadId: string) => {
-            const lastReadAt = readMap.get(threadId);
-            let query = threadTable(supabase, 'inbox_thread_messages')
-              .select('*', { count: 'exact', head: true })
-              .eq('thread_id', threadId);
-            if (lastReadAt) {
-              query = query.gt('created_at', lastReadAt);
-            }
-            const { count } = await query;
-            totalUnread += count || 0;
-          })
-        );
-
-        threadUnreadByAgent[agentId] = totalUnread;
-      })
-    );
-  } catch {
-    // Thread tables may not exist yet — graceful fallback
-    logger.debug('get_agent_summaries: thread tables not available, skipping thread unreads');
+  // Build read pointer map
+  const readPointerMap = new Map<string, string>();
+  for (const rp of readPointers as Array<{ agent_id: string; last_read_at: string }>) {
+    readPointerMap.set(rp.agent_id, rp.last_read_at);
   }
 
-  // Build per-agent inbox count map
-  const inboxCountMap = new Map<string, number>();
-  for (const { agentId, count } of inboxCounts) {
-    inboxCountMap.set(agentId, count);
+  // Find the earliest pointer so we can fetch all potentially-unread messages in one query
+  let minPointer: string | null = null;
+  for (const [, ts] of readPointerMap) {
+    if (!minPointer || ts < minPointer) minPointer = ts;
   }
 
-  // Build per-agent session map
-  const sessionMap = new Map<
-    string,
-    Array<{
-      id: string;
-      lifecycle: string | null;
-      current_phase: string | null;
-      started_at: string | null;
-      ended_at: string | null;
-      workspace_id: string | null;
-    }>
-  >();
-  for (const { agentId, sessions } of sessionResults) {
-    sessionMap.set(agentId, sessions);
+  // Collect unique thread IDs from participation
+  const threadIdSet = new Set<string>();
+  for (const p of allParticipation as Array<{ thread_id: string; agent_id: string }>) {
+    threadIdSet.add(p.thread_id);
+  }
+  const allThreadIds = [...threadIdSet];
+
+  // ── Round 2: inbox messages + open threads (depend on round 1) ─────
+  const [inboxMessages, openThreads] = await Promise.all([
+    // 4. All inbox messages after earliest pointer (just agent_id + created_at for counting)
+    (async () => {
+      let q = supabase
+        .from('agent_inbox')
+        .select('recipient_agent_id, created_at')
+        .eq('recipient_user_id', userId)
+        .in('recipient_agent_id', agentIds);
+      if (minPointer) {
+        q = q.gt('created_at', minPointer);
+      }
+      const { data } = await q;
+      return (data || []) as Array<{ recipient_agent_id: string; created_at: string }>;
+    })(),
+
+    // 5. Open threads for this user (filtered to threads agents participate in)
+    (async () => {
+      if (!allThreadIds.length) return [];
+      const { data } = await threadTable(supabase, 'inbox_threads')
+        .select('id')
+        .eq('user_id', userId)
+        .eq('status', 'open')
+        .in('id', allThreadIds);
+      return (data || []) as Array<{ id: string }>;
+    })(),
+  ]);
+
+  const openThreadIds = openThreads.map((t) => t.id);
+
+  // ── Round 3: thread read statuses + thread messages (depend on round 2) ─
+  const [threadReadStatuses, threadMessages] = await Promise.all([
+    // 6. All thread read statuses for open threads × agents
+    (async () => {
+      if (!openThreadIds.length) return [];
+      const { data } = await threadTable(supabase, 'inbox_thread_read_status')
+        .select('thread_id, agent_id, last_read_at')
+        .in('thread_id', openThreadIds)
+        .in('agent_id', agentIds);
+      return (data || []) as Array<{
+        thread_id: string;
+        agent_id: string;
+        last_read_at: string;
+      }>;
+    })(),
+
+    // 7. All messages in open threads (just thread_id + created_at for counting)
+    (async () => {
+      if (!openThreadIds.length) return [];
+      const { data } = await threadTable(supabase, 'inbox_thread_messages')
+        .select('thread_id, created_at')
+        .in('thread_id', openThreadIds);
+      return (data || []) as Array<{ thread_id: string; created_at: string }>;
+    })(),
+  ]);
+
+  // ── Aggregate in JS ───────────────────────────────────────────────────
+
+  // Inbox unreads: count messages per agent where created_at > that agent's pointer
+  const inboxUnreadMap = new Map<string, number>();
+  for (const m of inboxMessages) {
+    const pointer = readPointerMap.get(m.recipient_agent_id);
+    if (!pointer || m.created_at > pointer) {
+      inboxUnreadMap.set(m.recipient_agent_id, (inboxUnreadMap.get(m.recipient_agent_id) || 0) + 1);
+    }
+  }
+
+  // Thread unreads: build per-agent read pointer lookup, then count messages
+  const threadReadMap = new Map<string, string>(); // "threadId:agentId" → last_read_at
+  for (const rs of threadReadStatuses) {
+    threadReadMap.set(`${rs.thread_id}:${rs.agent_id}`, rs.last_read_at);
+  }
+
+  // Build agent → set of open thread IDs they participate in
+  const agentOpenThreads = new Map<string, Set<string>>();
+  const openThreadIdSet = new Set(openThreadIds);
+  for (const p of allParticipation as Array<{ thread_id: string; agent_id: string }>) {
+    if (!openThreadIdSet.has(p.thread_id)) continue;
+    if (!agentOpenThreads.has(p.agent_id)) agentOpenThreads.set(p.agent_id, new Set());
+    agentOpenThreads.get(p.agent_id)!.add(p.thread_id);
+  }
+
+  // Count unread thread messages per agent
+  const threadUnreadMap = new Map<string, number>();
+  for (const msg of threadMessages) {
+    // For each agent that participates in this thread, check if message is unread
+    for (const [aid, threads] of agentOpenThreads) {
+      if (!threads.has(msg.thread_id)) continue;
+      const lastRead = threadReadMap.get(`${msg.thread_id}:${aid}`);
+      if (!lastRead || msg.created_at > lastRead) {
+        threadUnreadMap.set(aid, (threadUnreadMap.get(aid) || 0) + 1);
+      }
+    }
+  }
+
+  // Sessions: group by agent_id in JS
+  type SessionRow = {
+    id: string;
+    agent_id: string;
+    lifecycle: string | null;
+    current_phase: string | null;
+    started_at: string | null;
+    ended_at: string | null;
+    studio_id: string | null;
+    updated_at: string | null;
+  };
+  const sessionsByAgent = new Map<string, SessionRow[]>();
+  const todayCountMap = new Map<string, number>();
+
+  for (const s of allSessions as SessionRow[]) {
+    // Active sessions (non-ended)
+    if (!s.ended_at) {
+      if (!sessionsByAgent.has(s.agent_id)) sessionsByAgent.set(s.agent_id, []);
+      sessionsByAgent.get(s.agent_id)!.push(s);
+    }
+    // Sessions today (started in last 24h, including ended)
+    if (s.started_at && s.started_at >= todayCutoff) {
+      todayCountMap.set(s.agent_id, (todayCountMap.get(s.agent_id) || 0) + 1);
+    }
+  }
+
+  // Studios: count per agent from the studios table (ownership-based)
+  const studioCountMap = new Map<string, number>();
+  for (const s of allStudios as Array<{ id: string; agent_id: string }>) {
+    studioCountMap.set(s.agent_id, (studioCountMap.get(s.agent_id) || 0) + 1);
   }
 
   // Assemble summaries
   const agents = agentIds.map((agentId) => {
-    const sessions = sessionMap.get(agentId) || [];
-    const latest = sessions[0] || null;
+    const sessions = sessionsByAgent.get(agentId) || [];
+    const latest = sessions[0] || null; // already sorted by started_at DESC
 
-    // Count sessions by lifecycle state
     const byLifecycle: Record<string, number> = {};
     for (const s of sessions) {
       const lc = s.lifecycle || 'unknown';
       byLifecycle[lc] = (byLifecycle[lc] || 0) + 1;
     }
 
-    const inboxUnread = inboxCountMap.get(agentId) || 0;
-    const threadUnread = threadUnreadByAgent[agentId] || 0;
+    const generating = sessions.filter((s) => {
+      if (s.lifecycle !== 'running') return false;
+      if (!s.updated_at) return true;
+      const updatedMs = Date.parse(s.updated_at);
+      return !Number.isNaN(updatedMs) && now.getTime() - updatedMs < staleThresholdMs;
+    }).length;
+
+    const inboxUnread = inboxUnreadMap.get(agentId) || 0;
+    const threadUnread = threadUnreadMap.get(agentId) || 0;
 
     return {
       agentId,
@@ -1242,6 +1437,9 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
       totalUnread: inboxUnread + threadUnread,
       activeSessions: sessions.length,
       sessionsByLifecycle: byLifecycle,
+      generating,
+      sessionsToday: todayCountMap.get(agentId) || 0,
+      studioCount: studioCountMap.get(agentId) || 0,
       latestSession: latest
         ? {
             id: latest.id,
@@ -1249,7 +1447,7 @@ export async function handleGetAgentSummaries(args: unknown, dataComposer: DataC
             phase: latest.current_phase,
             startedAt: latest.started_at,
             endedAt: latest.ended_at,
-            workspaceId: latest.workspace_id,
+            studioId: latest.studio_id,
           }
         : null,
     };
@@ -1287,6 +1485,13 @@ export const inboxToolDefinitions = [
     description: 'Update message status (mark as read, acknowledged, or completed).',
     schema: updateInboxMessageSchema,
     handler: handleUpdateInboxMessage,
+  },
+  {
+    name: 'mark_inbox_read',
+    description:
+      "Advance the agent's inbox read pointer. All messages created before the pointer are considered read. Defaults to now (marks everything read). Use 'before' to mark up to a specific timestamp.",
+    schema: markInboxReadSchema,
+    handler: handleMarkInboxRead,
   },
   {
     name: 'get_agent_status',

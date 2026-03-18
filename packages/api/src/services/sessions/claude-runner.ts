@@ -144,9 +144,12 @@ export class ClaudeRunner implements IRunner {
       args.push('--model', config.model);
     }
 
-    // MCP config
+    // MCP config — use --strict-mcp-config so the injected temp file
+    // (with auth headers) takes exclusive precedence over the workspace
+    // .mcp.json (which has no auth). Without this, Claude Code merges
+    // both configs and the workspace version wins for duplicate servers.
     if (config.mcpConfigPath) {
-      args.push('--mcp-config', config.mcpConfigPath);
+      args.push('--strict-mcp-config', '--mcp-config', config.mcpConfigPath);
     }
 
     // System prompt override (survives compaction)
@@ -192,6 +195,7 @@ export class ClaudeRunner implements IRunner {
             mcpConfigPath: config.mcpConfigPath,
             pcpSessionId: config.pcpSessionId,
             studioId: config.studioId,
+            accessToken: config.pcpAccessToken,
           })
         : null;
 
@@ -214,12 +218,18 @@ export class ClaudeRunner implements IRunner {
           // Ensure Claude Code uses correct paths
           HOME: process.env.HOME,
           PATH: buildSpawnPath(claudeBin),
+          // Agent identity — hooks resolve identity from $AGENT_ID.
+          // Without this, hooks in cross-agent studios (e.g., Myra triggered
+          // in Wren's worktree) fall back to .pcp/identity.json and get the
+          // wrong agent ID.
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
           // Session env vars: PCP_SESSION_ID for ${VAR} interpolation in
           // .mcp.json headers, PCP_RUNTIME_LINK_ID for hook hint matching.
           ...buildSessionEnv({
             pcpSessionId: config.pcpSessionId,
             runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
             studioId: config.studioId,
+            accessToken: config.pcpAccessToken,
           }),
         },
         stdio: ['pipe', 'pipe', 'pipe'],

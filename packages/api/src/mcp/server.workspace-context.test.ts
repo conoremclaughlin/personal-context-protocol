@@ -42,16 +42,23 @@ vi.mock('../routes/admin', () => {
   };
 });
 
-vi.mock('../routes/agent-trigger', () => {
-  const { Router } = require('express');
-  return {
-    default: Router(),
-    getAgentGateway: vi.fn(),
-  };
-});
+vi.mock('../channels/agent-gateway', () => ({
+  getAgentGateway: vi.fn(() => ({
+    registerHandler: vi.fn(),
+    setDefaultHandler: vi.fn(),
+    getRegisteredAgents: vi.fn(() => []),
+  })),
+}));
 
 vi.mock('../routes/chat', () => ({
   createChatRouter: vi.fn(() => {
+    const { Router } = require('express');
+    return Router();
+  }),
+}));
+
+vi.mock('../routes/hook-lifecycle', () => ({
+  createHookLifecycleRouter: vi.fn(() => {
     const { Router } = require('express');
     return Router();
   }),

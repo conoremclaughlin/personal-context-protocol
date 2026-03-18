@@ -57,6 +57,9 @@ describe('summarizeMissionRows', () => {
         latestPhase: 'implementing',
         latestBackendSessionId: 'backend-123',
         sessionsByLifecycle: { running: 1, idle: 1 },
+        generating: undefined,
+        sessionsToday: undefined,
+        studioCount: undefined,
       },
       {
         agent: 'wren',
@@ -68,6 +71,9 @@ describe('summarizeMissionRows', () => {
         latestPhase: undefined,
         latestBackendSessionId: undefined,
         sessionsByLifecycle: { running: 1 },
+        generating: undefined,
+        sessionsToday: undefined,
+        studioCount: undefined,
       },
       {
         agent: 'aster',
@@ -79,6 +85,9 @@ describe('summarizeMissionRows', () => {
         latestPhase: undefined,
         latestBackendSessionId: undefined,
         sessionsByLifecycle: undefined,
+        generating: undefined,
+        sessionsToday: undefined,
+        studioCount: undefined,
       },
     ]);
   });
@@ -941,11 +950,11 @@ describe('activityToFeedEvent tool_call/tool_result', () => {
       activity({
         type: 'tool_call',
         agentId: 'myra',
-        subtype: 'log_session',
-        content: 'log_session(email, sessionId, content, salience)',
+        subtype: 'remember',
+        content: 'remember(email, content, agentId, topicKey)',
       })
     );
-    expect(event.content).toBe('log_session(email, sessionId, content, salience)');
+    expect(event.content).toBe('remember(email, content, agentId, topicKey)');
     expect(event.type).toBe('activity');
   });
 });

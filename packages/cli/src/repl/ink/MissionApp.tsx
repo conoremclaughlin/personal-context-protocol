@@ -26,6 +26,12 @@ export interface AgentSummary {
   sessions: number;
   /** Breakdown of session counts by lifecycle state, e.g. { running: 2, idle: 1 } */
   sessionsByLifecycle?: Record<string, number>;
+  /** Count of sessions actively generating (running + fresh updated_at) */
+  generating?: number;
+  /** Count of sessions started in last 24h */
+  sessionsToday?: number;
+  /** Count of distinct studios/workspaces */
+  studioCount?: number;
   latestThread?: string;
 }
 
@@ -214,38 +220,31 @@ export const MissionApp = React.forwardRef<MissionAppHandle, MissionAppProps>(fu
       <Box paddingX={1} flexDirection="column">
         {agents.length > 0 ? (
           agents.map((a) => {
-            // Format session counts by lifecycle (e.g. "2 running, 1 idle")
-            const byLc = a.sessionsByLifecycle;
-            let sessionLabel: string;
-            if (byLc && Object.keys(byLc).length > 0) {
-              const parts: string[] = [];
-              // Show running first (most important), then others
-              const order = ['running', 'idle', 'completed', 'failed'];
-              const seen = new Set<string>();
-              for (const lc of order) {
-                if (byLc[lc]) {
-                  parts.push(`${byLc[lc]} ${lc}`);
-                  seen.add(lc);
-                }
-              }
-              for (const [lc, count] of Object.entries(byLc)) {
-                if (!seen.has(lc)) parts.push(`${count} ${lc}`);
-              }
-              sessionLabel = parts.join(', ');
+            // Build compact status: "⚡ N generating · 🔄 M compacting · N today · K studios"
+            const parts: string[] = [];
+            const gen = a.generating ?? 0;
+            const compacting = a.sessionsByLifecycle?.['compacting'] ?? 0;
+            if (gen > 0 && compacting > 0) {
+              parts.push(`⚡ ${gen} generating · 🔄 ${compacting} compacting`);
+            } else if (gen > 0) {
+              parts.push(`⚡ ${gen} generating`);
+            } else if (compacting > 0) {
+              parts.push(`🔄 ${compacting} compacting`);
             } else {
-              sessionLabel =
-                a.sessions > 0
-                  ? `${a.sessions} session${a.sessions !== 1 ? 's' : ''}`
-                  : 'no sessions';
+              parts.push('0 generating');
             }
+            const today = a.sessionsToday ?? 0;
+            parts.push(`${today} today`);
+            const studios = a.studioCount ?? 0;
+            if (studios > 0) {
+              parts.push(`${studios} studio${studios !== 1 ? 's' : ''}`);
+            }
+            if (a.unread > 0) {
+              parts.push(`${a.unread} unread`);
+            }
+            const sessionLabel = parts.join(' · ');
 
-            const line = [
-              a.agent.padEnd(8),
-              (a.phase || '-').padEnd(14),
-              sessionLabel,
-              a.unread > 0 ? `${a.unread} unread` : '',
-              a.latestThread || '',
-            ]
+            const line = [a.agent.padEnd(8), sessionLabel, a.latestThread || '']
               .filter(Boolean)
               .join('  ');
             return (

@@ -54,7 +54,7 @@ The unified entry point. Starts all components in order:
 4. Heartbeat service (scheduled reminders)
 5. Agent trigger handler
 
-Runs as a single pm2 process (`pcp`).
+Runs as a single Node.js process.
 
 ### MCP Server (`src/mcp/server.ts`)
 
@@ -63,7 +63,6 @@ Exposes PCP tools over HTTP/SSE at `http://localhost:3001/mcp`. Each client conn
 Additional HTTP endpoints:
 
 - `/health` — service health check
-- `/api/agent/trigger` — inter-agent trigger
 - OAuth2 endpoints (`/authorize`, `/token`, `/register`)
 
 ### Channel Gateway (`src/channels/gateway.ts`)
@@ -165,17 +164,17 @@ Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.
 
 60+ tools organized by domain:
 
-| Domain                   | Tools                                                            |
-| ------------------------ | ---------------------------------------------------------------- |
-| **Bootstrap & Sessions** | `bootstrap`, `start_session`, `log_session`, `end_session`       |
-| **Memory**               | `remember`, `recall`, `forget`, `update_memory`, history/restore |
-| **Context & Projects**   | `save_context`, `get_context`, `save_project`, `set_focus`       |
-| **Communication**        | `send_response`, `send_to_inbox`, `trigger_agent`                |
-| **Data**                 | `save_link`, `create_task`, `create_reminder`, calendar, email   |
-| **Identity**             | `save_identity`, `get_identity`, permissions, audit log          |
-| **Skills**               | `list_skills`, `publish_skill`, `fork_skill`                     |
-| **Artifacts**            | `create_artifact`, `update_artifact` (versioned shared docs)     |
-| **Workspaces**           | `create_workspace`, `list_workspaces`, `adopt_workspace`         |
+| Domain                   | Tools                                                               |
+| ------------------------ | ------------------------------------------------------------------- |
+| **Bootstrap & Sessions** | `bootstrap`, `update_session_phase`, `get_session`, `list_sessions` |
+| **Memory**               | `remember`, `recall`, `forget`, `update_memory`, history/restore    |
+| **Context & Projects**   | `save_context`, `get_context`, `save_project`, `set_focus`          |
+| **Communication**        | `send_response`, `send_to_inbox`, `trigger_agent`                   |
+| **Data**                 | `save_link`, `create_task`, `create_reminder`, calendar, email      |
+| **Identity**             | `save_identity`, `get_identity`, permissions, audit log             |
+| **Skills**               | `list_skills`, `publish_skill`, `fork_skill`                        |
+| **Artifacts**            | `create_artifact`, `update_artifact` (versioned shared docs)        |
+| **Workspaces**           | `create_workspace`, `list_workspaces`, `adopt_workspace`            |
 
 ## Data Layer
 
@@ -201,12 +200,15 @@ Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.
 
 ## Process Management
 
-Single pm2 configuration (`ecosystem.config.cjs`):
+`yarn dev` runs both services concurrently with hot reload via `scripts/dev-concurrently.mjs`. Port allocation is driven by `PCP_PORT_BASE` (default 3001):
 
-| Process | Description                                             |
-| ------- | ------------------------------------------------------- |
-| `pcp`   | Main server: MCP + channels + heartbeat + agent gateway |
-| `web`   | Next.js admin dashboard (port 3002)                     |
+| Service | Port              | Description                                             |
+| ------- | ----------------- | ------------------------------------------------------- |
+| API/MCP | `PCP_PORT_BASE`   | Main server: MCP + channels + heartbeat + agent gateway |
+| Web     | `PCP_PORT_BASE+1` | Next.js admin dashboard                                 |
+| Myra    | `PCP_PORT_BASE+2` | Persistent messaging bridge                             |
+
+For production, use `yarn prod:direct` or Docker Compose (`docker-compose.app.yml`).
 
 ## Key Design Decisions
 

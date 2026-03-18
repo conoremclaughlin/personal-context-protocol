@@ -22,8 +22,9 @@ import {
   type LoadedMiniApp,
 } from '../mini-apps';
 import adminRouter, { setWhatsAppListener } from '../routes/admin';
-import agentTriggerRouter, { getAgentGateway } from '../routes/agent-trigger';
+import { getAgentGateway } from '../channels/agent-gateway';
 import { createChatRouter } from '../routes/chat';
+import { createHookLifecycleRouter } from '../routes/hook-lifecycle';
 import {
   ChannelGateway,
   createChannelGateway,
@@ -723,8 +724,9 @@ export class MCPServer {
     app.use('/api/admin', adminRouter);
     logger.info('Admin API routes registered at /api/admin');
 
-    app.use('/api/agent', agentTriggerRouter);
-    logger.info('Agent trigger routes registered at /api/agent');
+    const hookLifecycleRouter = createHookLifecycleRouter(this.dataComposer);
+    app.use('/api/hooks', hookLifecycleRouter);
+    logger.info('Hook lifecycle routes registered at /api/hooks');
 
     if (this.config.getSessionService) {
       const chatRouter = createChatRouter(this.config.getSessionService);
@@ -891,10 +893,13 @@ export class MCPServer {
     }
 
     if (this.httpServer) {
-      this.httpServer.closeAllConnections();
+      // Graceful close first — stop accepting new connections and wait for
+      // in-flight requests to drain. Then force-kill any remaining sockets.
+      // The parent shutdown() has a 10s force-kill timer as a safety net.
       await new Promise<void>((resolve) => {
         this.httpServer!.close(() => resolve());
       });
+      this.httpServer.closeAllConnections();
       this.httpServer = null;
     }
 

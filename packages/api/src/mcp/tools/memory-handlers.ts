@@ -327,25 +327,6 @@ export const startSessionSchema = userIdentifierBaseSchema.extend({
     .describe('If true, create a new session even if an active one already exists for this scope.'),
 });
 
-export const logSessionSchema = userIdentifierBaseSchema.extend({
-  sessionId: z
-    .string()
-    .uuid()
-    .optional()
-    .describe('Session ID (uses active session if not provided)'),
-  agentId: z
-    .string()
-    .optional()
-    .describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
-  studioId: z
-    .string()
-    .uuid()
-    .optional()
-    .describe('Studio ID for session resolution when sessionId not provided'),
-  content: z.string().describe('Log entry content'),
-  salience: salienceSchema.optional().describe('Importance level (default: medium)'),
-});
-
 export const endSessionSchema = userIdentifierBaseSchema.extend({
   sessionId: z
     .string()
@@ -428,10 +409,10 @@ export const updateSessionPhaseSchema = userIdentifierBaseSchema.extend({
     .optional()
     .describe('Backend session ID for resumption (e.g., Claude Code session ID, Codex session ID)'),
   lifecycle: z
-    .enum(['running', 'idle', 'completed', 'failed'])
+    .enum(['running', 'idle', 'compacting', 'completed', 'failed'])
     .optional()
     .describe(
-      'Runtime lifecycle state (managed by hooks). running=generating, idle=waiting for input, completed=session done, failed=backend crashed.'
+      'Runtime lifecycle state (managed by hooks). running=generating, idle=waiting for input, compacting=context compaction in progress, completed=session done, failed=backend crashed.'
     ),
   status: z
     .enum(['active', 'paused', 'resumable', 'completed'])
@@ -840,71 +821,6 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
               /** @deprecated Use backendSessionId */
               claudeSessionId: session.backendSessionId || session.claudeSessionId || null,
               startedAt: session.startedAt.toISOString(),
-            },
-          },
-          null,
-          2
-        ),
-      },
-    ],
-  };
-}
-
-export async function handleLogSession(args: unknown, dataComposer: DataComposer) {
-  const params = logSessionSchema.parse(args);
-  const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
-  const studioId = resolveStudioId(params);
-  const agentId = getEffectiveAgentId(params.agentId);
-
-  // Get session ID (use provided or find active, scoped by agent+studio)
-  let sessionId = params.sessionId;
-  if (!sessionId) {
-    const activeSession = await dataComposer.repositories.memory.getActiveSession(
-      user.id,
-      agentId,
-      studioId
-    );
-    if (!activeSession) {
-      return {
-        content: [
-          {
-            type: 'text' as const,
-            text: JSON.stringify(
-              { success: false, error: 'No active session found. Start a session first.' },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-    sessionId = activeSession.id;
-  }
-
-  const log = await dataComposer.repositories.memory.addSessionLog({
-    sessionId,
-    content: params.content,
-    salience: params.salience as Salience,
-  });
-
-  logger.info(`Session log added`, { sessionId, logId: log.id });
-
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify(
-          {
-            success: true,
-            message: 'Session log added',
-            deprecation:
-              'log_session is deprecated. Use update_session_phase for work status, and remember for important decisions/events. Session logs will be removed in a future version.',
-            user: { id: user.id, resolvedBy },
-            log: {
-              id: log.id,
-              sessionId: log.sessionId,
-              salience: log.salience,
-              createdAt: log.createdAt.toISOString(),
             },
           },
           null,

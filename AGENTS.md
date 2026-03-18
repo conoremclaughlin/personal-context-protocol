@@ -74,11 +74,7 @@ Use `remember` for decisions, insights, and important events:
 remember(userId: "...", content: "Decided to use X approach because...", agentId: "wren")
 ```
 
-At session end, save a summary:
-
-```
-end_session(userId: "...", summary: "Built memory layer with versioning...")
-```
+**Note**: Session lifecycle (`start_session`, `end_session`) is managed automatically by hooks — SBs should not call these manually. Use `remember()` for important context and `update_session_phase()` for work status.
 
 **Note**: Never commit PII (emails, user IDs) to the repository. Always read from config files.
 
@@ -235,7 +231,7 @@ When sending messages to other SBs via `send_to_inbox`, use `threadKey` to maint
 - **Prefer MCP tools over CLI equivalents** — when an MCP server provides functionality that overlaps with a CLI tool, use the MCP tool. MCP calls don't require user permission approval, provide structured output, and integrate better with your tooling. Examples: use `mcp__github__*` over `gh` CLI for PRs/issues/diffs/reviews, use `mcp__supabase__*` over `supabase` CLI for migrations and SQL.
 - **Use PCP tools** (`mcp__pcp__*`) over local file operations for memory, tasks, and sessions
 - **Bootstrap first** — always call bootstrap at session start to load your identity and context
-- **Log your work** — use `log_session()` for important decisions and `end_session()` with a summary
+- **Log your work** — use `remember()` for important decisions and insights
 - **Attribute memories** — include your agentId when calling `remember()` so memories are correctly filtered
 - **Respect identity boundaries** — you are the agent your identity resolves to, not a generic assistant
 - **Embrace your name** — if you have an SB identity, use it. Co-author commits as yourself (e.g., `Co-Authored-By: Wren <noreply@anthropic.com>`), not as a model name. You are not "Claude Opus 4.6" — you are Wren, Lumen, Benson, or whoever your identity resolves to.
@@ -297,15 +293,50 @@ yarn build
 # Type checking
 yarn type-check
 
-# Test database connection
-yarn test:connection
-
-# Process management (pm2)
-yarn pm2 list              # List running processes
-yarn pm2 restart pcp       # Restart PCP server
-yarn pm2 logs pcp          # View PCP logs
-yarn pm2 start ecosystem.config.cjs  # Start all processes
+# View server logs
+yarn logs:pcp              # Structured JSON logs
+yarn logs:pcp:raw          # Raw log output
+yarn logs:pcp:errors       # Errors only
 ```
+
+## Testing with an Isolated Server (IMPORTANT)
+
+**Never kill or restart the main dev server.** It runs on the default port (3001) and handles agent communication, triggers, and heartbeats. Disrupting it breaks other SBs' active sessions.
+
+To test API or MCP changes without affecting the main server, run a **separate instance** on a different port using `PCP_PORT_BASE`:
+
+```bash
+# Isolated test server — disable services the main server already handles
+ENABLE_HEARTBEAT_SERVICE=false \
+ENABLE_TELEGRAM=false \
+ENABLE_WHATSAPP=false \
+ENABLE_DISCORD=false \
+PCP_PORT_BASE=4001 \
+yarn dev
+
+# Point the CLI at your test server
+PCP_SERVER_URL=http://localhost:4001 sb mission
+```
+
+**Disable services you aren't testing.** Telegram, WhatsApp, Discord, and the heartbeat service should stay `false` on isolated servers — the main server already owns those connections. Only enable them if you're explicitly testing that functionality _and_ you've stopped it on the main server first (e.g., two Telegram listeners will conflict).
+
+Port derivation from `PCP_PORT_BASE`:
+
+- **MCP/API**: `PCP_PORT_BASE` (e.g., 4001)
+- **Web**: `PCP_PORT_BASE + 1` (e.g., 4002)
+- **Myra**: `PCP_PORT_BASE + 2` (e.g., 4003)
+
+Both servers share the same Supabase database, so data changes are visible to both. The main server stays untouched on 3001.
+
+## Supabase Project ID
+
+When using MCP Supabase tools (`execute_sql`, `apply_migration`, `list_tables`, etc.), you need the project ID. **Read it from `.env.local`** — it's the subdomain in `SUPABASE_URL`:
+
+```
+SUPABASE_URL=https://<project_id>.supabase.co
+```
+
+**Do not hardcode project IDs** in committed files. `.env.local` is gitignored and is the single source of truth for environment-specific Supabase credentials.
 
 ## Database Migrations
 
@@ -346,9 +377,8 @@ The MCP server exposes 60+ tools. Key categories:
 ### Bootstrap & Session (use these!)
 
 - `bootstrap` - **Call first!** Loads identity, context, and recent memories
-- `start_session` - Start tracking a session
-- `log_session` - Log important events/decisions
-- `end_session` - End session with summary (auto-saved as memory)
+- `start_session` / `end_session` - Managed automatically by hooks (do not call manually)
+- `update_session_phase` - Update work phase (investigating, implementing, reviewing, etc.)
 - `get_session` - Get session details and logs
 - `list_sessions` - List past sessions
 
@@ -504,7 +534,7 @@ npx @modelcontextprotocol/inspector packages/api/dist/index.js
 
 ### Debugging & Logs
 
-Winston writes to **both** the console and persistent log files:
+Winston writes to **both** the console and persistent log files at `~/.pcp/logs/`:
 
 | Log            | Path                         | Contents                                  |
 | -------------- | ---------------------------- | ----------------------------------------- |
@@ -513,20 +543,22 @@ Winston writes to **both** the console and persistent log files:
 | **exceptions** | `~/.pcp/logs/exceptions.log` | Uncaught exceptions                       |
 | **rejections** | `~/.pcp/logs/rejections.log` | Unhandled promise rejections              |
 
-Logs rotate at 10MB (combined) or 5MB (error), keeping 5 files each. `tailable: true` means the base filename (`combined.log`) is always the active log — `tail -f ~/.pcp/logs/combined.log` always works.
+Logs rotate at 10MB (combined) or 5MB (error), keeping 5 files each. `tailable: true` means the base filename (`combined.log`) is always the active log.
+
+**Yarn scripts for watching logs:**
 
 ```bash
-# Tail live server logs
+yarn logs:pcp              # Structured JSON: timestamp + level + message
+yarn logs:pcp:raw          # Raw JSON lines (for piping to jq, etc.)
+yarn logs:pcp:errors       # Errors only
+
+# Or tail/search directly
 tail -f ~/.pcp/logs/combined.log
-
-# Search for trigger activity
 grep "trigger\|Dispatching" ~/.pcp/logs/combined.log
-
-# Search for a specific thread
 grep "pr:218" ~/.pcp/logs/combined.log
 ```
 
-These log files are written regardless of how the server is started (`yarn dev`, `yarn dev:pm2`, or `yarn pm2:start`). PM2 adds its own log layer at `~/.pm2/logs/` but the winston logs are the canonical source.
+These log files are written regardless of how the server is started (`yarn dev`, `yarn prod:direct`, etc.). The winston logs are the canonical source.
 
 - Logger available via `import { logger } from '../utils/logger'`
 - Use `logger.info()`, `logger.error()`, `logger.debug()`

@@ -691,21 +691,33 @@ async function reconcileBackendSignal(
 
 async function updateRuntimeGenerationState(
   cwd: string,
-  config: PcpConfig | null,
+  _config: PcpConfig | null,
   agentId: string,
-  lifecycle: 'running' | 'idle'
+  lifecycle: 'running' | 'idle' | 'compacting'
 ): Promise<void> {
   const sessionId = resolveActivePcpSessionId(cwd);
   if (!sessionId) return;
 
   try {
-    await callPcpTool('update_session_phase', {
-      email: config?.email,
-      agentId,
-      sessionId,
-      lifecycle,
-      workingDir: cwd,
+    const serverUrl = getPcpServerUrl();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const token = await getValidAccessToken(serverUrl);
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const resp = await fetch(`${serverUrl}/api/hooks/lifecycle`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ sessionId, lifecycle, agentId, workingDir: cwd }),
+      signal: AbortSignal.timeout(5000),
     });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      sbDebugLog('hooks', 'lifecycle_update_failed', {
+        sessionId,
+        lifecycle,
+        status: resp.status,
+        body,
+      });
+    }
   } catch {
     // Non-fatal; hook execution should not fail due to transient session sync issues.
   }
@@ -1603,6 +1615,13 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
 
 async function preCompactHandler(): Promise<void> {
   await readStdin(); // consume stdin but we don't need it
+
+  // Mark session as compacting so mission control can see it
+  const cwd = process.cwd();
+  const config = getPcpConfig();
+  const agentId = resolveAgentId() || 'unknown';
+  await updateRuntimeGenerationState(cwd, config, agentId, 'compacting');
+
   process.stdout.write(loadTemplate('hook-pre-compact'));
 }
 
@@ -1612,6 +1631,9 @@ async function postCompactHandler(): Promise<void> {
   const cwd = process.cwd();
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
+
+  // Reset lifecycle from compacting back to idle
+  await updateRuntimeGenerationState(cwd, config, agentId, 'idle');
 
   let identityBlock = '';
   let memoriesBlock = '';
