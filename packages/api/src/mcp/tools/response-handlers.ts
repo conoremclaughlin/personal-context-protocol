@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { DataComposer } from '../../data/composer';
 import type { ChannelType, AgentResponse, ResponseFormat, OutboundMedia } from '../../agent/types';
 import { logger } from '../../utils/logger';
+import { getPinnedAgentId } from '../../utils/request-context';
 
 // Response result returned by the callback (optional — void is still accepted)
 export interface ResponseResult {
@@ -241,6 +242,10 @@ interface PendingMessage {
   content: string;
   timestamp: Date;
   read: boolean;
+  /** Target agent ID — scopes delivery to the right CLI session */
+  agentId?: string;
+  /** Target session ID — for precise routing */
+  sessionId?: string;
 }
 
 const pendingMessages: PendingMessage[] = [];
@@ -275,6 +280,13 @@ export async function handleGetPendingMessages(
 ): Promise<McpResponse> {
   try {
     let filtered = pendingMessages;
+
+    // Scope by calling agent — prevents cross-agent message leaks.
+    // Uses the pinned agent identity from the request context.
+    const callerAgentId = getPinnedAgentId();
+    if (callerAgentId) {
+      filtered = filtered.filter((m) => !m.agentId || m.agentId === callerAgentId);
+    }
 
     // Filter by channel
     if (args.channel && args.channel !== 'all') {

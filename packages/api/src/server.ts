@@ -806,6 +806,8 @@ When you complete a task_request, mark it as completed using update_inbox_messag
         sender: { id: payload.fromAgentId, name: payload.fromAgentId },
         timestamp: new Date(),
         read: false,
+        agentId: targetAgentId,
+        sessionId: cliSession.id,
       });
       logger.info('[Trigger] CLI-attached session detected, routed to pending queue', {
         targetAgentId,
