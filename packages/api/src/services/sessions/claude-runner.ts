@@ -144,9 +144,12 @@ export class ClaudeRunner implements IRunner {
       args.push('--model', config.model);
     }
 
-    // MCP config
+    // MCP config — use --strict-mcp-config so the injected temp file
+    // (with auth headers) takes exclusive precedence over the workspace
+    // .mcp.json (which has no auth). Without this, Claude Code merges
+    // both configs and the workspace version wins for duplicate servers.
     if (config.mcpConfigPath) {
-      args.push('--mcp-config', config.mcpConfigPath);
+      args.push('--strict-mcp-config', '--mcp-config', config.mcpConfigPath);
     }
 
     // System prompt override (survives compaction)
