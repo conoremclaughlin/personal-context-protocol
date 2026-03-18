@@ -63,6 +63,7 @@ interface AgentStudio {
   name: string;
   branch: string | null;
   status: string;
+  routePatterns: string[];
 }
 
 interface AgentRoutingResponse {
@@ -569,6 +570,80 @@ export default function AgentRoutingPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Studio route patterns */}
+      {studios.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Studio route patterns</CardTitle>
+            <CardDescription>
+              ThreadKey patterns determine which studio handles triggered messages. More specific
+              patterns win (exact &gt; prefix wildcard &gt; catch-all).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {studios.map((studio) => (
+                <div
+                  key={studio.id}
+                  className="flex items-start justify-between gap-4 rounded-lg border p-3"
+                >
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <GitBranch className="h-3.5 w-3.5 text-gray-400 shrink-0" />
+                      <span className="font-medium text-sm text-gray-900">{studio.name}</span>
+                      {studio.branch && (
+                        <span className="text-xs text-gray-400 truncate">{studio.branch}</span>
+                      )}
+                    </div>
+                    {studio.routePatterns.length > 0 ? (
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {studio.routePatterns.map((pattern) => (
+                          <Badge
+                            key={pattern}
+                            variant="outline"
+                            className="text-xs font-mono bg-blue-50 text-blue-700 border-blue-200"
+                          >
+                            {pattern}
+                          </Badge>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-xs text-gray-400">
+                        No patterns — uses fallback routing
+                      </p>
+                    )}
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={
+                      studio.status === 'active'
+                        ? 'bg-green-50 text-green-700 border-green-200'
+                        : 'bg-gray-50 text-gray-500 border-gray-200'
+                    }
+                  >
+                    {studio.status}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex items-start gap-2 rounded-lg bg-blue-50/60 border border-blue-100 p-3">
+              <Info className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+              <p className="text-xs text-blue-700">
+                Patterns are matched against the{' '}
+                <code className="bg-blue-100 px-1 rounded">threadKey</code> of incoming triggers.
+                Use <code className="bg-blue-100 px-1 rounded">pr:*</code> for all PR reviews,{' '}
+                <code className="bg-blue-100 px-1 rounded">spec:*</code> for specs, or exact keys
+                like <code className="bg-blue-100 px-1 rounded">pr:231</code>. Manage via{' '}
+                <code className="bg-blue-100 px-1 rounded">
+                  update_studio(routePatterns: [...])
+                </code>
+                .
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Scheduled reminders — with studio overrides */}
       <Card className="mt-6">
