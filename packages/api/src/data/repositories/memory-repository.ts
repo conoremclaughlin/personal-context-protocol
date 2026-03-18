@@ -1043,6 +1043,7 @@ export class MemoryRepository {
       backendSessionId?: string;
       context?: string;
       workingDir?: string;
+      cliAttached?: boolean;
     }
   ): Promise<Session | null> {
     const dbUpdates: Record<string, unknown> = {};
@@ -1067,6 +1068,9 @@ export class MemoryRepository {
     }
     if (updates.workingDir !== undefined) {
       dbUpdates.working_dir = updates.workingDir;
+    }
+    if (updates.cliAttached !== undefined) {
+      dbUpdates.cli_attached = updates.cliAttached;
     }
 
     const { data, error } = await this.supabase

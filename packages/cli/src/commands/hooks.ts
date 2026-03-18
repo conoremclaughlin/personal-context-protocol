@@ -1948,6 +1948,52 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
   // Mark session as actively generating at prompt start.
   await updateRuntimeGenerationState(cwd, config, agentId, 'running');
 
+  // Mark session as CLI-attached (human present at REPL).
+  // This tells the trigger handler to route messages to the pending queue
+  // instead of spawning a new process.
+  if (reconciled.pcpSessionId) {
+    try {
+      await callPcpTool('update_session_phase', {
+        email: config?.email,
+        agentId,
+        sessionId: reconciled.pcpSessionId,
+        cliAttached: true,
+      });
+    } catch {
+      // Silent — don't fail the prompt for this
+    }
+  }
+
+  // Always drain pending message queue first — these are trigger messages
+  // routed here because cli_attached=true. Must run before the inbox stale
+  // check to ensure delivery on every prompt, not just stale ones.
+  try {
+    const pending = await callPcpTool('get_pending_messages', {
+      channel: 'agent',
+    });
+    const pendingMessages = pending.messages as Array<Record<string, unknown>> | undefined;
+    if (pendingMessages?.length) {
+      const pendingTag = buildInboxTag(
+        pendingMessages.map((m) => ({
+          ...m,
+          senderAgentId:
+            typeof m.sender === 'object' ? (m.sender as Record<string, unknown>).id : m.sender,
+          messageType: 'trigger',
+        }))
+      );
+      if (pendingTag) {
+        process.stdout.write(pendingTag);
+      }
+      // Mark as read so they don't replay on next prompt
+      const messageIds = pendingMessages.map((m) => m.id as string).filter(Boolean);
+      if (messageIds.length) {
+        await callPcpTool('mark_messages_read', { messageIds }).catch(() => {});
+      }
+    }
+  } catch {
+    // Silent — pending queue may not have messages
+  }
+
   // Check if inbox check is stale (> 5 minutes)
   const lastCheck = readRuntimeFile(cwd, 'last-inbox-check');
   const staleThresholdMs = 5 * 60 * 1000;
@@ -1956,7 +2002,6 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
     const lastCheckTime = new Date(lastCheck).getTime();
     const elapsed = Date.now() - lastCheckTime;
     if (elapsed < staleThresholdMs) {
-      // Fast path: inbox was checked recently, output nothing
       return;
     }
   }

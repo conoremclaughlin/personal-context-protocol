@@ -422,6 +422,10 @@ export const updateSessionPhaseSchema = userIdentifierBaseSchema.extend({
     ),
   context: z.string().optional().describe('Brief context of current work state'),
   workingDir: z.string().optional().describe('Working directory'),
+  cliAttached: z
+    .boolean()
+    .optional()
+    .describe('Whether a human is attached to the CLI session (interactive REPL)'),
 });
 
 // ==============================================// MEMORY HISTORY SCHEMAS
@@ -793,6 +797,16 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     metadata: params.metadata,
   });
 
+  // Persist CLI-attached flag from request context to session record.
+  // This tells the trigger handler to route messages to the pending queue
+  // instead of spawning a new process.
+  const reqCtx = getRequestContext();
+  if (reqCtx?.cliAttached) {
+    await dataComposer.repositories.memory.updateSession(session.id, {
+      cliAttached: true,
+    });
+  }
+
   logger.info(`Session started for user ${user.id}`, {
     sessionId: session.id,
     agentId: session.agentId,
@@ -869,6 +883,15 @@ export async function handleEndSession(args: unknown, dataComposer: DataComposer
         },
       ],
     };
+  }
+
+  // Clear cli_attached flag so triggers don't get stuck in the pending queue
+  // after the CLI detaches. endSession already sets ended_at which prevents
+  // matching, but this is belt-and-suspenders for edge cases.
+  if (session) {
+    await dataComposer.repositories.memory
+      .updateSession(session.id, { cliAttached: false })
+      .catch(() => {});
   }
 
   logger.info(`Session ended`, { sessionId: session.id, hasSummary: !!params.summary });
@@ -1156,7 +1179,8 @@ export async function handleUpdateSessionPhase(args: unknown, dataComposer: Data
     !params.backendSessionId &&
     !params.status &&
     !params.context &&
-    !params.workingDir
+    !params.workingDir &&
+    params.cliAttached === undefined
   ) {
     return {
       content: [
@@ -1219,6 +1243,7 @@ export async function handleUpdateSessionPhase(args: unknown, dataComposer: Data
     backendSessionId?: string;
     context?: string;
     workingDir?: string;
+    cliAttached?: boolean;
   } = {};
 
   // Map runtime: prefix phases to lifecycle (backward compat for old callers)
@@ -1252,6 +1277,9 @@ export async function handleUpdateSessionPhase(args: unknown, dataComposer: Data
   }
   if (params.backendSessionId !== undefined) {
     updates.backendSessionId = params.backendSessionId;
+  }
+  if (params.cliAttached !== undefined) {
+    updates.cliAttached = params.cliAttached;
   }
   if (params.context !== undefined) {
     updates.context = params.context;

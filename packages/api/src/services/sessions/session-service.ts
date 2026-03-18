@@ -102,6 +102,31 @@ interface PendingMessage {
   reject: (error: Error) => void;
 }
 
+// ── Route pattern matching (spec:trigger-studio-routing) ──
+
+/**
+ * Match a threadKey against a studio route pattern.
+ * Supports exact match and prefix-wildcard (e.g., 'pr:*' matches 'pr:221').
+ */
+function matchRoutePattern(pattern: string, threadKey: string): boolean {
+  if (pattern === '*') return true;
+  if (!pattern.includes('*')) return pattern === threadKey;
+  // Prefix wildcard: 'pr:*' → check if threadKey starts with 'pr:'
+  const prefix = pattern.slice(0, pattern.indexOf('*'));
+  return threadKey.startsWith(prefix);
+}
+
+/**
+ * Score pattern specificity for tie-breaking.
+ * Higher = more specific = preferred.
+ */
+function routePatternSpecificity(pattern: string): number {
+  if (!pattern.includes('*')) return 3; // exact match
+  const literalPrefix = pattern.split('*')[0];
+  if (literalPrefix.length > 0) return 2; // prefix wildcard
+  return 1; // bare wildcard '*'
+}
+
 export class SessionService implements ISessionService {
   private repository: ISessionRepository;
   private contextBuilder: IContextBuilder;
@@ -820,7 +845,56 @@ export class SessionService implements ISessionService {
       }
     }
 
-    // 3) Agent's own studio (authoritative — from studios table, not session history)
+    // 3) Studio route pattern match — studios declare which threadKey patterns
+    //    they handle (e.g., 'pr:*', 'spec:*'). See spec:trigger-studio-routing.
+    if (options.threadKey) {
+      // route_patterns is not yet in generated Supabase types — cast result
+      const { data: patternStudios } = (await this.supabase
+        .from('studios')
+        .select('id, route_patterns')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .in('status', ['active', 'idle'])
+        .not('route_patterns', 'eq', '{}')) as {
+        data: Array<{ id: string; route_patterns: string[] }> | null;
+      };
+
+      if (patternStudios?.length) {
+        const matches = patternStudios
+          .map((s) => ({
+            id: s.id,
+            specificity: Math.max(
+              ...s.route_patterns
+                .filter((p: string) => matchRoutePattern(p, options.threadKey!))
+                .map(routePatternSpecificity),
+              0
+            ),
+          }))
+          .filter((m) => m.specificity > 0)
+          .sort((a, b) => b.specificity - a.specificity);
+
+        if (
+          matches.length === 1 ||
+          (matches.length > 1 && matches[0].specificity > matches[1].specificity)
+        ) {
+          logger.debug('[StudioResolve] Matched studio via route pattern', {
+            threadKey: options.threadKey,
+            studioId: matches[0].id,
+            specificity: matches[0].specificity,
+          });
+          return matches[0].id;
+        }
+        if (matches.length > 1) {
+          logger.warn('[StudioResolve] Ambiguous route pattern match, falling through', {
+            threadKey: options.threadKey,
+            agentId,
+            matchCount: matches.length,
+          });
+        }
+      }
+    }
+
+    // 4) Agent's own studio (authoritative — from studios table, not session history)
     const { data: agentStudio } = await this.supabase
       .from('studios')
       .select('id, updated_at')
@@ -839,7 +913,7 @@ export class SessionService implements ISessionService {
     // It creates feedback loops: if an agent is misrouted once, all future sessions
     // inherit the bad studio. The studios table is the authoritative source.
 
-    // 4) Shared per-user main studio fallback
+    // 5) Shared per-user main studio fallback
     const mainStudioId = await this.resolveMainStudioId(userId);
     if (mainStudioId) return mainStudioId;
 

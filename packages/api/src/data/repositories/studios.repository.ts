@@ -63,6 +63,7 @@ export interface UpdateStudioInput {
   metadata?: Json;
   archivedAt?: string;
   cleanedAt?: string;
+  routePatterns?: string[];
 }
 
 /**
@@ -249,6 +250,7 @@ export class StudiosRepository {
     if (input.metadata !== undefined) updateData.metadata = input.metadata;
     if (input.archivedAt !== undefined) updateData.archived_at = input.archivedAt;
     if (input.cleanedAt !== undefined) updateData.cleaned_at = input.cleanedAt;
+    if (input.routePatterns !== undefined) updateData.route_patterns = input.routePatterns;
 
     const { data, error } = await this.client
       .from('studios')

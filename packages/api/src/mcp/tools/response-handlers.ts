@@ -9,6 +9,7 @@ import { z } from 'zod';
 import type { DataComposer } from '../../data/composer';
 import type { ChannelType, AgentResponse, ResponseFormat, OutboundMedia } from '../../agent/types';
 import { logger } from '../../utils/logger';
+import { getPinnedAgentId, getRequestContext } from '../../utils/request-context';
 
 // Response result returned by the callback (optional — void is still accepted)
 export interface ResponseResult {
@@ -224,7 +225,7 @@ export async function handleSendResponse(
 
 export const getPendingMessagesSchema = z.object({
   channel: z
-    .enum(['telegram', 'terminal', 'discord', 'whatsapp', 'slack', 'http', 'api', 'all'])
+    .enum(['telegram', 'terminal', 'discord', 'whatsapp', 'slack', 'http', 'api', 'agent', 'all'])
     .optional()
     .default('all')
     .describe('Filter by channel (default: all)'),
@@ -241,6 +242,10 @@ interface PendingMessage {
   content: string;
   timestamp: Date;
   read: boolean;
+  /** Target agent ID — scopes delivery to the right CLI session */
+  agentId?: string;
+  /** Target session ID — for precise routing */
+  sessionId?: string;
 }
 
 const pendingMessages: PendingMessage[] = [];
@@ -275,6 +280,19 @@ export async function handleGetPendingMessages(
 ): Promise<McpResponse> {
   try {
     let filtered = pendingMessages;
+
+    // Scope by calling agent + session — prevents cross-agent and
+    // cross-session message leaks. Uses request context for identity.
+    const callerAgentId = getPinnedAgentId();
+    const reqCtx = getRequestContext();
+    const callerSessionId = reqCtx?.sessionId;
+
+    if (callerAgentId) {
+      filtered = filtered.filter((m) => !m.agentId || m.agentId === callerAgentId);
+    }
+    if (callerSessionId) {
+      filtered = filtered.filter((m) => !m.sessionId || m.sessionId === callerSessionId);
+    }
 
     // Filter by channel
     if (args.channel && args.channel !== 'all') {
