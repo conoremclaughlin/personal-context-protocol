@@ -215,6 +215,11 @@ export class ClaudeRunner implements IRunner {
           // Ensure Claude Code uses correct paths
           HOME: process.env.HOME,
           PATH: buildSpawnPath(claudeBin),
+          // Agent identity — hooks resolve identity from $AGENT_ID.
+          // Without this, hooks in cross-agent studios (e.g., Myra triggered
+          // in Wren's worktree) fall back to .pcp/identity.json and get the
+          // wrong agent ID.
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
           // Session env vars: PCP_SESSION_ID for ${VAR} interpolation in
           // .mcp.json headers, PCP_RUNTIME_LINK_ID for hook hint matching.
           ...buildSessionEnv({
