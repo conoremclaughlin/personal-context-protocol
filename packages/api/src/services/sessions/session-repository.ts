@@ -403,6 +403,7 @@ export class SessionRepository implements ISessionRepository {
       lastCompactionAt: new Date(),
       compactionCount: current.compactionCount + 1,
       contextTokens: 0, // Reset after compaction
+      lifecycle: 'idle', // Restore from 'compacting' state
     };
 
     // Only rotate the backend session ID if a new one was provided.

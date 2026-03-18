@@ -11,7 +11,7 @@
  */
 
 import { spawn, type ChildProcess } from 'child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, copyFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import type {
@@ -26,7 +26,7 @@ import type {
 import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
-import { buildSessionEnv } from '@personal-context/shared';
+import { buildSessionEnv, injectSessionHeaders } from '@personal-context/shared';
 
 /** Maximum time (ms) to wait for a Gemini CLI subprocess before killing it.
  *  Override with GEMINI_PROCESS_TIMEOUT_MS env var. */
@@ -66,6 +66,29 @@ export class GeminiRunner implements IRunner {
       config.appendSystemPrompt || config.systemPrompt || ''
     );
 
+    // Inject PCP session + auth headers into .mcp.json for Gemini.
+    // Gemini CLI reads .mcp.json from cwd (no --mcp-config flag), so we
+    // temporarily replace it with the patched version during the spawn.
+    const mcpJsonPath = join(config.workingDirectory, '.mcp.json');
+    const mcpBackupPath = mcpJsonPath + '.bak';
+    let mcpInjected = false;
+    if (config.pcpSessionId && existsSync(mcpJsonPath)) {
+      const injection = injectSessionHeaders({
+        mcpConfigPath: mcpJsonPath,
+        pcpSessionId: config.pcpSessionId,
+        studioId: config.studioId,
+        accessToken: config.pcpAccessToken,
+      });
+      if (injection.modified) {
+        // Back up original, write patched version in-place
+        copyFileSync(mcpJsonPath, mcpBackupPath);
+        const patched = readFileSync(injection.mcpConfigPath, 'utf-8');
+        writeFileSync(mcpJsonPath, patched);
+        injection.cleanup(); // remove temp file
+        mcpInjected = true;
+      }
+    }
+
     try {
       const args = this.buildArgs(fullMessage, config, policyPath, backendSessionId);
       logger.info('Spawning Gemini CLI', {
@@ -74,6 +97,7 @@ export class GeminiRunner implements IRunner {
         workingDirectory: config.workingDirectory,
         messageLength: fullMessage.length,
         hasPcpAccessToken: !!config.pcpAccessToken,
+        mcpInjected,
       });
 
       const result = await this.spawnProcess(args, config);
@@ -101,6 +125,17 @@ export class GeminiRunner implements IRunner {
         error: error instanceof Error ? error.message : 'Unknown error',
       };
     } finally {
+      // Restore original .mcp.json if we patched it
+      if (mcpInjected && existsSync(mcpBackupPath)) {
+        try {
+          copyFileSync(mcpBackupPath, mcpJsonPath);
+          rmSync(mcpBackupPath, { force: true });
+        } catch (err) {
+          logger.warn('Failed to restore .mcp.json after Gemini spawn', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       cleanup();
     }
   }
@@ -148,6 +183,7 @@ export class GeminiRunner implements IRunner {
           ...cleanEnv,
           HOME: process.env.HOME,
           PATH: buildSpawnPath(geminiBin),
+          ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
           ...buildSessionEnv({
             pcpSessionId: config.pcpSessionId,
             studioId: config.studioId,
