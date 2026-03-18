@@ -991,6 +991,99 @@ describe('MemoryRepository', () => {
       expect(result.summary).toBeUndefined();
       expect(result.topicKey).toBeUndefined();
     });
+
+    it('persists chunk embeddings and records chunked metadata when embeddings are enabled', async () => {
+      const mockRow = {
+        id: 'mem-hm-5',
+        user_id: 'user-456',
+        content: 'A'.repeat(1800),
+        summary: 'Chunked summary',
+        topic_key: 'project:pcp/memory',
+        source: 'observation',
+        salience: 'high',
+        topics: ['project:pcp/memory'],
+        agent_id: 'lumen',
+        embedding: null,
+        metadata: {},
+        version: 1,
+        created_at: '2026-02-18T12:00:00Z',
+        expires_at: null,
+      };
+
+      mockSupabase._setReturnData(mockRow);
+      const embedDocument = vi
+        .fn()
+        .mockResolvedValue({
+          vector: new Array(1024).fill(0.1),
+          provider: 'ollama',
+          model: 'mxbai-embed-large',
+          dimensions: 1024,
+        });
+      (repo as any).embeddingRouter = {
+        isEnabled: vi.fn().mockReturnValue(true),
+        embedDocument,
+        getRuntimeConfig: vi.fn().mockReturnValue({
+          enabled: true,
+          provider: 'ollama',
+          model: 'mxbai-embed-large',
+          dimensions: 1024,
+          queryThreshold: 0.2,
+          matchCountMultiplier: 5,
+          ollamaBaseUrl: 'http://localhost:11434',
+          openaiBaseUrl: 'https://api.openai.com',
+          hasOpenAIKey: false,
+        }),
+      };
+
+      const result = await repo.remember({
+        userId: 'user-456',
+        agentId: 'lumen',
+        content: 'A'.repeat(1800),
+        summary: 'Chunked summary',
+        topicKey: 'project:pcp/memory',
+        salience: 'high',
+      });
+
+      const chunkRows = mockSupabase._queryBuilder.upsert.mock.calls[0][0] as Array<
+        Record<string, unknown>
+      >;
+      expect(embedDocument).toHaveBeenCalledTimes(chunkRows.length);
+      expect(chunkRows.length).toBeGreaterThan(1);
+      expect(mockSupabase.from).toHaveBeenCalledWith('memory_embedding_chunks');
+      expect(mockSupabase._queryBuilder.upsert).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            memory_id: 'mem-hm-5',
+            chunk_type: 'summary',
+            chunk_index: 0,
+            chunk_text: 'Chunked summary',
+          }),
+          expect.objectContaining({
+            memory_id: 'mem-hm-5',
+            chunk_type: 'content',
+            chunk_index: 1,
+          }),
+        ]),
+        expect.objectContaining({ onConflict: 'memory_id,chunk_index' })
+      );
+      expect(mockSupabase._queryBuilder.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          embedding_chunks_version: 1,
+          embedding_chunk_count: chunkRows.length,
+          metadata: expect.objectContaining({
+            embedding_chunks: expect.objectContaining({
+              chunkCount: chunkRows.length,
+              version: 1,
+            }),
+            embedding: expect.objectContaining({
+              provider: 'ollama',
+              model: 'mxbai-embed-large',
+            }),
+          }),
+        })
+      );
+      expect(result.embedding).toEqual(new Array(1024).fill(0.1));
+    });
   });
 
   describe('rowToMemory mapping for new fields', () => {
@@ -1239,7 +1332,7 @@ describe('MemoryRepository', () => {
   });
 
   describe('semantic recall integration', () => {
-    it('serializes query embeddings for match_memories RPC', async () => {
+    it('serializes query embeddings for chunk matcher RPC', async () => {
       const rpc = vi.fn().mockResolvedValue({
         data: [
           {
@@ -1258,6 +1351,8 @@ describe('MemoryRepository', () => {
             created_at: '2026-03-16T00:00:00Z',
             expires_at: null,
             identity_id: null,
+            matched_chunk_index: 0,
+            matched_chunk_text: 'Semantic memory',
             similarity: 0.9,
           },
         ],
@@ -1287,13 +1382,85 @@ describe('MemoryRepository', () => {
       const results = await repo.recall('user-456', 'semantic query', { recallMode: 'semantic' });
 
       expect(rpc).toHaveBeenCalledWith(
-        'match_memories',
+        'match_memory_embedding_chunks',
         expect.objectContaining({
           query_embedding: '[0.1,0.2,0.3]',
         })
       );
       expect(results).toHaveLength(1);
       expect(results[0].embedding).toEqual([0.1, 0.2, 0.3]);
+    });
+
+    it('falls back to legacy memory embeddings when chunk matches are empty', async () => {
+      const rpc = vi
+        .fn()
+        .mockResolvedValueOnce({
+          data: [],
+          error: null,
+        })
+        .mockResolvedValueOnce({
+          data: [
+            {
+              id: 'mem-sem-legacy',
+              user_id: 'user-456',
+              content: 'Legacy semantic memory',
+              summary: 'Legacy semantic memory',
+              topic_key: 'project:pcp/memory',
+              source: 'observation',
+              salience: 'high',
+              topics: ['project:pcp/memory'],
+              agent_id: 'lumen',
+              embedding: '[0.1,0.2,0.3]',
+              metadata: {},
+              version: 1,
+              created_at: '2026-03-16T00:00:00Z',
+              expires_at: null,
+              identity_id: null,
+              similarity: 0.88,
+            },
+          ],
+          error: null,
+        });
+
+      (mockSupabase as any).rpc = rpc;
+      (repo as any).embeddingRouter = {
+        embedQuery: vi.fn().mockResolvedValue({
+          vector: [0.1, 0.2, 0.3],
+          provider: 'openai',
+          model: 'text-embedding-3-small',
+          dimensions: 1024,
+        }),
+        getRuntimeConfig: vi.fn().mockReturnValue({
+          enabled: true,
+          provider: 'openai',
+          model: 'text-embedding-3-small',
+          dimensions: 1024,
+          queryThreshold: 0.2,
+          matchCountMultiplier: 5,
+          ollamaBaseUrl: 'http://localhost:11434',
+          openaiBaseUrl: 'https://api.openai.com',
+          hasOpenAIKey: true,
+        }),
+      };
+
+      const results = await repo.recall('user-456', 'semantic query', { recallMode: 'semantic' });
+
+      expect(rpc).toHaveBeenNthCalledWith(
+        1,
+        'match_memory_embedding_chunks',
+        expect.objectContaining({
+          query_embedding: '[0.1,0.2,0.3]',
+        })
+      );
+      expect(rpc).toHaveBeenNthCalledWith(
+        2,
+        'match_memories',
+        expect.objectContaining({
+          query_embedding: '[0.1,0.2,0.3]',
+        })
+      );
+      expect(results).toHaveLength(1);
+      expect(results[0].id).toBe('mem-sem-legacy');
     });
 
     it('skips RPC when query embedding dimensions do not match schema dimensions', async () => {

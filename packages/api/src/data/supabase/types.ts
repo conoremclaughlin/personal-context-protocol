@@ -1562,6 +1562,8 @@ export type Database = {
           agent_id: string | null;
           content: string;
           created_at: string | null;
+          embedding_chunk_count: number | null;
+          embedding_chunks_version: number | null;
           embedding: string | null;
           expires_at: string | null;
           id: string;
@@ -1579,6 +1581,8 @@ export type Database = {
           agent_id?: string | null;
           content: string;
           created_at?: string | null;
+          embedding_chunk_count?: number | null;
+          embedding_chunks_version?: number | null;
           embedding?: string | null;
           expires_at?: string | null;
           id?: string;
@@ -1596,6 +1600,8 @@ export type Database = {
           agent_id?: string | null;
           content?: string;
           created_at?: string | null;
+          embedding_chunk_count?: number | null;
+          embedding_chunks_version?: number | null;
           embedding?: string | null;
           expires_at?: string | null;
           id?: string;
@@ -1619,6 +1625,60 @@ export type Database = {
           },
           {
             foreignKeyName: 'memories_user_id_fkey';
+            columns: ['user_id'];
+            isOneToOne: false;
+            referencedRelation: 'users';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      memory_embedding_chunks: {
+        Row: {
+          chunk_index: number;
+          chunk_text: string;
+          chunk_type: string;
+          created_at: string;
+          embedding: string;
+          id: string;
+          memory_id: string;
+          metadata: Json;
+          updated_at: string;
+          user_id: string;
+        };
+        Insert: {
+          chunk_index: number;
+          chunk_text: string;
+          chunk_type?: string;
+          created_at?: string;
+          embedding: string;
+          id?: string;
+          memory_id: string;
+          metadata?: Json;
+          updated_at?: string;
+          user_id: string;
+        };
+        Update: {
+          chunk_index?: number;
+          chunk_text?: string;
+          chunk_type?: string;
+          created_at?: string;
+          embedding?: string;
+          id?: string;
+          memory_id?: string;
+          metadata?: Json;
+          updated_at?: string;
+          user_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'memory_embedding_chunks_memory_id_fkey';
+            columns: ['memory_id'];
+            isOneToOne: false;
+            referencedRelation: 'memories';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'memory_embedding_chunks_user_id_fkey';
             columns: ['user_id'];
             isOneToOne: false;
             referencedRelation: 'users';
@@ -3515,6 +3575,40 @@ export type Database = {
           expires_at: string;
           id: string;
           identity_id: string;
+          metadata: Json;
+          salience: string;
+          similarity: number;
+          source: string;
+          summary: string;
+          topic_key: string;
+          topics: string[];
+          user_id: string;
+          version: number;
+        }[];
+      };
+      match_memory_embedding_chunks: {
+        Args: {
+          match_count?: number;
+          match_threshold?: number;
+          p_agent_id?: string;
+          p_include_expired?: boolean;
+          p_include_shared?: boolean;
+          p_salience?: string;
+          p_source?: string;
+          p_topics?: string[];
+          p_user_id?: string;
+          query_embedding: string;
+        };
+        Returns: {
+          agent_id: string;
+          content: string;
+          created_at: string;
+          embedding: string;
+          expires_at: string;
+          id: string;
+          identity_id: string;
+          matched_chunk_index: number;
+          matched_chunk_text: string;
           metadata: Json;
           salience: string;
           similarity: number;

@@ -57,6 +57,17 @@ export const VETTED_EMBEDDING_MODELS: VettedEmbeddingModel[] = [
   },
 ];
 
+export function getVettedEmbeddingModel(
+  provider: EmbeddingProviderKind,
+  model: string
+): VettedEmbeddingModel | null {
+  return (
+    VETTED_EMBEDDING_MODELS.find(
+      (candidate) => candidate.provider === provider && candidate.model === model
+    ) || null
+  );
+}
+
 export function getDefaultVettedModel(provider: EmbeddingProviderKind): string {
   return (
     VETTED_EMBEDDING_MODELS.find((m) => m.provider === provider && m.default)?.model ||

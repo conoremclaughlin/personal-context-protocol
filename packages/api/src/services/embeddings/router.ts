@@ -2,6 +2,7 @@ import { env } from '../../config/env';
 import { logger } from '../../utils/logger';
 import {
   getDefaultVettedModel,
+  getVettedEmbeddingModel,
   VETTED_EMBEDDING_MODELS,
   type EmbeddingProviderKind,
   type VettedEmbeddingModel,
@@ -28,17 +29,6 @@ export interface EmbeddingRuntimeConfig {
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com';
 const MEMORY_EMBEDDING_SCHEMA_DIMENSIONS = 1024;
-
-function findVettedModel(
-  provider: EmbeddingProviderKind,
-  model: string
-): VettedEmbeddingModel | null {
-  return (
-    VETTED_EMBEDDING_MODELS.find(
-      (candidate) => candidate.provider === provider && candidate.model === model
-    ) || null
-  );
-}
 
 function assertExpectedDimensions(
   vector: number[],
@@ -73,7 +63,7 @@ function buildRuntimeConfig(): EmbeddingRuntimeConfig {
     });
   }
 
-  const vettedModel = findVettedModel(provider, model);
+  const vettedModel = getVettedEmbeddingModel(provider, model);
   if (vettedModel && !vettedModel.dimensions.includes(dimensions)) {
     logger.warn('Selected embedding model does not advertise support for schema dimensions', {
       provider,
@@ -127,7 +117,7 @@ export class EmbeddingRouter {
     if (!this.config.enabled) return null;
     const input = text.trim();
     if (!input) return null;
-    const vettedModel = findVettedModel(this.config.provider, this.config.model);
+    const vettedModel = getVettedEmbeddingModel(this.config.provider, this.config.model);
     const providerInput = clampEmbeddingInput(input, vettedModel);
 
     if (providerInput !== input) {

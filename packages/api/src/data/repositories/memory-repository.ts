@@ -6,7 +6,15 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '../supabase/types';
 import { resolveIdentityId } from '../../auth/resolve-identity';
 import { logger } from '../../utils/logger';
+import {
+  buildChunkMetadataUpdate,
+  buildChunkRows,
+  buildMemoryEmbeddingChunks,
+  formatVectorLiteral,
+  MEMORY_EMBEDDING_CHUNKS_VERSION,
+} from '../../services/embeddings/memory-chunks';
 import { EmbeddingRouter } from '../../services/embeddings/router';
+import { getVettedEmbeddingModel } from '../../services/embeddings/vetted-models';
 import type {
   Memory,
   MemoryCreateInput,
@@ -37,26 +45,40 @@ interface RecallCandidate {
   finalScore: number;
 }
 
+type MatchMemoryEmbeddingChunksArgs =
+  Database['public']['Functions']['match_memory_embedding_chunks']['Args'];
+type MatchMemoryEmbeddingChunksReturn =
+  Database['public']['Functions']['match_memory_embedding_chunks']['Returns'][number];
 type MatchMemoriesArgs = Database['public']['Functions']['match_memories']['Args'];
 type MatchMemoriesReturn = Database['public']['Functions']['match_memories']['Returns'][number];
+type MatchMemoryEmbeddingChunksRpcResult = {
+  data: MatchMemoryEmbeddingChunksReturn[] | null;
+  error: { message: string } | null;
+};
 type MatchMemoriesRpcResult = {
   data: MatchMemoriesReturn[] | null;
   error: { message: string } | null;
 };
 type MatchMemoriesRpcClient = {
   rpc(fn: 'match_memories', args: MatchMemoriesArgs): Promise<MatchMemoriesRpcResult>;
+  rpc(
+    fn: 'match_memory_embedding_chunks',
+    args: MatchMemoryEmbeddingChunksArgs
+  ): Promise<MatchMemoryEmbeddingChunksRpcResult>;
 };
 
 type SemanticMatchRow = Omit<MemoryRow, 'embedding'> & {
   embedding: number[] | string | null;
   similarity?: number;
 };
+type SemanticChunkMatchRow = Omit<MemoryRow, 'embedding'> & {
+  embedding: number[] | string | null;
+  similarity?: number;
+  matched_chunk_index?: number | null;
+  matched_chunk_text?: string | null;
+};
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-
-function formatVectorLiteral(vector: number[]): string {
-  return `[${vector.join(',')}]`;
-}
 
 function parseEmbeddingValue(value: MemoryRow['embedding'] | string | null): number[] | undefined {
   if (!value) return undefined;
@@ -489,6 +511,80 @@ export class MemoryRepository {
       (offset + limit) * Math.max(1, config.matchCountMultiplier || 1)
     );
 
+    const rpcArgs: MatchMemoryEmbeddingChunksArgs = {
+      query_embedding: formatVectorLiteral(queryEmbedding.vector),
+      match_threshold: config.queryThreshold,
+      match_count: matchCount,
+      p_user_id: userId,
+      p_source: options.source,
+      p_salience: options.salience,
+      p_topics: options.topics && options.topics.length > 0 ? options.topics : undefined,
+      p_agent_id: options.agentId,
+      p_include_shared: options.includeShared !== false,
+      p_include_expired: options.includeExpired === true,
+    };
+
+    const rpcClient = this.supabase as unknown as MatchMemoriesRpcClient;
+    const { data, error } = await rpcClient.rpc('match_memory_embedding_chunks', rpcArgs);
+
+    if (error) {
+      logger.warn(
+        'Chunked semantic memory recall failed, falling back to legacy memory embeddings',
+        {
+          error: error.message,
+        }
+      );
+      return this.tryLegacySemanticRecallCandidates(userId, options, limit, offset, queryEmbedding);
+    }
+
+    const rows = (data || []) as SemanticChunkMatchRow[];
+    if (rows.length === 0) {
+      return this.tryLegacySemanticRecallCandidates(userId, options, limit, offset, queryEmbedding);
+    }
+
+    const grouped = new Map<string, RecallCandidate>();
+
+    for (const row of rows) {
+      const memory = this.rowToMemory(row);
+      const semanticScore = Math.max(0, Math.min(1, row.similarity ?? 0));
+      const existing = grouped.get(memory.id);
+
+      if (!existing || semanticScore > (existing.semanticScore ?? 0)) {
+        grouped.set(memory.id, {
+          memory,
+          semanticScore,
+          finalScore: semanticScore,
+        });
+      }
+    }
+
+    return Array.from(grouped.values())
+      .sort(
+        (a, b) =>
+          (b.semanticScore ?? 0) - (a.semanticScore ?? 0) ||
+          b.memory.createdAt.getTime() - a.memory.createdAt.getTime()
+      )
+      .slice(offset, offset + limit);
+  }
+
+  private async tryLegacySemanticRecallCandidates(
+    userId: string,
+    options: MemorySearchOptions,
+    limit: number,
+    offset: number,
+    queryEmbedding: {
+      vector: number[];
+      provider: string;
+      model: string;
+      dimensions: number;
+    }
+  ): Promise<RecallCandidate[] | null> {
+    const config = this.embeddingRouter.getRuntimeConfig();
+    const matchCount = Math.max(
+      limit,
+      (offset + limit) * Math.max(1, config.matchCountMultiplier || 1)
+    );
+
     const rpcArgs: MatchMemoriesArgs = {
       query_embedding: formatVectorLiteral(queryEmbedding.vector),
       match_threshold: config.queryThreshold,
@@ -506,15 +602,14 @@ export class MemoryRepository {
     const { data, error } = await rpcClient.rpc('match_memories', rpcArgs);
 
     if (error) {
-      logger.warn('Semantic memory recall failed, falling back to text recall', {
+      logger.warn('Legacy semantic memory recall failed, falling back to text recall', {
         error: error.message,
       });
       return null;
     }
 
-    const rows = (data || []) as SemanticMatchRow[];
-    const pagedRows = rows.slice(offset, offset + limit);
-    return pagedRows.map((row) => {
+    const rows = ((data || []) as SemanticMatchRow[]).slice(offset, offset + limit);
+    return rows.map((row) => {
       const memory = this.rowToMemory(row);
       const semanticScore = Math.max(0, Math.min(1, row.similarity ?? 0));
       return {
@@ -528,25 +623,66 @@ export class MemoryRepository {
   private async tryEmbedMemory(memory: Memory, input: MemoryCreateInput): Promise<void> {
     if (!this.embeddingRouter.isEnabled()) return;
 
-    const sourceText = [input.summary, input.content].filter(Boolean).join('\n\n').trim();
-    if (!sourceText) return;
+    const config = this.embeddingRouter.getRuntimeConfig();
+    const vettedModel = getVettedEmbeddingModel(config.provider, config.model);
+    const chunks = buildMemoryEmbeddingChunks({
+      summary: input.summary,
+      content: input.content,
+      model: vettedModel,
+    });
+    if (chunks.length === 0) return;
 
-    const embedding = await this.embeddingRouter.embedDocument(sourceText);
-    if (!embedding) return;
+    const embeddedChunks = [];
+    for (const chunk of chunks) {
+      const embedding = await this.embeddingRouter.embedDocument(chunk.text);
+      if (!embedding) return;
+      embeddedChunks.push({ chunk, embedding });
+    }
+
+    if (embeddedChunks.length === 0) return;
+
+    const primaryChunk = embeddedChunks[0];
+    const primaryEmbedding = primaryChunk.embedding;
+    const chunkRows = buildChunkRows({
+      memoryId: memory.id,
+      userId: memory.userId,
+      chunks: embeddedChunks.map(({ chunk, embedding }) => ({ ...chunk, embedding })),
+    });
+
+    const { error: chunkError } = await this.supabase
+      .from('memory_embedding_chunks')
+      .upsert(chunkRows, {
+        onConflict: 'memory_id,chunk_index',
+      });
+
+    if (chunkError) {
+      logger.warn('Failed to persist memory embedding chunks', {
+        memoryId: memory.id,
+        error: chunkError.message,
+      });
+      return;
+    }
 
     const { error } = await this.supabase
       .from('memories')
       .update({
-        embedding: embedding.vector,
+        embedding: formatVectorLiteral(primaryEmbedding.vector),
+        embedding_chunks_version: MEMORY_EMBEDDING_CHUNKS_VERSION,
+        embedding_chunk_count: embeddedChunks.length,
         metadata: {
-          ...(memory.metadata || {}),
+          ...buildChunkMetadataUpdate({
+            provider: primaryEmbedding.provider,
+            model: primaryEmbedding.model,
+            chunkCount: embeddedChunks.length,
+            existingMetadata: memory.metadata || {},
+          }),
           embedding: {
-            provider: embedding.provider,
-            model: embedding.model,
-            dimensions: embedding.dimensions,
+            provider: primaryEmbedding.provider,
+            model: primaryEmbedding.model,
+            dimensions: primaryEmbedding.dimensions,
             updatedAt: new Date().toISOString(),
           },
-        },
+        } as Database['public']['Tables']['memories']['Update']['metadata'],
       })
       .eq('id', memory.id)
       .eq('user_id', memory.userId);
@@ -559,13 +695,18 @@ export class MemoryRepository {
       return;
     }
 
-    memory.embedding = embedding.vector;
+    memory.embedding = primaryEmbedding.vector;
     memory.metadata = {
-      ...(memory.metadata || {}),
+      ...buildChunkMetadataUpdate({
+        provider: primaryEmbedding.provider,
+        model: primaryEmbedding.model,
+        chunkCount: embeddedChunks.length,
+        existingMetadata: memory.metadata || {},
+      }),
       embedding: {
-        provider: embedding.provider,
-        model: embedding.model,
-        dimensions: embedding.dimensions,
+        provider: primaryEmbedding.provider,
+        model: primaryEmbedding.model,
+        dimensions: primaryEmbedding.dimensions,
       },
     };
   }
@@ -1368,7 +1509,7 @@ export class MemoryRepository {
 
   // ==================== HELPERS ====================
 
-  private rowToMemory(row: MemoryRow | SemanticMatchRow): Memory {
+  private rowToMemory(row: MemoryRow | SemanticChunkMatchRow): Memory {
     return {
       id: row.id,
       userId: row.user_id,
