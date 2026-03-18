@@ -4,6 +4,7 @@ import {
   buildChunkMetadataUpdate,
   buildChunkRows,
   buildMemoryEmbeddingChunks,
+  formatVectorLiteral,
   MEMORY_EMBEDDING_CHUNKS_VERSION,
 } from '../services/embeddings/memory-chunks';
 import { EmbeddingRouter } from '../services/embeddings/router';
@@ -163,7 +164,7 @@ async function main() {
       const { error: updateError } = await supabase
         .from('memories')
         .update({
-          embedding: primaryEmbedding.vector,
+          embedding: formatVectorLiteral(primaryEmbedding.vector),
           embedding_chunks_version: MEMORY_EMBEDDING_CHUNKS_VERSION,
           embedding_chunk_count: embeddedChunks.length,
           metadata: {
