@@ -122,6 +122,13 @@ export class CodexRunner implements IRunner {
     args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-session-id="PCP_SESSION_ID"');
     args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-studio-id="PCP_STUDIO_ID"');
 
+    // Authorization header for triggered sessions — env_http_headers reads the env var
+    // name and sends its value as the header. We set PCP_AUTH_HEADER="Bearer <token>"
+    // in the spawn env so the full header value is sent.
+    if (config.pcpAccessToken) {
+      args.push('-c', 'mcp_servers.pcp.env_http_headers.Authorization="PCP_AUTH_HEADER"');
+    }
+
     if (config.model) {
       args.push('-m', config.model);
     }
@@ -176,6 +183,8 @@ export class CodexRunner implements IRunner {
             studioId: config.studioId,
             accessToken: config.pcpAccessToken,
           }),
+          // PCP_AUTH_HEADER is the full "Bearer <token>" value for env_http_headers
+          ...(config.pcpAccessToken ? { PCP_AUTH_HEADER: `Bearer ${config.pcpAccessToken}` } : {}),
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
