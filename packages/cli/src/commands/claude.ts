@@ -3223,15 +3223,34 @@ async function ensurePcpSessionContext(
         : undefined,
     });
   const preserveTrackedBackendSessionId = !createdNewPcpSession || backend === 'claude';
-  const resolvedTrackedBackendSessionId = preserveTrackedBackendSessionId
+  let resolvedTrackedBackendSessionId = preserveTrackedBackendSessionId
     ? backendSessionId
     : undefined;
-  if (createdNewPcpSession && backend !== 'claude' && backendSessionId) {
+  if (
+    createdNewPcpSession &&
+    backend !== 'claude' &&
+    backendSessionId &&
+    !selectedLocalBackendSessionId
+  ) {
+    // Only ignore pre-linked backend sessions when the user didn't explicitly
+    // select a local session. If they picked a specific Codex/Gemini session
+    // from the list, they want to resume it.
     sbDebugLog('claude', 'new_session_ignoring_prelinked_backend_session', {
       backend,
       agentId,
       pcpSessionId: chosen.id,
       ignoredBackendSessionId: backendSessionId,
+    });
+  }
+  // When the user explicitly picked a local backend session from the picker,
+  // use it as the resume target even if we created a new PCP session.
+  if (!resolvedTrackedBackendSessionId && selectedLocalBackendSessionId) {
+    resolvedTrackedBackendSessionId = selectedLocalBackendSessionId;
+    sbDebugLog('claude', 'using_selected_local_backend_session', {
+      backend,
+      agentId,
+      selectedLocalBackendSessionId,
+      createdNewPcpSession,
     });
   }
   const adoptedLocalBackendSessionId = resolveAdoptableLocalBackendSessionId({
