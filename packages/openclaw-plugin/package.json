@@ -1,5 +1,5 @@
 {
-  "name": "pcp-openclaw",
+  "name": "@pcp/openclaw-plugin",
   "version": "0.1.0",
   "description": "Personal Context Protocol plugin for OpenClaw — identity, memory, sessions, and cross-agent messaging",
   "type": "module",

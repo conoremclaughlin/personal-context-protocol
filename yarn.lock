@@ -1960,6 +1960,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@pcp/openclaw-plugin@workspace:packages/openclaw-plugin":
+  version: 0.0.0-use.local
+  resolution: "@pcp/openclaw-plugin@workspace:packages/openclaw-plugin"
+  languageName: unknown
+  linkType: soft
+
 "@personal-context/api@workspace:packages/api":
   version: 0.0.0-use.local
   resolution: "@personal-context/api@workspace:packages/api"
@@ -10595,12 +10601,6 @@ __metadata:
   checksum: 10/01e9a69928f39087d96e1751ce7d6d50da8c39abf9a12e0ac2389c42c83bc76f78c45a475bd9026a02e6a6f79be63acc75667df855862fe567d99a00a540d23d
   languageName: node
   linkType: hard
-
-"pcp-openclaw@workspace:packages/openclaw-plugin":
-  version: 0.0.0-use.local
-  resolution: "pcp-openclaw@workspace:packages/openclaw-plugin"
-  languageName: unknown
-  linkType: soft
 
 "personal-context-protocol@workspace:.":
   version: 0.0.0-use.local
