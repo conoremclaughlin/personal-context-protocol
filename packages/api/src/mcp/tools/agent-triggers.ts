@@ -58,7 +58,9 @@ export const triggerAgentSchema = z.object({
   studioHint: z
     .string()
     .optional()
-    .describe('Convenience studio routing hint (e.g., "main" for shared main studio, or a studio name)'),
+    .describe(
+      'Convenience studio routing hint (e.g., "main" for shared main studio, or a studio name)'
+    ),
   recipientSessionId: z
     .string()
     .uuid()
@@ -148,15 +150,47 @@ export const listRegisteredAgentsSchema = z.object({});
 
 export async function handleListRegisteredAgents(
   _args: z.infer<typeof listRegisteredAgentsSchema>,
-  _dataComposer: DataComposer
+  dataComposer: DataComposer
 ): Promise<McpResponse> {
   try {
+    // Query agent_identities for all known agents (the source of truth).
+    // The in-memory trigger handler registry only tracks agents with active
+    // runtime listeners — it's empty after restarts or when agents use
+    // polling instead of persistent connections.
+    const { data: identities, error } = await dataComposer
+      .getClient()
+      .from('agent_identities')
+      .select('agent_id, name, backend')
+      .order('agent_id');
+
+    if (error) {
+      throw new Error(`Failed to query agent identities: ${error.message}`);
+    }
+
+    // Dedupe by agent_id (an agent can have multiple identity records across workspaces)
+    const seen = new Set<string>();
+    const agents = (identities || [])
+      .filter((row) => {
+        if (seen.has(row.agent_id)) return false;
+        seen.add(row.agent_id);
+        return true;
+      })
+      .map((row) => ({
+        agentId: row.agent_id,
+        name: row.name,
+        backend: row.backend,
+      }));
+
+    // Also note which agents have active runtime trigger handlers
     const gateway = getAgentGateway();
-    const agents = gateway.getRegisteredAgents();
+    const runtimeHandlers = new Set(gateway.getRegisteredAgents());
 
     return mcpResponse({
       success: true,
-      registeredAgents: agents,
+      registeredAgents: agents.map((a) => ({
+        ...a,
+        hasRuntimeHandler: runtimeHandlers.has(a.agentId),
+      })),
       count: agents.length,
     });
   } catch (error) {
