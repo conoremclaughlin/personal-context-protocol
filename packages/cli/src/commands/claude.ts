@@ -3038,12 +3038,33 @@ async function ensurePcpSessionContext(
     } else if (selection.startsWith('local:') || selection.startsWith('__local__:')) {
       selectedLocalBackendSessionId = localSelection(selection);
       if (selectedLocalBackendSessionId && pcpAvailable) {
+        // Find-or-link: prefer an existing PCP session linked to this backend
+        // session, then try an unlinked PCP session in the same studio, and
+        // only create new as a last resort.
         const linkedPcpSession = pcpSessionByBackendSessionId.get(selectedLocalBackendSessionId);
         if (linkedPcpSession) {
           chosen = linkedPcpSession;
         } else {
-          chosen = await startNewPcpSession();
-          createdNewPcpSession = Boolean(chosen?.id);
+          // Try to find an unlinked PCP session for this agent+studio that
+          // can be adopted instead of creating an orphan.
+          const unlinkable = activeSessions.find(
+            (s) =>
+              !getSessionBackendId(s) &&
+              s.backend === backend &&
+              (!studioId || s.studioId === studioId)
+          );
+          if (unlinkable) {
+            chosen = unlinkable;
+            sbDebugLog('claude', 'adopting_unlinked_pcp_session', {
+              backend,
+              agentId,
+              pcpSessionId: unlinkable.id,
+              selectedLocalBackendSessionId,
+            });
+          } else {
+            chosen = await startNewPcpSession();
+            createdNewPcpSession = Boolean(chosen?.id);
+          }
         }
       }
     } else {
@@ -3180,12 +3201,29 @@ async function ensurePcpSessionContext(
       } else if (selection.startsWith('__local__:')) {
         selectedLocalBackendSessionId = sessionChoiceByValue.get(selection);
         if (selectedLocalBackendSessionId && pcpAvailable) {
+          // Find-or-link: prefer linked PCP session, then adopt unlinked, then create new
           const linkedPcpSession = pcpSessionByBackendSessionId.get(selectedLocalBackendSessionId);
           if (linkedPcpSession) {
             chosen = linkedPcpSession;
           } else {
-            chosen = await startNewPcpSession();
-            createdNewPcpSession = Boolean(chosen?.id);
+            const unlinkable = activeSessions.find(
+              (s) =>
+                !getSessionBackendId(s) &&
+                s.backend === backend &&
+                (!studioId || s.studioId === studioId)
+            );
+            if (unlinkable) {
+              chosen = unlinkable;
+              sbDebugLog('claude', 'adopting_unlinked_pcp_session', {
+                backend,
+                agentId,
+                pcpSessionId: unlinkable.id,
+                selectedLocalBackendSessionId,
+              });
+            } else {
+              chosen = await startNewPcpSession();
+              createdNewPcpSession = Boolean(chosen?.id);
+            }
           }
         }
       }
@@ -3222,11 +3260,22 @@ async function ensurePcpSessionContext(
         ? runtimeBackendSessionIdByPcpSessionId.get(chosen.id)
         : undefined,
     });
-  // Claude always preserves backend session links (Claude Code manages its own
-  // session continuity). Codex drops pre-linked sessions on new PCP session
-  // creation to avoid stale links — Codex sessions are independent and the
-  // user explicitly picks which to resume. Gemini is NOT included here because
-  // its session semantics are different and untested for this path.
+  // ═══════════════════════════════════════════════════════════════════════
+  // BACKEND SESSION LINKING — CRITICAL: Each backend has unique semantics.
+  //
+  // DO NOT modify this section without understanding how each backend
+  // handles session resume, creation, and linking. Careless changes here
+  // cause silent data loss (content not loading, orphaned sessions, wrong
+  // session resumed). Test each backend independently.
+  //
+  // - Claude: Always preserves backend session links. Claude Code manages
+  //   its own session continuity via --resume/--session-id.
+  // - Codex: Sessions are independent local files. PCP links are advisory.
+  //   Drops pre-linked sessions on new PCP session to avoid stale links,
+  //   UNLESS the user explicitly selected a local session from the picker.
+  // - Gemini: Session semantics are different and largely untested for
+  //   this path. Do NOT assume Codex patterns apply to Gemini.
+  // ═══════════════════════════════════════════════════════════════════════
   const preserveTrackedBackendSessionId = !createdNewPcpSession || backend === 'claude';
   let resolvedTrackedBackendSessionId = preserveTrackedBackendSessionId
     ? backendSessionId
