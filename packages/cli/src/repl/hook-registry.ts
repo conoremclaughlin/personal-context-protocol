@@ -14,17 +14,17 @@ import type { ContextLedger, LedgerRole } from './context-ledger.js';
 // ─── Types ──────────────────────────────────────────────────────
 
 export type SbHookEvent =
-  | 'on-session-start'
-  | 'on-session-end'
-  | 'on-prompt'
-  | 'on-turn-start'
-  | 'on-turn-end'
-  | 'pre-tool'
-  | 'post-tool'
-  | 'pre-compact'
-  | 'post-compact'
-  | 'post-evict'
-  | 'budget-warning'
+  | 'session_start'
+  | 'session_end'
+  | 'prompt_build'
+  | 'turn_start'
+  | 'turn_end'
+  | 'tool_pre'
+  | 'tool_post'
+  | 'compact_pre'
+  | 'compact_post'
+  | 'evict_post'
+  | 'budget_warning'
   | 'idle';
 
 export interface HookContext {
@@ -81,7 +81,7 @@ export interface SbHook {
 
 // ─── Pre-* events that support blocking ─────────────────────────
 
-const BLOCKING_EVENTS = new Set<SbHookEvent>(['pre-tool', 'pre-compact']);
+const BLOCKING_EVENTS = new Set<SbHookEvent>(['tool_pre', 'compact_pre']);
 
 // ─── Registry ───────────────────────────────────────────────────
 

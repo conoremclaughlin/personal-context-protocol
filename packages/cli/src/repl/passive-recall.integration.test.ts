@@ -203,7 +203,7 @@ function createPassiveRecallHook(config?: {
 
   return {
     name: 'passive-recall',
-    event: 'on-turn-end' as const,
+    event: 'turn_end' as const,
     priority: 50,
     /** Expose internals for test assertions */
     _state: {
@@ -382,7 +382,7 @@ describe('Passive recall hook: live end-to-end', () => {
       'When an agent is triggered via send_to_inbox, the server resolves the recipient studio and spawns a backend session with the message as input.'
     );
 
-    const result = await registry.fire('on-turn-end', {
+    const result = await registry.fire('turn_end', {
       ledger,
       runtime: { agentId: 'wren', turnCount: 1, budgetUtilization: 0.3 },
       lastTurn: {
@@ -420,7 +420,7 @@ describe('Passive recall hook: live end-to-end', () => {
     ledger.addEntry('assistant', turn.assistantResponse);
 
     // First turn
-    const r1 = await registry.fire('on-turn-end', {
+    const r1 = await registry.fire('turn_end', {
       ledger,
       runtime: { agentId: 'wren', turnCount: 1, budgetUtilization: 0.3 },
       lastTurn: turn,
@@ -428,7 +428,7 @@ describe('Passive recall hook: live end-to-end', () => {
     const firstInjectionCount = r1.injected;
 
     // Same topic, second turn — should get fewer/no new memories
-    const r2 = await registry.fire('on-turn-end', {
+    const r2 = await registry.fire('turn_end', {
       ledger,
       runtime: { agentId: 'wren', turnCount: 2, budgetUtilization: 0.3 },
       lastTurn: { ...turn, turnIndex: 2 },
@@ -447,7 +447,7 @@ describe('Passive recall hook: live end-to-end', () => {
     ledger.addEntry('user', 'session routing');
     ledger.addEntry('assistant', 'routing explanation');
 
-    const result = await registry.fire('on-turn-end', {
+    const result = await registry.fire('turn_end', {
       ledger,
       runtime: { agentId: 'wren', turnCount: 1, budgetUtilization: 0.85 },
       lastTurn: {
@@ -473,7 +473,7 @@ describe('Passive recall hook: live end-to-end', () => {
       'Session routing resolves the target studio for triggered agents.'
     );
 
-    const r1 = await registry.fire('on-turn-end', {
+    const r1 = await registry.fire('turn_end', {
       ledger,
       runtime: { agentId: 'wren', turnCount: 1, budgetUtilization: 0.3 },
       lastTurn: {
@@ -500,7 +500,7 @@ describe('Passive recall hook: live end-to-end', () => {
       'Task comments are stored in the task_comments table with agent attribution.'
     );
 
-    const r2 = await registry.fire('on-turn-end', {
+    const r2 = await registry.fire('turn_end', {
       ledger,
       runtime: { agentId: 'wren', turnCount: 2, budgetUtilization: 0.3 },
       lastTurn: {

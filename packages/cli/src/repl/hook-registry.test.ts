@@ -37,7 +37,7 @@ describe('SbHookRegistry: registration', () => {
     const registry = new SbHookRegistry();
     registry.register({
       name: 'test-hook',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async () => {},
     });
 
@@ -45,15 +45,15 @@ describe('SbHookRegistry: registration', () => {
     expect(hooks).toHaveLength(1);
     expect(hooks[0]).toEqual({
       name: 'test-hook',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 100,
     });
   });
 
   it('unregisters hooks by name', () => {
     const registry = new SbHookRegistry();
-    registry.register({ name: 'a', event: 'on-turn-end', handler: async () => {} });
-    registry.register({ name: 'b', event: 'on-turn-end', handler: async () => {} });
+    registry.register({ name: 'a', event: 'turn_end', handler: async () => {} });
+    registry.register({ name: 'b', event: 'turn_end', handler: async () => {} });
 
     expect(registry.unregister('a')).toBe(true);
     expect(registry.listHooks()).toHaveLength(1);
@@ -67,14 +67,14 @@ describe('SbHookRegistry: registration', () => {
 
   it('sorts by priority (lower first)', () => {
     const registry = new SbHookRegistry();
-    registry.register({ name: 'low', event: 'on-turn-end', priority: 50, handler: async () => {} });
+    registry.register({ name: 'low', event: 'turn_end', priority: 50, handler: async () => {} });
     registry.register({
       name: 'high',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 200,
       handler: async () => {},
     });
-    registry.register({ name: 'default', event: 'on-turn-end', handler: async () => {} }); // 100
+    registry.register({ name: 'default', event: 'turn_end', handler: async () => {} }); // 100
 
     const names = registry.listHooks().map((h) => h.name);
     expect(names).toEqual(['low', 'default', 'high']);
@@ -90,20 +90,20 @@ describe('SbHookRegistry: fire', () => {
 
     registry.register({
       name: 'turn-hook',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async () => {
         calls.push('turn');
       },
     });
     registry.register({
       name: 'prompt-hook',
-      event: 'on-prompt',
+      event: 'prompt_build',
       handler: async () => {
         calls.push('prompt');
       },
     });
 
-    await registry.fire('on-turn-end', makeCtx());
+    await registry.fire('turn_end', makeCtx());
     expect(calls).toEqual(['turn']);
   });
 
@@ -113,7 +113,7 @@ describe('SbHookRegistry: fire', () => {
 
     registry.register({
       name: 'last',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 200,
       handler: async () => {
         order.push(200);
@@ -121,7 +121,7 @@ describe('SbHookRegistry: fire', () => {
     });
     registry.register({
       name: 'first',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 10,
       handler: async () => {
         order.push(10);
@@ -129,20 +129,20 @@ describe('SbHookRegistry: fire', () => {
     });
     registry.register({
       name: 'middle',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 100,
       handler: async () => {
         order.push(100);
       },
     });
 
-    await registry.fire('on-turn-end', makeCtx());
+    await registry.fire('turn_end', makeCtx());
     expect(order).toEqual([10, 100, 200]);
   });
 
   it('returns zero counts when no hooks match', async () => {
     const registry = new SbHookRegistry();
-    const result = await registry.fire('on-turn-end', makeCtx());
+    const result = await registry.fire('turn_end', makeCtx());
     expect(result).toEqual({ injected: 0, evicted: 0, blocked: false });
   });
 
@@ -150,15 +150,15 @@ describe('SbHookRegistry: fire', () => {
     const registry = new SbHookRegistry();
     registry.register({
       name: 'logger',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async () => {},
     });
 
-    await registry.fire('on-turn-end', makeCtx());
+    await registry.fire('turn_end', makeCtx());
 
     const log = registry.getFireLog();
     expect(log).toHaveLength(1);
-    expect(log[0].event).toBe('on-turn-end');
+    expect(log[0].event).toBe('turn_end');
     expect(log[0].hookName).toBe('logger');
   });
 });
@@ -173,7 +173,7 @@ describe('SbHookRegistry: injection', () => {
 
     registry.register({
       name: 'recall',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (): Promise<HookResult> => ({
         inject: [
           {
@@ -188,7 +188,7 @@ describe('SbHookRegistry: injection', () => {
       }),
     });
 
-    const result = await registry.fire('on-turn-end', makeCtx(ledger));
+    const result = await registry.fire('turn_end', makeCtx(ledger));
     expect(result.injected).toBe(1);
 
     const entries = ledger.listEntries();
@@ -203,7 +203,7 @@ describe('SbHookRegistry: injection', () => {
 
     registry.register({
       name: 'multi-recall',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (): Promise<HookResult> => ({
         inject: [
           { role: 'system', content: 'Memory A', source: 'passive-recall' },
@@ -212,7 +212,7 @@ describe('SbHookRegistry: injection', () => {
       }),
     });
 
-    const result = await registry.fire('on-turn-end', makeCtx(ledger));
+    const result = await registry.fire('turn_end', makeCtx(ledger));
     expect(result.injected).toBe(2);
     expect(ledger.listEntries()).toHaveLength(2);
   });
@@ -224,7 +224,7 @@ describe('SbHookRegistry: injection', () => {
 
     registry.register({
       name: 'injector',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 10,
       handler: async (): Promise<HookResult> => ({
         inject: [{ role: 'system', content: 'injected', source: 'test' }],
@@ -233,14 +233,14 @@ describe('SbHookRegistry: injection', () => {
 
     registry.register({
       name: 'observer',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 20,
       handler: async (ctx) => {
         entriesSeenBySecondHook = ctx.ledger.listEntries().length;
       },
     });
 
-    await registry.fire('on-turn-end', makeCtx(ledger));
+    await registry.fire('turn_end', makeCtx(ledger));
     expect(entriesSeenBySecondHook).toBe(1); // sees the injection from first hook
   });
 });
@@ -256,13 +256,13 @@ describe('SbHookRegistry: eviction', () => {
 
     registry.register({
       name: 'cleanup',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (): Promise<HookResult> => ({
         evict: [e1.id],
       }),
     });
 
-    const result = await registry.fire('on-turn-end', makeCtx(ledger));
+    const result = await registry.fire('turn_end', makeCtx(ledger));
     expect(result.evicted).toBe(1);
     expect(ledger.listEntries()).toHaveLength(1);
     expect(ledger.listEntries()[0].content).toBe('keep this');
@@ -275,14 +275,14 @@ describe('SbHookRegistry: eviction', () => {
 
     registry.register({
       name: 'refresh',
-      event: 'on-session-start',
+      event: 'session_start',
       handler: async (): Promise<HookResult> => ({
         evict: [old.id],
         inject: [{ role: 'system', content: 'fresh bootstrap', source: 'bootstrap' }],
       }),
     });
 
-    const result = await registry.fire('on-session-start', makeCtx(ledger));
+    const result = await registry.fire('session_start', makeCtx(ledger));
     expect(result.injected).toBe(1);
     expect(result.evicted).toBe(1);
     expect(ledger.listEntries()).toHaveLength(1);
@@ -298,14 +298,14 @@ describe('SbHookRegistry: blocking', () => {
 
     registry.register({
       name: 'guard',
-      event: 'pre-tool',
+      event: 'tool_pre',
       handler: async (): Promise<HookResult> => ({
         block: true,
         blockReason: 'Tool not allowed in current context',
       }),
     });
 
-    const result = await registry.fire('pre-tool', makeCtx());
+    const result = await registry.fire('tool_pre', makeCtx());
     expect(result.blocked).toBe(true);
     expect(result.blockReason).toContain('not allowed');
   });
@@ -315,14 +315,14 @@ describe('SbHookRegistry: blocking', () => {
 
     registry.register({
       name: 'bad-blocker',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (): Promise<HookResult> => ({
         block: true,
         blockReason: 'Should be ignored',
       }),
     });
 
-    const result = await registry.fire('on-turn-end', makeCtx());
+    const result = await registry.fire('turn_end', makeCtx());
     expect(result.blocked).toBe(false);
   });
 
@@ -332,7 +332,7 @@ describe('SbHookRegistry: blocking', () => {
 
     registry.register({
       name: 'blocker',
-      event: 'pre-compact',
+      event: 'compact_pre',
       priority: 10,
       handler: async (): Promise<HookResult> => {
         calls.push('blocker');
@@ -342,14 +342,14 @@ describe('SbHookRegistry: blocking', () => {
 
     registry.register({
       name: 'after-blocker',
-      event: 'pre-compact',
+      event: 'compact_pre',
       priority: 20,
       handler: async () => {
         calls.push('after');
       },
     });
 
-    await registry.fire('pre-compact', makeCtx());
+    await registry.fire('compact_pre', makeCtx());
     expect(calls).toEqual(['blocker']); // second hook never ran
   });
 });
@@ -366,7 +366,7 @@ describe('SbHookRegistry: error handling', () => {
 
     registry.register({
       name: 'crasher',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 10,
       handler: async () => {
         throw new Error('boom');
@@ -375,14 +375,14 @@ describe('SbHookRegistry: error handling', () => {
 
     registry.register({
       name: 'survivor',
-      event: 'on-turn-end',
+      event: 'turn_end',
       priority: 20,
       handler: async () => {
         calls.push('survived');
       },
     });
 
-    const result = await registry.fire('on-turn-end', makeCtx());
+    const result = await registry.fire('turn_end', makeCtx());
     expect(calls).toEqual(['survived']);
     expect(result.blocked).toBe(false);
 
@@ -394,11 +394,11 @@ describe('SbHookRegistry: error handling', () => {
 
     registry.register({
       name: 'noop',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async () => undefined,
     });
 
-    const result = await registry.fire('on-turn-end', makeCtx());
+    const result = await registry.fire('turn_end', makeCtx());
     expect(result).toEqual({ injected: 0, evicted: 0, blocked: false });
   });
 });
@@ -434,7 +434,7 @@ describe('Passive recall: simulated integration', () => {
 
     registry.register({
       name: 'passive-recall',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (ctx): Promise<HookResult | void> => {
         // Budget ceiling check
         if ((ctx.runtime.budgetUtilization ?? 0) > 0.8) return;
@@ -470,7 +470,7 @@ describe('Passive recall: simulated integration', () => {
     });
 
     // First turn — should inject
-    const r1 = await registry.fire('on-turn-end', makeCtx(ledger, makeRuntime({ turnCount: 1 })));
+    const r1 = await registry.fire('turn_end', makeCtx(ledger, makeRuntime({ turnCount: 1 })));
     expect(r1.injected).toBe(2);
     expect(ledger.listEntries()).toHaveLength(4); // 2 original + 2 injected
 
@@ -481,12 +481,12 @@ describe('Passive recall: simulated integration', () => {
     expect(injected[1].content).toContain('Myra session continuity');
 
     // Second turn (within cooldown) — should NOT inject
-    const r2 = await registry.fire('on-turn-end', makeCtx(ledger, makeRuntime({ turnCount: 2 })));
+    const r2 = await registry.fire('turn_end', makeCtx(ledger, makeRuntime({ turnCount: 2 })));
     expect(r2.injected).toBe(0);
 
     // After cooldown — but memories already injected, so nothing new
     turnsSinceLastInjection = COOLDOWN;
-    const r3 = await registry.fire('on-turn-end', makeCtx(ledger, makeRuntime({ turnCount: 5 })));
+    const r3 = await registry.fire('turn_end', makeCtx(ledger, makeRuntime({ turnCount: 5 })));
     expect(r3.injected).toBe(0); // dedup prevents re-injection
   });
 
@@ -496,7 +496,7 @@ describe('Passive recall: simulated integration', () => {
 
     registry.register({
       name: 'passive-recall',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (ctx): Promise<HookResult | void> => {
         if ((ctx.runtime.budgetUtilization ?? 0) > 0.8) return;
         return {
@@ -507,14 +507,14 @@ describe('Passive recall: simulated integration', () => {
 
     // At 50% budget — inject
     const r1 = await registry.fire(
-      'on-turn-end',
+      'turn_end',
       makeCtx(ledger, makeRuntime({ budgetUtilization: 0.5 }))
     );
     expect(r1.injected).toBe(1);
 
     // At 85% budget — suppress
     const r2 = await registry.fire(
-      'on-turn-end',
+      'turn_end',
       makeCtx(ledger, makeRuntime({ budgetUtilization: 0.85 }))
     );
     expect(r2.injected).toBe(0);
@@ -531,7 +531,7 @@ describe('Passive recall: simulated integration', () => {
 
     registry.register({
       name: 'passive-recall-with-reinject',
-      event: 'on-turn-end',
+      event: 'turn_end',
       handler: async (): Promise<HookResult | void> => {
         const memId = 'mem-xyz';
         const content = 'Important routing detail';
@@ -557,7 +557,7 @@ describe('Passive recall: simulated integration', () => {
     });
 
     // First injection
-    const r1 = await registry.fire('on-turn-end', makeCtx(ledger));
+    const r1 = await registry.fire('turn_end', makeCtx(ledger));
     expect(r1.injected).toBe(1);
     const injectedEntry = ledger.listEntries()[0];
 
@@ -568,12 +568,12 @@ describe('Passive recall: simulated integration', () => {
 
     // Try re-injection too soon
     turnsSinceEviction = 2;
-    const r2 = await registry.fire('on-turn-end', makeCtx(ledger));
+    const r2 = await registry.fire('turn_end', makeCtx(ledger));
     expect(r2.injected).toBe(0);
 
     // Re-injection after cooldown
     turnsSinceEviction = REINJECTION_COOLDOWN;
-    const r3 = await registry.fire('on-turn-end', makeCtx(ledger));
+    const r3 = await registry.fire('turn_end', makeCtx(ledger));
     expect(r3.injected).toBe(1);
     expect(ledger.listEntries()[0].content).toBe('Important routing detail');
   });
@@ -589,7 +589,7 @@ describe('Budget monitor: simulated integration', () => {
 
     registry.register({
       name: 'budget-monitor',
-      event: 'on-prompt',
+      event: 'prompt_build',
       handler: async (ctx): Promise<HookResult | void> => {
         const util = ctx.runtime.budgetUtilization ?? 0;
         if (util >= 0.8 && lastWarningLevel !== 80) {
@@ -609,14 +609,14 @@ describe('Budget monitor: simulated integration', () => {
 
     // Below threshold — no warning
     const r1 = await registry.fire(
-      'on-prompt',
+      'prompt_build',
       makeCtx(ledger, makeRuntime({ budgetUtilization: 0.6 }))
     );
     expect(r1.injected).toBe(0);
 
     // At threshold — warning injected
     const r2 = await registry.fire(
-      'on-prompt',
+      'prompt_build',
       makeCtx(ledger, makeRuntime({ budgetUtilization: 0.82 }))
     );
     expect(r2.injected).toBe(1);
@@ -624,7 +624,7 @@ describe('Budget monitor: simulated integration', () => {
 
     // Same threshold — no duplicate warning
     const r3 = await registry.fire(
-      'on-prompt',
+      'prompt_build',
       makeCtx(ledger, makeRuntime({ budgetUtilization: 0.85 }))
     );
     expect(r3.injected).toBe(0);
