@@ -3222,18 +3222,23 @@ async function ensurePcpSessionContext(
         ? runtimeBackendSessionIdByPcpSessionId.get(chosen.id)
         : undefined,
     });
+  // Claude always preserves backend session links (Claude Code manages its own
+  // session continuity). Codex drops pre-linked sessions on new PCP session
+  // creation to avoid stale links — Codex sessions are independent and the
+  // user explicitly picks which to resume. Gemini is NOT included here because
+  // its session semantics are different and untested for this path.
   const preserveTrackedBackendSessionId = !createdNewPcpSession || backend === 'claude';
   let resolvedTrackedBackendSessionId = preserveTrackedBackendSessionId
     ? backendSessionId
     : undefined;
   if (
     createdNewPcpSession &&
-    backend !== 'claude' &&
+    backend === 'codex' &&
     backendSessionId &&
     !selectedLocalBackendSessionId
   ) {
     // Only ignore pre-linked backend sessions when the user didn't explicitly
-    // select a local session. If they picked a specific Codex/Gemini session
+    // select a local session. If they picked a specific Codex session
     // from the list, they want to resume it.
     sbDebugLog('claude', 'new_session_ignoring_prelinked_backend_session', {
       backend,
