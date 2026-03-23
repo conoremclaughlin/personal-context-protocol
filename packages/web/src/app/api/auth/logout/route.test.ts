@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockSignOut = vi.fn();
 const mockCookieGet = vi.fn();
@@ -24,6 +24,10 @@ describe('POST /api/auth/logout', () => {
     vi.clearAllMocks();
     mockCookieGet.mockReturnValue(undefined);
     vi.spyOn(global, 'fetch').mockResolvedValue(new Response('{}'));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   it('signs out supabase and clears PCP auth cookies', async () => {

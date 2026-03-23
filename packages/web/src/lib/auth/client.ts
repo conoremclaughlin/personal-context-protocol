@@ -10,6 +10,22 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     body: JSON.stringify(body),
   });
 
+  if (!response.ok) {
+    const text = await response.text();
+    let message = `Auth request failed (${response.status})`;
+
+    try {
+      const parsed = JSON.parse(text) as { error?: string };
+      if (parsed.error) {
+        message = parsed.error;
+      }
+    } catch {
+      // Fall back to default status-based message.
+    }
+
+    return { error: message } as T;
+  }
+
   return (await response.json()) as T;
 }
 
