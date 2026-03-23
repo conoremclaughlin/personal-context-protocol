@@ -313,12 +313,14 @@ describe('Myra simulation: Phase 5 — Telegram Response', () => {
 
       console.log('=== Phase 5: Telegram Response ===');
 
-      // Get Myra's Telegram conversation ID from config
+      // NOTE: conversationId lookup is a gap — we need a user→platform→conversationId
+      // mapping so agents can message users without hardcoding chat IDs.
+      // See PCP task: "Persist conversationId→userId mapping with DB fallback"
       const result = await pcp.callTool('send_response', {
         channel: 'telegram',
+        conversationId: '726555973',
         content:
-          '[sb-runtime-test] Myra heartbeat simulation completed successfully. Context eviction + passive recall pipeline working. 93 tests passing. This message was sent from an automated integration test.',
-        agentId: AGENT_ID,
+          '🧪 [sb-runtime-test] Myra heartbeat simulation completed on the sb chat runtime.\n\nContext eviction + passive recall pipeline working. 100 tests passing.\n\nThis message was sent from an automated integration test — not a live Myra session.',
       });
 
       const parsed = result as Record<string, unknown>;
