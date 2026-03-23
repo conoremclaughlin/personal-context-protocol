@@ -81,8 +81,9 @@ async function executeOneToolCall(
     return executeTool(call, callTool);
   }
 
-  // 1. Check policy
-  const decision = policy.canCallPcpTool(call.tool, sessionId);
+  // 1. Check policy — strip MCP namespace prefix for policy lookup
+  const policyToolName = call.tool.replace(/^mcp__pcp__/, '');
+  const decision = policy.canCallPcpTool(policyToolName, sessionId);
 
   if (decision.allowed) {
     // Allowed — execute immediately

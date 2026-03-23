@@ -2848,7 +2848,10 @@ export async function runChat(options: ChatOptions): Promise<void> {
             const result = handleClientLocalTool(tool, args, ledger);
             if (result) return Promise.resolve(result);
           }
-          return pcp.callTool(tool, args);
+          // Strip MCP namespace prefix — the SB may emit mcp__pcp__tool_name
+          // but PcpClient expects bare tool names (get_inbox, recall, etc.)
+          const bareTool = tool.replace(/^mcp__pcp__/, '');
+          return pcp.callTool(bareTool, args);
         },
         sessionId: runtime.sessionId,
         promptForApproval: async (tool, reason) => {
