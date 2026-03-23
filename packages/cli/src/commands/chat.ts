@@ -35,7 +35,12 @@ import { discoverSkills, loadSkillInstruction, type SkillInstruction } from '../
 import { applyToolApprovalChoice, parseToolApprovalInput } from '../repl/tool-approval.js';
 import { ensurePcpToolAllowed } from '../repl/tool-gate.js';
 import { executeToolCalls, type ToolCallResult } from '../repl/tool-call-executor.js';
-import { isClientLocalTool, handleClientLocalTool } from '../repl/context-tools.js';
+import {
+  isClientLocalTool,
+  handleClientLocalTool,
+  getLastSignal,
+  clearLastSignal,
+} from '../repl/context-tools.js';
 import { SbHookRegistry } from '../repl/hook-registry.js';
 import { registerBuiltinHooks } from '../repl/builtin-hooks.js';
 import { applyProfile, formatProfileList, isValidProfileId } from '../repl/tool-profiles.js';
@@ -1749,7 +1754,7 @@ function buildPromptEnvelope(
 
   const toolInstruction =
     runtime.toolRouting === 'local'
-      ? 'Backend-native tool calling is disabled for this run. If you need PCP tool access, emit fenced blocks in this exact format: ```pcp-tool {"tool":"tool_name","args":{}} ``` and continue with your plain-text answer.\n\nContext management tools (client-local, no server round-trip):\n- list_context: Introspect your context window — see all entries with IDs, token counts, sources, and previews. Use this to decide what to evict.\n- evict_context: Remove specific entries from your context to reclaim tokens. Args: entryIds (number[]), source (string), or role (string). Evicted content is gone from your working context but the conversation continues. Use this when you notice irrelevant memories, old tool results, or stale inbox messages consuming your context budget.'
+      ? 'Backend-native tool calling is disabled for this run. If you need PCP tool access, emit fenced blocks in this exact format: ```pcp-tool {"tool":"tool_name","args":{}} ``` and continue with your plain-text answer.\n\nClient-local tools (no server round-trip):\n- list_context: Introspect your context window — see all entries with IDs, token counts, sources, and previews.\n- evict_context: Remove specific entries from your context to reclaim tokens. Args: entryIds (number[]), source (string), or role (string).\n- signal_status: Signal your session status. Args: status ("completed" | "blocked" | "continuing"), reason (string, optional). Use this at the end of your work to tell the runtime whether you are done, blocked on something, or need another turn.'
       : runtime.toolMode === 'off'
         ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
         : runtime.toolMode === 'privileged'
@@ -3193,35 +3198,51 @@ export async function runChat(options: ChatOptions): Promise<void> {
     const maxTurns = parseInt(options.maxTurns || '1', 10);
 
     // Turn 1: user-provided message
+    clearLastSignal();
     await enqueueTurn(message);
 
-    // Turns 2..N: continuation prompts — let the SB decide what to do next
-    for (let turn = 2; turn <= maxTurns; turn++) {
-      const continuationPrompt =
-        'Continue. If you have more actions to take (check inbox, send messages, process tasks), do them now. If you are done, say "Heartbeat complete." and stop.';
-      await enqueueTurn(continuationPrompt);
+    // Check for signal after turn 1
+    let exitReason: string | undefined;
+    const signal1 = getLastSignal();
+    if (signal1?.status === 'completed' || signal1?.status === 'blocked') {
+      exitReason = `${signal1.status}${signal1.reason ? `: ${signal1.reason}` : ''}`;
+    }
 
-      // Check if the SB indicated it's done
-      const lastEntry = ledger
-        .listEntries()
-        .filter((e) => e.role === 'assistant')
-        .pop();
-      if (lastEntry?.content.toLowerCase().includes('heartbeat complete')) {
-        break;
+    // Turns 2..N: continuation prompts — the SB signals when it's done
+    if (!exitReason) {
+      for (let turn = 2; turn <= maxTurns; turn++) {
+        clearLastSignal();
+        await enqueueTurn(
+          'Continue working. Use signal_status to indicate when you are completed, blocked, or continuing.'
+        );
+
+        const signal = getLastSignal();
+        if (signal?.status === 'completed' || signal?.status === 'blocked') {
+          exitReason = `${signal.status}${signal.reason ? `: ${signal.reason}` : ''}`;
+          break;
+        }
+        // No signal or 'continuing' → keep going
       }
     }
 
     if (pollTimer) clearInterval(pollTimer);
     const summary = summarizeForSessionEnd(ledger);
 
-    // Don't end the session — leave it resumable so the user or another SB
-    // can attach and follow up. Update phase instead so it's clear the
-    // automated turns are done but the session is still alive.
+    // Map the signal to a session phase. Don't end the session — leave it
+    // resumable so the user or another SB can attach and follow up.
+    const finalSignal = getLastSignal();
+    const phase =
+      finalSignal?.status === 'blocked'
+        ? 'blocked:needs-input'
+        : finalSignal?.status === 'completed'
+          ? 'idle:completed'
+          : 'idle:awaiting-input';
+
     if (runtime.sessionId) {
       await pcp
         .callTool('update_session_phase', {
           agentId,
-          phase: 'idle:awaiting-input',
+          phase,
         })
         .catch(() => undefined);
     }
@@ -3230,10 +3251,17 @@ export async function runChat(options: ChatOptions): Promise<void> {
       sessionId: runtime.sessionId || null,
       summary,
       turnsCompleted: maxTurns,
+      signal: finalSignal || undefined,
     });
 
-    console.log(chalk.dim(`\nSession paused (${maxTurns} turn(s) completed). Resumable with:`));
-    console.log(chalk.cyan(`  sb chat --attach-latest ${agentId}\n`));
+    if (finalSignal?.status === 'blocked') {
+      console.log(chalk.yellow(`\nSession blocked: ${finalSignal.reason || 'needs input'}`));
+    } else if (finalSignal?.status === 'completed') {
+      console.log(chalk.green(`\nSession completed.`));
+    } else {
+      console.log(chalk.dim(`\nSession paused (${maxTurns} turn(s) completed).`));
+    }
+    console.log(chalk.cyan(`  Resume with: sb chat --attach-latest ${agentId}\n`));
     return;
   }
 

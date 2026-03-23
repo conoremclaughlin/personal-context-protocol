@@ -13,8 +13,30 @@
 import type { ContextLedger, LedgerEvictResult } from './context-ledger.js';
 import type { PcpToolCallResult } from '../lib/pcp-client.js';
 
+// ─── Session Status Signal ──────────────────────────────────────
+
+export type SessionStatus = 'completed' | 'blocked' | 'continuing';
+
+export interface SessionSignal {
+  status: SessionStatus;
+  reason?: string;
+  /** Timestamp of last signal */
+  signalledAt: string;
+}
+
+/** Mutable shared state — the main loop reads this after each turn */
+let _lastSignal: SessionSignal | null = null;
+
+export function getLastSignal(): SessionSignal | null {
+  return _lastSignal;
+}
+
+export function clearLastSignal(): void {
+  _lastSignal = null;
+}
+
 /** Tool names that are handled client-locally, not forwarded to PCP */
-export const CLIENT_LOCAL_TOOLS = new Set(['list_context', 'evict_context']);
+export const CLIENT_LOCAL_TOOLS = new Set(['list_context', 'evict_context', 'signal_status']);
 
 export function isClientLocalTool(toolName: string): boolean {
   return CLIENT_LOCAL_TOOLS.has(toolName);
@@ -34,6 +56,8 @@ export function handleClientLocalTool(
       return handleListContext(args, ledger);
     case 'evict_context':
       return handleEvictContext(args, ledger);
+    case 'signal_status':
+      return handleSignalStatus(args);
     default:
       return null;
   }
@@ -148,6 +172,47 @@ function handleEvictContext(
             tokens: e.approxTokens,
             preview: e.content.slice(0, 80),
           })),
+        }),
+      },
+    ],
+  };
+}
+
+// ─── signal_status ──────────────────────────────────────────────
+
+function handleSignalStatus(args: Record<string, unknown>): PcpToolCallResult {
+  const status = args.status as string | undefined;
+  const reason = args.reason as string | undefined;
+
+  const validStatuses: SessionStatus[] = ['completed', 'blocked', 'continuing'];
+  if (!status || !validStatuses.includes(status as SessionStatus)) {
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: false,
+            error: `Invalid status. Must be one of: ${validStatuses.join(', ')}`,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  _lastSignal = {
+    status: status as SessionStatus,
+    reason: reason || undefined,
+    signalledAt: new Date().toISOString(),
+  };
+
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({
+          success: true,
+          signal: _lastSignal,
         }),
       },
     ],
