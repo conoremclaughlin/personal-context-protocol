@@ -140,11 +140,6 @@ import {
 } from './user-settings-handlers';
 
 import {
-  handleGetResumableSessions,
-  getResumableSessionsSchema,
-} from './session-orchestration-handlers';
-
-import {
   handleCreateArtifact,
   handleGetArtifact,
   handleUpdateArtifact,
@@ -3126,47 +3121,6 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         };
       } catch (error) {
         logger.error('Error in get_timezone:', error);
-        return {
-          content: [
-            {
-              type: 'text' as const,
-              text: JSON.stringify({
-                success: false,
-                error: error instanceof Error ? error.message : 'Unknown error',
-              }),
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-  );
-
-  // =====================================================
-  // SESSION ORCHESTRATION TOOLS (agent-to-agent)
-  // =====================================================
-
-  server.registerTool(
-    'get_resumable_sessions',
-    {
-      description: `Get Claude Code sessions that can be resumed. Use this to find sessions from other agents (like Wren) that are waiting to be continued.
-
-Returns sessions with status='resumable' by default. Each session includes:
-- claudeSessionId: The ID to use with 'claude --resume'
-- resumeCommand: Ready-to-use command string
-- context: Brief description of what the session was working on
-- agentId: Which agent owns the session
-
-Example workflow for Myra:
-1. Call get_resumable_sessions(agentId: "wren")
-2. If sessions found, run: claude --resume <claudeSessionId> --message "Continue work, user confirmed X"`,
-      inputSchema: getResumableSessionsSchema,
-    },
-    async (args) => {
-      try {
-        return await handleGetResumableSessions(args, dataComposer);
-      } catch (error) {
-        logger.error('Error in get_resumable_sessions:', error);
         return {
           content: [
             {
