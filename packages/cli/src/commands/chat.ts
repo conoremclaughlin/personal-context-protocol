@@ -2249,6 +2249,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     chip('time', formatNow(runtime.userTimezone), chalk.magenta),
   ].filter(Boolean);
   console.log(bannerParts.join(chalk.dim('  •  ')));
+  if (runtime.sessionId) console.log(chalk.dim(`Session: ${runtime.sessionId}`));
   if (runtime.threadKey) console.log(chalk.dim(`Thread: ${runtime.threadKey}`));
   if (attachedToExistingSession) {
     console.log(
@@ -3212,17 +3213,27 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
     if (pollTimer) clearInterval(pollTimer);
     const summary = summarizeForSessionEnd(ledger);
-    if (runtime.sessionId && !attachedToExistingSession) {
+
+    // Don't end the session — leave it resumable so the user or another SB
+    // can attach and follow up. Update phase instead so it's clear the
+    // automated turns are done but the session is still alive.
+    if (runtime.sessionId) {
       await pcp
-        .callTool('end_session', { agentId, sessionId: runtime.sessionId, summary })
+        .callTool('update_session_phase', {
+          agentId,
+          phase: 'idle:awaiting-input',
+        })
         .catch(() => undefined);
     }
     appendTranscript(runtime.transcriptPath, {
-      type: 'session_end',
+      type: 'session_pause',
       sessionId: runtime.sessionId || null,
       summary,
-      attached: attachedToExistingSession,
+      turnsCompleted: maxTurns,
     });
+
+    console.log(chalk.dim(`\nSession paused (${maxTurns} turn(s) completed). Resumable with:`));
+    console.log(chalk.cyan(`  sb chat --attach-latest ${agentId}\n`));
     return;
   }
 
