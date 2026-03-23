@@ -10,6 +10,7 @@
 
 import type { ToolPolicyState } from './tool-policy.js';
 import type { PcpToolCallResult } from '../lib/pcp-client.js';
+import { isClientLocalTool } from './context-tools.js';
 
 export interface LocalToolCall {
   tool: string;
@@ -70,6 +71,12 @@ async function executeOneToolCall(
   deps: ToolCallExecutorDeps
 ): Promise<ToolCallResult> {
   const { policy, callTool, sessionId, promptForApproval } = deps;
+
+  // Client-local tools (context management, signaling) bypass policy entirely —
+  // they run in-process and never touch the PCP server.
+  if (isClientLocalTool(call.tool)) {
+    return executeTool(call, callTool);
+  }
 
   // 1. Check policy
   const decision = policy.canCallPcpTool(call.tool, sessionId);
