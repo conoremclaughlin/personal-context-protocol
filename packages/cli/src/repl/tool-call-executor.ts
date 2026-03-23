@@ -72,8 +72,11 @@ async function executeOneToolCall(
 ): Promise<ToolCallResult> {
   const { policy, callTool, sessionId, promptForApproval } = deps;
 
-  // Client-local tools (context management, signaling) bypass policy entirely —
-  // they run in-process and never touch the PCP server.
+  // Client-local tools (context management + signaling) always bypass policy.
+  // They operate on the in-memory ledger — no external side effects, no PCP
+  // server calls. Eviction removes from working memory but the JSONL transcript
+  // retains the full immutable log. The SB must have full control over its own
+  // context window without permission gates.
   if (isClientLocalTool(call.tool)) {
     return executeTool(call, callTool);
   }
