@@ -92,6 +92,7 @@ type ChatOptions = {
   profile?: string;
   message?: string;
   nonInteractive?: boolean;
+  maxTurns?: string;
   backendTimeoutSeconds?: string;
   tailTranscript?: string;
   sbStrictTools?: boolean;
@@ -3188,7 +3189,27 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (!message) {
       throw new Error('--non-interactive requires --message "<text>"');
     }
+    const maxTurns = parseInt(options.maxTurns || '1', 10);
+
+    // Turn 1: user-provided message
     await enqueueTurn(message);
+
+    // Turns 2..N: continuation prompts — let the SB decide what to do next
+    for (let turn = 2; turn <= maxTurns; turn++) {
+      const continuationPrompt =
+        'Continue. If you have more actions to take (check inbox, send messages, process tasks), do them now. If you are done, say "Heartbeat complete." and stop.';
+      await enqueueTurn(continuationPrompt);
+
+      // Check if the SB indicated it's done
+      const lastEntry = ledger
+        .listEntries()
+        .filter((e) => e.role === 'assistant')
+        .pop();
+      if (lastEntry?.content.toLowerCase().includes('heartbeat complete')) {
+        break;
+      }
+    }
+
     if (pollTimer) clearInterval(pollTimer);
     const summary = summarizeForSessionEnd(ledger);
     if (runtime.sessionId && !attachedToExistingSession) {
@@ -4665,6 +4686,7 @@ export function registerChatCommand(program: Command): void {
       .option('--auto-run', 'Automatically execute backend turns for new inbox task messages')
       .option('--message <text>', 'Single-turn message for non-interactive mode')
       .option('--non-interactive', 'Run one turn and exit (requires --message)')
+      .option('--max-turns <n>', 'Run up to N conversational turns then exit (requires --message)')
       .option(
         '--backend-timeout-seconds <n>',
         'Backend turn timeout in seconds (default: 120 for --non-interactive, otherwise 1200)'
