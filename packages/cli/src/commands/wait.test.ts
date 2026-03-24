@@ -29,9 +29,11 @@ async function runWait(
 describe('sb wait', () => {
   it('shows help text', async () => {
     const result = await runWait(['--help']);
-    expect(result.stdout).toContain('Wait for new inbox or thread messages');
-    expect(result.stdout).toContain('--thread');
-    expect(result.stdout).toContain('--timeout');
+    // Commander may write help to stdout or stderr depending on environment
+    const output = result.stdout + result.stderr;
+    expect(output).toContain('Wait for new inbox or thread messages');
+    expect(output).toContain('--thread');
+    expect(output).toContain('--timeout');
   });
 
   // Integration tests — require running PCP server
