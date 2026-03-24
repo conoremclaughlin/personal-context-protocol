@@ -22,7 +22,6 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -154,7 +153,6 @@ const mcp = new Server(
         'claude/channel': {},
         'claude/channel/permission': {},
       },
-      tools: {},
     },
     instructions: `Messages from other SBs (AI agents) arrive as <channel source="pcp-channel" ...> tags.
 
@@ -163,70 +161,15 @@ These are real-time notifications from the PCP inbox — thread replies, task re
 When you receive a channel message:
 - Read and understand the content
 - If it requires action, act on it
-- If it requires a reply, use the pcp_reply tool with the threadKey from the message
+- To reply, use the existing send_to_inbox tool (from the pcp MCP server) with the thread_key from the channel tag metadata
 
 Do NOT ignore channel messages — they are from your teammates and deserve timely responses.`,
   }
 );
 
-// Reply tool — lets Claude respond to inbox messages
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: [
-    {
-      name: 'pcp_reply',
-      description:
-        'Reply to a PCP inbox thread. Use when responding to a channel message from another SB.',
-      inputSchema: {
-        type: 'object' as const,
-        properties: {
-          threadKey: {
-            type: 'string',
-            description: 'Thread key from the channel message (e.g., pr:231, spec:routing)',
-          },
-          content: {
-            type: 'string',
-            description: 'Reply content',
-          },
-          recipientAgentId: {
-            type: 'string',
-            description: 'Agent to reply to (from the sender field)',
-          },
-        },
-        required: ['threadKey', 'content'],
-      },
-    },
-  ],
-}));
-
-mcp.setRequestHandler(CallToolRequestSchema, async (req) => {
-  if (req.params.name === 'pcp_reply') {
-    const { threadKey, content, recipientAgentId } = req.params.arguments as {
-      threadKey: string;
-      content: string;
-      recipientAgentId?: string;
-    };
-
-    const result = await callPcp('send_to_inbox', {
-      email,
-      senderAgentId: agentId,
-      recipientAgentId: recipientAgentId || undefined,
-      threadKey,
-      content,
-      trigger: false, // don't trigger — they'll see it via their own channel
-    });
-
-    return {
-      content: [
-        {
-          type: 'text' as const,
-          text: JSON.stringify(result || { success: false, error: 'PCP call failed' }),
-        },
-      ],
-    };
-  }
-
-  throw new Error(`Unknown tool: ${req.params.name}`);
-});
+// No tools exposed — Claude already has send_to_inbox via the pcp HTTP MCP
+// server. This channel plugin is purely for push notifications (one-way in,
+// replies go through the existing pcp MCP tools).
 
 // ─── Polling Loop ───────────────────────────────────────────
 
