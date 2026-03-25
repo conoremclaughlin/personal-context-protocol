@@ -90,6 +90,11 @@ const agentId = resolveAgentId();
 const email = resolveEmail();
 const accessToken = resolveAccessToken();
 
+// Debug startup state
+process.stderr.write(
+  `[pcp-channel] startup: agent=${agentId}, email=${email || '(none)'}, token=${accessToken ? 'yes(' + accessToken.slice(0, 20) + '...)' : 'NO'}, server=${PCP_SERVER_URL}\n`
+);
+
 async function callPcp(
   tool: string,
   args: Record<string, unknown>
@@ -177,22 +182,31 @@ Do NOT ignore channel messages — they are from your teammates and deserve time
 
 // ─── Polling Loop ───────────────────────────────────────────
 
-let lastPollTime = new Date().toISOString(); // only fetch messages after this timestamp
 const seenMessageIds = new Set<string>(); // prevent re-emission across poll cycles
 
 async function pollInbox(): Promise<void> {
   if (!email) return;
 
   try {
+    // Use status: 'unread' — the pointer auto-advances on each get_inbox
+    // call, so messages are only returned once. seenMessageIds provides
+    // belt-and-suspenders dedup.
     const result = await callPcp('get_inbox', {
       email,
       agentId,
-      status: 'all',
-      since: lastPollTime,
+      status: 'unread',
       limit: 20,
     });
 
-    if (!result?.success) return;
+    if (!result?.success) {
+      process.stderr.write(`[pcp-channel] poll failed: ${JSON.stringify(result).slice(0, 200)}\n`);
+      return;
+    }
+    const threadCount = ((result.threadsWithUnread as unknown[]) || []).length;
+    const msgCount = ((result.messages as unknown[]) || []).length;
+    if (threadCount > 0 || msgCount > 0) {
+      process.stderr.write(`[pcp-channel] poll: ${threadCount} threads, ${msgCount} inbox msgs\n`);
+    }
 
     // Check for new thread messages
     const threads = (result.threadsWithUnread as Array<Record<string, unknown>>) || [];
@@ -278,9 +292,9 @@ async function pollInbox(): Promise<void> {
       });
     }
 
-    lastPollTime = new Date().toISOString();
-  } catch {
-    // Silent — polling should not crash the plugin
+    // Read pointer auto-advances on get_inbox — no manual tracking needed
+  } catch (err) {
+    process.stderr.write(`[pcp-channel] poll error: ${err instanceof Error ? err.message : String(err)}\n`);
   }
 }
 
