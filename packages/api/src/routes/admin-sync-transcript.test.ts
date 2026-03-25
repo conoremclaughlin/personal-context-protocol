@@ -210,7 +210,9 @@ describe('POST /sessions/:id/sync-transcript', () => {
 
     mockSupabaseFrom.mockImplementation((table: string) => {
       if (table === 'agent_identities') {
-        return createQueryChain([{ id: 'identity-1', agent_id: 'lumen' }]);
+        return createQueryChain([
+          { id: 'identity-1', agent_id: 'lumen', name: 'Lumen', role: 'SB' },
+        ]);
       }
 
       if (table === 'sessions') {
