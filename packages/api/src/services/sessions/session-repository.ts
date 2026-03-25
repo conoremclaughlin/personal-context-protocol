@@ -37,6 +37,7 @@ function mapDbToSession(row: DbSession): Session {
     agentId: row.agent_id || '',
     identityId: row.identity_id || undefined,
     studioId: row.studio_id || undefined,
+    contactId: row.contact_id || undefined,
     backendSessionId: row.backend_session_id || row.claude_session_id,
 
     type: (metadata.type as SessionType) || 'primary',
@@ -97,6 +98,7 @@ function mapSessionToDb(
     backend: session.backend,
     model: session.model,
     studio_id: session.studioId || null,
+    contact_id: session.contactId || null,
     thread_key: session.threadKey || null,
     metadata: {
       type: session.type,
@@ -132,7 +134,7 @@ export class SessionRepository implements ISessionRepository {
   async findByUserAndAgent(
     userId: string,
     agentId: string,
-    options?: { status?: SessionStatus; type?: SessionType; studioId?: string }
+    options?: { status?: SessionStatus; type?: SessionType; studioId?: string; contactId?: string }
   ): Promise<Session | null> {
     let query = this.supabase
       .from('sessions')
@@ -146,6 +148,15 @@ export class SessionRepository implements ISessionRepository {
 
     if (options?.studioId) {
       query = query.eq('studio_id', options.studioId);
+    }
+
+    // Contact-scoped session isolation: match by contact_id when provided,
+    // or filter to NULL contact_id for owner/system sessions
+    if (options?.contactId) {
+      query = query.eq('contact_id', options.contactId);
+    } else if (options && 'contactId' in options) {
+      // Explicitly passed contactId: undefined → match NULL (owner session)
+      query = query.is('contact_id', null);
     }
 
     if (options?.status) {
@@ -181,7 +192,8 @@ export class SessionRepository implements ISessionRepository {
     userId: string,
     agentId: string,
     threadKey: string,
-    studioId?: string
+    studioId?: string,
+    contactId?: string
   ): Promise<Session | null> {
     let query = this.supabase
       .from('sessions')
@@ -196,6 +208,10 @@ export class SessionRepository implements ISessionRepository {
 
     if (studioId) {
       query = query.eq('studio_id', studioId);
+    }
+
+    if (contactId) {
+      query = query.eq('contact_id', contactId);
     }
 
     const { data, error } = await query;

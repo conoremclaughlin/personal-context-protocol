@@ -229,6 +229,7 @@ export class SessionService implements ISessionService {
         studioId: metadata?.studioId,
         studioHint: metadata?.studioHint,
         recipientSessionId: metadata?.recipientSessionId,
+        contactId: metadata?.contactId,
       });
 
       // 2. Build lock key - must be per agent + session to support sub-agents
@@ -609,6 +610,7 @@ export class SessionService implements ISessionService {
       studioId?: string;
       studioHint?: string;
       recipientSessionId?: string;
+      contactId?: string;
     }
   ): Promise<Session> {
     const type = options?.type || 'primary';
@@ -680,6 +682,7 @@ export class SessionService implements ISessionService {
         const existing = await this.repository.findByUserAndAgent(userId, agentId, {
           type: 'primary',
           ...(resolvedStudioId ? { studioId: resolvedStudioId } : {}),
+          ...(options?.contactId ? { contactId: options.contactId } : {}),
         });
 
         if (existing) {
@@ -712,6 +715,7 @@ export class SessionService implements ISessionService {
       parentSessionId: options?.parentSessionId,
       threadKey: options?.threadKey,
       studioId: resolvedStudioId,
+      contactId: options?.contactId,
       contextTokens: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,

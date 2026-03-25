@@ -41,6 +41,8 @@ export interface RequestContextData {
   workspaceSource?: 'header' | 'default' | 'derived' | 'session';
   /** Conversation ID for channel routing */
   conversationId?: string;
+  /** Contact ID for per-sender session isolation */
+  contactId?: string;
   /** Request timestamp */
   timestamp: Date;
   /** Caller profile for MCP access control */

@@ -245,6 +245,13 @@ export const rememberSchema = userIdentifierBaseSchema.extend({
     .string()
     .optional()
     .describe('Which AI being created this memory (e.g., "wren", "benson"). Null = shared memory.'),
+  contactId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Contact ID for per-sender memory scoping. Auto-inherited from session context when available. Null = owner/system memory.'
+    ),
   studioId: z
     .string()
     .uuid()
@@ -275,6 +282,13 @@ export const recallSchema = userIdentifierBaseSchema.extend({
     .boolean()
     .optional()
     .describe('Include shared memories (agentId=null) when filtering by agentId (default: true)'),
+  contactId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Filter by contact ID for per-sender memory isolation. When set, only returns memories scoped to this contact.'
+    ),
 });
 
 export const forgetSchema = userIdentifierBaseSchema.extend({
@@ -561,6 +575,7 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
     metadata,
     expiresAt: params.expiresAt ? new Date(params.expiresAt) : undefined,
     agentId,
+    contactId: params.contactId,
   });
 
   logger.info(`Memory created for user ${user.id}`, {
@@ -612,6 +627,7 @@ export async function handleRecall(args: unknown, dataComposer: DataComposer) {
     includeExpired: params.includeExpired,
     agentId: params.agentId,
     includeShared: params.includeShared,
+    contactId: params.contactId,
   });
 
   logger.info(`Recalled ${memories.length} memories for user ${user.id}`, {

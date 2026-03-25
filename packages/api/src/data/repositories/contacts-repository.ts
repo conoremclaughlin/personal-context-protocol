@@ -361,6 +361,108 @@ export class ContactsRepository {
   }
 
   /**
+   * Find or create a contact by platform identity.
+   * Used by the gateway to auto-resolve contacts from incoming channel messages.
+   * Handles unique constraint races via catch-and-retry.
+   */
+  async findOrCreateByPlatformId(
+    userId: string,
+    platform: 'telegram' | 'discord' | 'whatsapp' | 'imessage',
+    platformId: string,
+    info?: { name?: string; username?: string }
+  ): Promise<Contact> {
+    // Try to find existing contact first
+    const existing = await this.findByPlatformId(userId, platform, platformId);
+    if (existing) return existing;
+
+    // Auto-create with platform ID
+    const platformColumnMap: Record<string, string> = {
+      telegram: 'telegramId',
+      discord: 'discordId',
+      whatsapp: 'whatsappId',
+      imessage: 'imessageId',
+    };
+
+    const platformField = platformColumnMap[platform];
+    const displayName = info?.name || info?.username || `${platform}:${platformId}`;
+
+    try {
+      return await this.createContact({
+        userId,
+        name: displayName,
+        displayName: info?.name,
+        [platformField]: platformId,
+        ...(platform === 'telegram' && info?.username ? { telegramUsername: info.username } : {}),
+        tags: ['auto-created', 'external'],
+      });
+    } catch (error: unknown) {
+      // Unique constraint race — another request created it first
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505')) {
+        const retried = await this.findByPlatformId(userId, platform, platformId);
+        if (retried) return retried;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Find or create a synthetic group contact.
+   * Groups are contacts with type metadata, keyed by platform + groupId.
+   */
+  async findOrCreateGroupContact(
+    userId: string,
+    platform: 'telegram' | 'discord' | 'whatsapp' | 'slack',
+    groupId: string,
+    info?: { groupName?: string }
+  ): Promise<Contact> {
+    // Groups are stored with the groupId in the platform's ID column
+    // and tagged as 'group' for disambiguation
+    const platformForLookup = platform as 'telegram' | 'discord' | 'whatsapp' | 'imessage';
+    if (platform === 'slack') {
+      // Slack uses discord_id column as a generic "chat platform" slot
+      const existing = await this.findByPlatformId(userId, 'discord', groupId);
+      if (existing && existing.tags.includes('group')) return existing;
+    } else {
+      const existing = await this.findByPlatformId(userId, platformForLookup, groupId);
+      if (existing && existing.tags.includes('group')) return existing;
+    }
+
+    const displayName = info?.groupName || `${platform}-group:${groupId}`;
+
+    const platformColumnMap: Record<string, string> = {
+      telegram: 'telegramId',
+      discord: 'discordId',
+      whatsapp: 'whatsappId',
+      slack: 'discordId', // Slack reuses discord column
+    };
+    const platformField = platformColumnMap[platform];
+
+    try {
+      return await this.createContact({
+        userId,
+        name: displayName,
+        displayName: info?.groupName,
+        [platformField]: groupId,
+        tags: ['auto-created', 'group'],
+      });
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('duplicate') || msg.includes('unique') || msg.includes('23505')) {
+        // Race — try lookup again
+        if (platform === 'slack') {
+          const retried = await this.findByPlatformId(userId, 'discord', groupId);
+          if (retried) return retried;
+        } else {
+          const retried = await this.findByPlatformId(userId, platformForLookup, groupId);
+          if (retried) return retried;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Find contact by platform identity
    */
   async findByPlatformId(

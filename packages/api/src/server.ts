@@ -209,6 +209,51 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       }
     }
 
+    // Resolve contact for per-sender session isolation
+    let contactId: string | undefined;
+    const isExternalChannelForContact =
+      channel === 'telegram' ||
+      channel === 'whatsapp' ||
+      channel === 'discord' ||
+      channel === 'slack';
+    if (isExternalChannelForContact && dataComposer) {
+      try {
+        const platformMap: Record<string, 'telegram' | 'discord' | 'whatsapp' | 'imessage'> = {
+          telegram: 'telegram',
+          discord: 'discord',
+          whatsapp: 'whatsapp',
+          slack: 'discord', // Slack uses discord slot
+        };
+        const contactPlatform = platformMap[channel];
+        if (contactPlatform) {
+          if (isGroupChat) {
+            const groupContact = await dataComposer.repositories.contacts.findOrCreateGroupContact(
+              userId,
+              channel as 'telegram' | 'discord' | 'whatsapp' | 'slack',
+              conversationId,
+              { groupName: (metadata as Record<string, unknown>)?.groupName as string | undefined }
+            );
+            contactId = groupContact.id;
+          } else {
+            const senderContact = await dataComposer.repositories.contacts.findOrCreateByPlatformId(
+              userId,
+              contactPlatform,
+              sender.id,
+              { name: sender.name, username: sender.name }
+            );
+            contactId = senderContact.id;
+          }
+        }
+      } catch (contactError) {
+        // Don't fail message processing if contact resolution fails
+        logger.warn('Failed to resolve contact for sender', {
+          channel,
+          senderId: sender.id,
+          error: contactError instanceof Error ? contactError.message : String(contactError),
+        });
+      }
+    }
+
     // Build SessionRequest
     const request: SessionRequest = {
       userId,
@@ -227,6 +272,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
         media: metadata?.media,
         triggerType: 'message',
         ...(routeStudioHint ? { studioHint: routeStudioHint } : {}),
+        ...(contactId ? { contactId } : {}),
       },
     };
 

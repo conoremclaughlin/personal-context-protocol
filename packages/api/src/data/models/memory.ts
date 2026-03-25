@@ -23,6 +23,7 @@ export interface Memory {
   salience: Salience;
   topics: string[];
   agentId?: string; // Which AI being created this memory (wren, benson, etc). Null = shared memory.
+  contactId?: string; // Per-sender memory scoping. Null = owner/system memory.
   embedding?: number[]; // 1024 dimensions for Voyage AI, nullable for now
   metadata: Record<string, unknown>;
   version: number;
@@ -60,6 +61,7 @@ export interface MemoryCreateInput {
   metadata?: Record<string, unknown>;
   expiresAt?: Date;
   agentId?: string; // Which AI being created this memory
+  contactId?: string; // Per-sender memory scoping
 }
 
 export interface MemorySearchOptions {
@@ -72,6 +74,7 @@ export interface MemorySearchOptions {
   includeExpired?: boolean;
   agentId?: string; // Filter by agent
   includeShared?: boolean; // Include shared memories (agentId=null) when filtering. Default true.
+  contactId?: string; // Filter by contact for per-sender isolation
 }
 
 export type SessionPhase =
@@ -144,6 +147,7 @@ export interface MemoryRow {
   salience: Salience;
   topics: string[];
   agent_id: string | null;
+  contact_id?: string | null; // Optional: RPC functions may not return this column
   embedding_chunks_version?: number | null;
   embedding_chunk_count?: number | null;
   embedding: number[] | null;
@@ -168,6 +172,7 @@ export interface MemoryHistoryRow {
   created_at: string;
   archived_at: string;
   change_type: ChangeType;
+  contact_id: string | null;
 }
 
 export interface SessionRow {

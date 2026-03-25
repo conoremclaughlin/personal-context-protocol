@@ -1560,6 +1560,7 @@ export type Database = {
       memories: {
         Row: {
           agent_id: string | null;
+          contact_id: string | null;
           content: string;
           created_at: string | null;
           embedding_chunk_count: number | null;
@@ -1579,6 +1580,7 @@ export type Database = {
         };
         Insert: {
           agent_id?: string | null;
+          contact_id?: string | null;
           content: string;
           created_at?: string | null;
           embedding_chunk_count?: number | null;
@@ -1598,6 +1600,7 @@ export type Database = {
         };
         Update: {
           agent_id?: string | null;
+          contact_id?: string | null;
           content?: string;
           created_at?: string | null;
           embedding_chunk_count?: number | null;
@@ -1690,6 +1693,7 @@ export type Database = {
         Row: {
           archived_at: string | null;
           change_type: string;
+          contact_id: string | null;
           content: string;
           created_at: string;
           id: string;
@@ -1706,6 +1710,7 @@ export type Database = {
         Insert: {
           archived_at?: string | null;
           change_type?: string;
+          contact_id?: string | null;
           content: string;
           created_at: string;
           id?: string;
@@ -1722,6 +1727,7 @@ export type Database = {
         Update: {
           archived_at?: string | null;
           change_type?: string;
+          contact_id?: string | null;
           content?: string;
           created_at?: string;
           id?: string;
@@ -2582,6 +2588,7 @@ export type Database = {
           backend_session_id: string | null;
           claude_session_id: string | null;
           compacting_since: string | null;
+          contact_id: string | null;
           context: string | null;
           current_phase: string | null;
           ended_at: string | null;
@@ -2608,6 +2615,7 @@ export type Database = {
           backend_session_id?: string | null;
           claude_session_id?: string | null;
           compacting_since?: string | null;
+          contact_id?: string | null;
           context?: string | null;
           current_phase?: string | null;
           ended_at?: string | null;
@@ -2634,6 +2642,7 @@ export type Database = {
           backend_session_id?: string | null;
           claude_session_id?: string | null;
           compacting_since?: string | null;
+          contact_id?: string | null;
           context?: string | null;
           current_phase?: string | null;
           ended_at?: string | null;
