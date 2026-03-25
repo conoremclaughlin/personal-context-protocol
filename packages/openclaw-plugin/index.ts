@@ -41,14 +41,20 @@ interface PcpAuthConfig {
 }
 
 interface BootstrapResponse {
-  identity?: {
-    identity?: string;
+  // Constitution documents (merged: Supabase priority, local fallback)
+  identityFiles?: {
+    self?: string;
     soul?: string;
+    heartbeat?: string;
     values?: string;
     process?: string;
     user?: string;
   };
-  memories?: Array<{ content: string; topicKey?: string }>;
+  // Knowledge summary: budget-constrained, grouped by topic
+  knowledgeSummary?: string | null;
+  // Topic index: all topics with counts + recency
+  topicIndex?: Array<{ topic: string; count: number }> | null;
+  // User info including timezone
   user?: { timezone?: string };
 }
 
@@ -171,24 +177,24 @@ function formatBootstrapContext(bootstrap: BootstrapResponse, agentId: string): 
 
   sections.push(`<pcp-context agentId="${agentId}">`);
 
-  if (bootstrap.identity?.identity) {
-    sections.push(`<identity>\n${truncate(bootstrap.identity.identity, 2000)}\n</identity>`);
+  // Constitution: identity (self), values, soul
+  if (bootstrap.identityFiles?.self) {
+    sections.push(`<identity>\n${truncate(bootstrap.identityFiles.self, 2000)}\n</identity>`);
   }
 
-  if (bootstrap.identity?.values) {
-    sections.push(`<values>\n${truncate(bootstrap.identity.values, 1500)}\n</values>`);
+  if (bootstrap.identityFiles?.values) {
+    sections.push(`<values>\n${truncate(bootstrap.identityFiles.values, 1500)}\n</values>`);
   }
 
-  if (bootstrap.identity?.soul) {
-    sections.push(`<soul>\n${truncate(bootstrap.identity.soul, 1000)}\n</soul>`);
+  if (bootstrap.identityFiles?.soul) {
+    sections.push(`<soul>\n${truncate(bootstrap.identityFiles.soul, 1000)}\n</soul>`);
   }
 
-  if (bootstrap.memories && bootstrap.memories.length > 0) {
-    const memoryLines = bootstrap.memories
-      .slice(0, 10)
-      .map((m) => `- ${m.topicKey ? `[${m.topicKey}] ` : ''}${truncate(m.content, 200)}`)
-      .join('\n');
-    sections.push(`<recent-memories>\n${memoryLines}\n</recent-memories>`);
+  // Knowledge summary (pre-formatted by PCP, grouped by topic)
+  if (bootstrap.knowledgeSummary) {
+    sections.push(
+      `<knowledge-summary>\n${truncate(bootstrap.knowledgeSummary, 3000)}\n</knowledge-summary>`
+    );
   }
 
   if (bootstrap.user?.timezone) {
