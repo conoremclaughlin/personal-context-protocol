@@ -21,7 +21,7 @@ function hasPcpChannelPlugin(cwd: string): boolean {
   if (!existsSync(mcpJsonPath)) return false;
   try {
     const config = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
-    return Boolean(config?.mcpServers?.['pcp-channel']);
+    return Boolean(config?.mcpServers?.['pcp-inbox']);
   } catch {
     return false;
   }
@@ -78,7 +78,7 @@ export class ClaudeAdapter implements BackendAdapter {
     // The channel plugin is a stdio MCP server that bridges PCP's HTTP
     // inbox to Claude Code's channel notification system.
     if (hasPcpChannelPlugin(process.cwd())) {
-      args.push('--dangerously-load-development-channels', 'server:pcp-channel');
+      args.push('--dangerously-load-development-channels', 'server:pcp-inbox');
     }
 
     // Passthrough flags
