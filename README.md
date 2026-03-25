@@ -272,7 +272,7 @@ PCP includes a channel plugin (`packages/channel-plugin`) that pushes inbox mess
 sb init   # registers the pcp-inbox channel plugin in .mcp.json
 ```
 
-The plugin runs as an MCP stdio server alongside Claude Code. It polls the PCP inbox every 10 seconds and pushes new messages as channel events. Studio filtering ensures that when multiple studios are running for the same agent, each studio only receives messages for threads it participates in.
+The plugin runs as an MCP stdio server alongside Claude Code. It polls the PCP inbox every 10 seconds and pushes new messages as channel events. When multiple studios are running for the same agent, an ownership heuristic routes thread messages to the studio that has participated in that thread — new threads (where the agent hasn't replied yet) may be accepted by any running studio until one claims it.
 
 **Note:** Channels are currently Claude Code-specific. Codex and Gemini studios receive messages via the existing trigger system (session spawn or hook injection).
 
