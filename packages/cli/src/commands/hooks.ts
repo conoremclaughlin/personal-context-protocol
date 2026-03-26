@@ -17,7 +17,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
@@ -36,6 +36,36 @@ import { sbDebugLog } from '../lib/sb-debug.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// ─── Hook Logger ─────────────────────────────────────────────────────
+// Always-on structured logging for hook lifecycle events.
+// Writes to ~/.pcp/logs/hooks.log — not gated by SB_DEBUG.
+// Hooks run as short-lived subprocesses, so we append synchronously.
+const HOOK_LOG_DIR = join(homedir(), '.pcp', 'logs');
+const HOOK_LOG_FILE = join(HOOK_LOG_DIR, 'hooks.log');
+let hookLogDirCreated = false;
+
+function hookLog(
+  event: string,
+  data?: Record<string, unknown>
+): void {
+  try {
+    if (!hookLogDirCreated) {
+      mkdirSync(HOOK_LOG_DIR, { recursive: true });
+      hookLogDirCreated = true;
+    }
+    const record = {
+      ts: new Date().toISOString(),
+      pid: process.pid,
+      event,
+      cwd: process.cwd(),
+      ...data,
+    };
+    appendFileSync(HOOK_LOG_FILE, JSON.stringify(record) + '\n');
+  } catch {
+    // Never fail the hook because logging failed
+  }
+}
 
 // ============================================================================
 // Types
@@ -1738,14 +1768,22 @@ function resolveLifecycleBackend(cwd: string, backendOverride?: string): HookCap
 
 async function onSessionStartHandler(options?: { backend?: string }): Promise<void> {
   const stdin = await readStdin();
+  const cwd = process.cwd();
+  const config = getPcpConfig();
+  const agentId = resolveAgentId() || 'unknown';
+  const backend = options?.backend || process.env.PCP_HOOK_BACKEND || 'auto';
+
+  hookLog('on_session_start', {
+    agentId,
+    backend,
+    hasPcpContextToken: !!process.env.PCP_CONTEXT_TOKEN,
+    hasPcpSessionId: !!process.env.PCP_SESSION_ID,
+    hasPcpStudioId: !!process.env.PCP_STUDIO_ID,
+  });
   sbDebugLog('hooks', 'on_session_start_begin', {
     stdinKeys: Object.keys(stdin),
     hookBackendOverride: options?.backend || process.env.PCP_HOOK_BACKEND || null,
   });
-
-  const cwd = process.cwd();
-  const config = getPcpConfig();
-  const agentId = resolveAgentId() || 'unknown';
 
   let { studioId, studioName, role } = getIdentitySessionContext(cwd);
   const studioLine = studioName ? `Studio: ${studioName}` : '';
@@ -1968,8 +2006,20 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
 
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
+  hookLog('on_prompt', {
+    agentId,
+    backend: lifecycleBackend.name,
+  });
+
   const reconciled = await reconcileBackendSignal(cwd, config, agentId, stdin, {
     hookBackend: lifecycleBackend.name,
+  });
+  hookLog('on_prompt_reconciled', {
+    agentId,
+    backend: lifecycleBackend.name,
+    pcpSessionId: reconciled.pcpSessionId || null,
+    threadKey: reconciled.threadKey || null,
+    backendSessionId: reconciled.backendSessionId || null,
   });
   sbDebugLog('hooks', 'on_prompt_reconciled', {
     pcpSessionId: reconciled.pcpSessionId || null,
@@ -1990,7 +2040,7 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       const token = await getValidAccessToken(serverUrl);
       if (token) headers.Authorization = `Bearer ${token}`;
-      await fetch(`${serverUrl}/api/hooks/lifecycle`, {
+      const lifecycleResp = await fetch(`${serverUrl}/api/hooks/lifecycle`, {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -1999,9 +2049,28 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
         }),
         signal: AbortSignal.timeout(5000),
       });
-    } catch {
-      // Silent — don't fail the prompt for this
+      hookLog('cli_attached_set', {
+        agentId,
+        backend: lifecycleBackend.name,
+        sessionId: reconciled.pcpSessionId,
+        status: lifecycleResp.status,
+        ok: lifecycleResp.ok,
+      });
+    } catch (err) {
+      hookLog('cli_attached_failed', {
+        agentId,
+        backend: lifecycleBackend.name,
+        sessionId: reconciled.pcpSessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
+  } else {
+    hookLog('cli_attached_skipped', {
+      agentId,
+      backend: lifecycleBackend.name,
+      reason: 'no pcpSessionId',
+      backendSessionId: reconciled.backendSessionId || null,
+    });
   }
 
   // Skip inbox injection when the channel plugin is active — it handles
@@ -2076,13 +2145,18 @@ async function onStopHandler(options?: { backend?: string }): Promise<void> {
   const stdin = await readStdin();
   const cwd = process.cwd();
   const lifecycleBackend = resolveLifecycleBackend(cwd, options?.backend);
+
+  const config = getPcpConfig();
+  const agentId = resolveAgentId() || 'unknown';
+  hookLog('on_stop', {
+    agentId,
+    backend: lifecycleBackend.name,
+  });
   sbDebugLog('hooks', 'on_stop_begin', {
     stdinKeys: Object.keys(stdin),
     hookBackend: lifecycleBackend.name,
   });
 
-  const config = getPcpConfig();
-  const agentId = resolveAgentId() || 'unknown';
   const parts: string[] = [];
   const reconciled = await reconcileBackendSignal(cwd, config, agentId, stdin, {
     hookBackend: lifecycleBackend.name,
