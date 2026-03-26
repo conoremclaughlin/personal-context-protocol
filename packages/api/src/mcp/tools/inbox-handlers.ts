@@ -112,10 +112,12 @@ const sendToInboxSchema = userIdentifierBaseSchema.extend({
  *
  * Returns true (accept) when:
  * - Agent has no messages on the thread (new/broadcast — accept in any studio)
- * - Agent's messages include one from this studioId
+ * - Agent's messages include one sent FROM this studioId
+ * - Agent's messages include one with recipient.studioId matching this studio
+ *   (cross-studio self-message targeting this studio)
  *
  * Returns false (skip) when:
- * - Agent has messages but none from this studioId (different studio owns it)
+ * - Agent has messages but none match this studioId as sender or recipient
  */
 export function isThreadOwnedByStudio(
   agentMessages: Array<{ metadata: unknown }>,
@@ -127,8 +129,13 @@ export function isThreadOwnedByStudio(
     const pcp = (m.metadata as Record<string, unknown>)?.pcp as
       | Record<string, unknown>
       | undefined;
+    // Check sender studioId (standard ownership)
     const sender = pcp?.sender as Record<string, unknown> | undefined;
-    return sender?.studioId === callerStudioId;
+    if (sender?.studioId === callerStudioId) return true;
+    // Check recipient studioId (cross-studio self-message targeting this studio)
+    const recipient = pcp?.recipient as Record<string, unknown> | undefined;
+    if (recipient?.studioId === callerStudioId) return true;
+    return false;
   });
 }
 
@@ -360,6 +367,13 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       rawMeta.pcp && typeof rawMeta.pcp === 'object'
         ? (rawMeta.pcp as Record<string, unknown>)
         : {};
+    // Cross-studio self-messaging: stamp recipient studio on the message
+    // so the channelPoll filter can recognize the target studio as an owner.
+    const selfStudioRecipient = !!(
+      senderAgentId &&
+      (recipientStudioId || recipientStudioHint) &&
+      allRecipients.includes(senderAgentId)
+    );
     const threadMessageMetadata = {
       ...rawMeta,
       pcp: {
@@ -369,6 +383,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           sessionId: senderSessionId,
           studioId: senderStudioId,
         },
+        ...(selfStudioRecipient && recipientStudioId
+          ? { recipient: { studioId: recipientStudioId } }
+          : {}),
       },
     };
 

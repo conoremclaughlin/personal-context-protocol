@@ -1037,4 +1037,34 @@ describe('isThreadOwnedByStudio', () => {
     const messages = [{ metadata: null }];
     expect(isThreadOwnedByStudio(messages, MY_STUDIO)).toBe(false);
   });
+
+  it('accepts cross-studio self-message via recipient.studioId', () => {
+    // wren-omega sends to wren-review: message has sender.studioId=omega, recipient.studioId=review
+    // When review's channel plugin polls, it should accept because recipient matches
+    const messages = [
+      {
+        metadata: {
+          pcp: {
+            sender: { agentId: 'wren', studioId: OTHER_STUDIO },
+            recipient: { studioId: MY_STUDIO },
+          },
+        },
+      },
+    ];
+    expect(isThreadOwnedByStudio(messages, MY_STUDIO)).toBe(true);
+  });
+
+  it('rejects when recipient.studioId targets a different studio', () => {
+    const messages = [
+      {
+        metadata: {
+          pcp: {
+            sender: { agentId: 'wren', studioId: OTHER_STUDIO },
+            recipient: { studioId: 'some-third-studio' },
+          },
+        },
+      },
+    ];
+    expect(isThreadOwnedByStudio(messages, MY_STUDIO)).toBe(false);
+  });
 });
