@@ -19,6 +19,7 @@ import {
   getParticipants,
   resolveTriggeredAgents,
 } from './thread-handlers.js';
+import { resolveStudioHint } from '../../services/sessions/index.js';
 
 // The thread tables are new and not yet in generated Supabase types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -373,33 +374,11 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     let resolvedRecipientStudioId: string | undefined = recipientStudioId || undefined;
     if (!resolvedRecipientStudioId && recipientStudioHint && senderAgentId) {
       try {
-        if (recipientStudioHint === 'main') {
-          // Resolve 'main' hint using the same semantics as
-          // SessionService.resolveMainStudioId(): branch='main' match,
-          // not "most recently updated studio" (which could be a
-          // review/feature studio that happens to be newer).
-          const { data: mainStudio } = await supabase
-            .from('studios')
-            .select('id')
-            .eq('user_id', resolved.user.id)
-            .eq('branch', 'main')
-            .in('status', ['active', 'idle', 'archived'])
-            .order('updated_at', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-          if (mainStudio?.id) resolvedRecipientStudioId = mainStudio.id;
-        } else {
-          // Resolve named hint — match by slug
-          const { data: namedStudio } = await supabase
-            .from('studios')
-            .select('id')
-            .eq('user_id', resolved.user.id)
-            .eq('slug', recipientStudioHint)
-            .in('status', ['active', 'idle'])
-            .limit(1)
-            .maybeSingle();
-          if (namedStudio?.id) resolvedRecipientStudioId = namedStudio.id;
-        }
+        // Reuse the shared resolution function (worktree path → branch fallback
+        // for 'main', slug match for named hints).
+        resolvedRecipientStudioId = await resolveStudioHint(
+          supabase, resolved.user.id, recipientStudioHint, senderAgentId
+        );
       } catch {
         // Best-effort resolution — proceed without stamping
       }

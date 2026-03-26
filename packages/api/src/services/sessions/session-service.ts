@@ -1376,6 +1376,57 @@ This session will continue with a fresh context after compaction. Your identity,
 }
 
 /**
+ * Resolve a studio hint to a studioId. Shared by SessionService (private
+ * resolveStudioId) and inbox-handlers (cross-studio self-messaging metadata).
+ *
+ * For 'main': worktree path match → branch='main' fallback.
+ * For named hints: slug match.
+ */
+export async function resolveStudioHint(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  hint: string,
+  agentId?: string
+): Promise<string | undefined> {
+  if (hint === 'main') {
+    // 1. Worktree path match (canonical main resolution)
+    const { data: mainByPath } = await supabase
+      .from('studios')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('worktree_path', process.cwd())
+      .neq('status', 'cleaned')
+      .limit(1)
+      .maybeSingle();
+    if (mainByPath?.id) return mainByPath.id;
+
+    // 2. Branch match fallback
+    const { data: mainByBranch } = await supabase
+      .from('studios')
+      .select('id')
+      .eq('user_id', userId)
+      .eq('branch', 'main')
+      .in('status', ['active', 'idle', 'archived'])
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    return mainByBranch?.id || undefined;
+  }
+
+  // Named hint: match by slug
+  let query = supabase
+    .from('studios')
+    .select('id')
+    .eq('user_id', userId)
+    .eq('slug', hint)
+    .in('status', ['active', 'idle'])
+    .limit(1);
+  if (agentId) query = query.eq('agent_id', agentId);
+  const { data: namedStudio } = await query.maybeSingle();
+  return namedStudio?.id || undefined;
+}
+
+/**
  * Factory function to create a SessionService with real dependencies.
  * Use this in production code. For testing, construct SessionService directly with mocks.
  */
