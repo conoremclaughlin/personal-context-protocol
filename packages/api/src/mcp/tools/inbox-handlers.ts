@@ -1200,13 +1200,24 @@ export async function handleUpdateInboxMessage(args: unknown, dataComposer: Data
     };
   }
 
-  // Try thread message — verify agent is a participant on the thread
+  // Try thread message — verify thread belongs to this user AND agent is a participant
   const { data: threadMsg } = await threadTable(supabase, 'inbox_thread_messages')
     .select('id, thread_id')
     .eq('id', messageId)
     .maybeSingle();
 
   if (threadMsg) {
+    // Verify the thread belongs to this user
+    const { data: thread } = await threadTable(supabase, 'inbox_threads')
+      .select('id')
+      .eq('id', threadMsg.thread_id)
+      .eq('user_id', resolved.user.id)
+      .maybeSingle();
+
+    if (!thread) {
+      throw new Error(`Message not found or not accessible: ${messageId}`);
+    }
+
     // Verify this agent is a participant on the thread
     const { data: participant } = await threadTable(supabase, 'inbox_thread_participants')
       .select('agent_id')
