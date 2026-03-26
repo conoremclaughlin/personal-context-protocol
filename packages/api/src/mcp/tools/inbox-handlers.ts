@@ -414,6 +414,15 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     // For new threads, trigger all recipients (existing behavior).
     let agentsToTrigger: string[] = [];
 
+    // Cross-studio self-messaging: when the sender targets themselves in a
+    // different studio (via recipientStudioId/recipientStudioHint), don't
+    // exclude self from trigger resolution.
+    const selfStudioTarget = !!(
+      senderAgentId &&
+      (recipientStudioId || recipientStudioHint) &&
+      allRecipients.includes(senderAgentId)
+    );
+
     if (trigger !== false && !missingSenderSession) {
       if (existingThread && senderAgentId) {
         // Reply: fetch current participants from DB for accurate trigger resolution
@@ -426,10 +435,11 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           triggerAll,
           messageType,
           recipients: allRecipients,
+          selfStudioTarget,
         });
       } else {
-        // New thread: trigger all recipients except sender
-        agentsToTrigger = allRecipients.filter((a) => a !== senderAgentId);
+        // New thread: trigger all recipients (exclude sender unless cross-studio self-message)
+        agentsToTrigger = allRecipients.filter((a) => selfStudioTarget || a !== senderAgentId);
       }
     }
 
@@ -453,9 +463,14 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
         // message on this thread to extract their sender session. This ensures
         // replies route back to the session that originated the conversation,
         // not whatever session happens to be most recently updated.
+        //
+        // Cross-studio self-message: when sender === recipient, skip auto-resolve
+        // from thread history (it would find our own session). The trigger system
+        // will use recipientStudioId to route to the correct studio session.
         let resolvedRecipientSessionId: string | undefined =
           effectiveRecipientSessionId || undefined;
-        if (!resolvedRecipientSessionId) {
+        const isSelfStudioMessage = selfStudioTarget && toAgentId === senderAgentId;
+        if (!resolvedRecipientSessionId && !isSelfStudioMessage) {
           try {
             const { data: recipientMsg } = await threadTable(supabase, 'inbox_thread_messages')
               .select('metadata')
@@ -497,6 +512,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           priority,
           threadKey,
           recipientSessionId: resolvedRecipientSessionId,
+          // Cross-studio self-message: route to the target studio explicitly
+          ...(isSelfStudioMessage && recipientStudioId ? { studioId: recipientStudioId } : {}),
+          ...(isSelfStudioMessage && recipientStudioHint ? { studioHint: recipientStudioHint } : {}),
         };
         const result = gateway.dispatchTrigger(payload);
         if (result.accepted) {

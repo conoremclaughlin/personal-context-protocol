@@ -6,58 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-
-// =====================================================
-// UNIT TESTS: resolveTriggeredAgents (pure logic)
-// =====================================================
-
-// Import the function indirectly by testing through the handler,
-// but since it's not exported, we test the logic via reply_to_thread behavior.
-// For now, we replicate the logic here for direct unit testing.
-
-function resolveTriggeredAgents(opts: {
-  senderAgentId: string;
-  participants: string[];
-  creatorAgentId: string;
-  triggerAgents?: string[];
-  triggerAll?: boolean;
-  messageType?: string;
-  recipients?: string[];
-}): string[] {
-  const { senderAgentId, participants, creatorAgentId, triggerAgents, triggerAll, messageType } =
-    opts;
-
-  if (triggerAgents && triggerAgents.length > 0) {
-    const participantSet = new Set(participants);
-    return triggerAgents.filter((a) => a !== senderAgentId && participantSet.has(a));
-  }
-
-  if (triggerAll) {
-    return participants.filter((a) => a !== senderAgentId);
-  }
-
-  const otherParticipants = participants.filter((a) => a !== senderAgentId);
-
-  if (otherParticipants.length === 0) {
-    return [];
-  }
-
-  if (participants.length === 2) {
-    return otherParticipants;
-  }
-
-  const actionableTypes = new Set(['task_request', 'session_resume']);
-  if (messageType && actionableTypes.has(messageType)) {
-    const targets = opts.recipients?.filter((a) => a !== senderAgentId) ?? otherParticipants;
-    return targets.filter((a) => participants.includes(a));
-  }
-
-  if (senderAgentId !== creatorAgentId) {
-    return [creatorAgentId];
-  }
-
-  return [];
-}
+import { resolveTriggeredAgents } from './thread-handlers';
 
 describe('resolveTriggeredAgents', () => {
   describe('1:1 threads (2 participants)', () => {
@@ -233,6 +182,60 @@ describe('resolveTriggeredAgents', () => {
       });
       // triggerAgents takes precedence (spec: triggerAgents > triggerAll > default)
       expect(result).toEqual(['aster']);
+    });
+  });
+
+  describe('cross-studio self-messaging (selfStudioTarget)', () => {
+    it('should trigger sender on self-thread when selfStudioTarget is true', () => {
+      const result = resolveTriggeredAgents({
+        senderAgentId: 'wren',
+        participants: ['wren'],
+        creatorAgentId: 'wren',
+        selfStudioTarget: true,
+      });
+      expect(result).toEqual(['wren']);
+    });
+
+    it('should NOT trigger sender on self-thread when selfStudioTarget is false', () => {
+      const result = resolveTriggeredAgents({
+        senderAgentId: 'wren',
+        participants: ['wren'],
+        creatorAgentId: 'wren',
+        selfStudioTarget: false,
+      });
+      expect(result).toEqual([]);
+    });
+
+    it('should include sender in triggerAll when selfStudioTarget is true', () => {
+      const result = resolveTriggeredAgents({
+        senderAgentId: 'wren',
+        participants: ['wren', 'lumen'],
+        creatorAgentId: 'wren',
+        triggerAll: true,
+        selfStudioTarget: true,
+      });
+      expect(result).toEqual(['wren', 'lumen']);
+    });
+
+    it('should include sender in explicit triggerAgents when selfStudioTarget is true', () => {
+      const result = resolveTriggeredAgents({
+        senderAgentId: 'wren',
+        participants: ['wren', 'lumen'],
+        creatorAgentId: 'wren',
+        triggerAgents: ['wren'],
+        selfStudioTarget: true,
+      });
+      expect(result).toEqual(['wren']);
+    });
+
+    it('should still exclude sender from explicit triggerAgents without selfStudioTarget', () => {
+      const result = resolveTriggeredAgents({
+        senderAgentId: 'wren',
+        participants: ['wren', 'lumen'],
+        creatorAgentId: 'wren',
+        triggerAgents: ['wren'],
+      });
+      expect(result).toEqual([]);
     });
   });
 });

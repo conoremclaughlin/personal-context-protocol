@@ -148,6 +148,10 @@ export async function isParticipant(
  * 2. triggerAll: true → wake all participants except sender
  * 3. Actionable messages (task_request, session_resume) → trigger all recipients
  * 4. Default: 1:1 → other participant; group non-creator → creator; group creator → no one
+ *
+ * Cross-studio self-messaging: when selfStudioTarget is true, the sender is NOT
+ * excluded from trigger lists. This allows an agent to message themselves in a
+ * different studio (e.g., wren-omega sends a review request to wren-review).
  */
 export function resolveTriggeredAgents(opts: {
   senderAgentId: string;
@@ -157,27 +161,31 @@ export function resolveTriggeredAgents(opts: {
   triggerAll?: boolean;
   messageType?: string;
   recipients?: string[];
+  selfStudioTarget?: boolean;
 }): string[] {
-  const { senderAgentId, participants, creatorAgentId, triggerAgents, triggerAll, messageType } =
-    opts;
+  const { senderAgentId, participants, creatorAgentId, triggerAgents, triggerAll, messageType,
+    selfStudioTarget } = opts;
 
-  // Precedence 1: explicit triggerAgents (filter to actual participants, exclude sender)
+  // When targeting self in a different studio, don't exclude sender from triggers
+  const excludeSelf = (a: string) => selfStudioTarget ? true : a !== senderAgentId;
+
+  // Precedence 1: explicit triggerAgents (filter to actual participants)
   if (triggerAgents && triggerAgents.length > 0) {
     const participantSet = new Set(participants);
-    return triggerAgents.filter((a) => a !== senderAgentId && participantSet.has(a));
+    return triggerAgents.filter((a) => excludeSelf(a) && participantSet.has(a));
   }
 
-  // Precedence 2: triggerAll — everyone except sender
+  // Precedence 2: triggerAll — everyone (except sender unless selfStudioTarget)
   if (triggerAll) {
-    return participants.filter((a) => a !== senderAgentId);
+    return participants.filter(excludeSelf);
   }
 
   // Precedence 3: default rules by thread size
   const otherParticipants = participants.filter((a) => a !== senderAgentId);
 
-  // Self-thread (1 participant): no trigger
+  // Self-thread (1 participant): trigger only if cross-studio self-message
   if (otherParticipants.length === 0) {
-    return [];
+    return selfStudioTarget ? [senderAgentId] : [];
   }
 
   // 1:1 thread (2 participants): trigger the other one
@@ -191,7 +199,7 @@ export function resolveTriggeredAgents(opts: {
   const actionableTypes = new Set(['task_request', 'session_resume']);
   if (messageType && actionableTypes.has(messageType)) {
     // Trigger explicit recipients if provided, otherwise all other participants
-    const targets = opts.recipients?.filter((a) => a !== senderAgentId) ?? otherParticipants;
+    const targets = opts.recipients?.filter(excludeSelf) ?? otherParticipants;
     return targets.filter((a) => participants.includes(a));
   }
 

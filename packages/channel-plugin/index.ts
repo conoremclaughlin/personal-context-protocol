@@ -286,7 +286,15 @@ async function pollInbox(): Promise<void> {
       for (const msg of messages) {
         const msgId = msg.id as string;
         const msgTs = msg.createdAt as string;
-        if (msg.senderAgentId === agentId) continue;
+        // Skip own messages UNLESS they came from a different studio (cross-studio self-message)
+        if (msg.senderAgentId === agentId) {
+          if (!studioId) continue; // no studio context — always skip self
+          const msgPcp = (msg.metadata as Record<string, unknown>)?.pcp as Record<string, unknown> | undefined;
+          const msgSender = msgPcp?.sender as Record<string, unknown> | undefined;
+          const msgStudioId = msgSender?.studioId as string | undefined;
+          if (!msgStudioId || msgStudioId === studioId) continue; // same studio or unknown — skip
+          // Different studio — accept (cross-studio self-message)
+        }
         if (msgId && seenMessageIds.has(msgId)) continue;
         if (lastKnownTs && msgTs && msgTs <= lastKnownTs) continue;
         if (msgId) seenMessageIds.add(msgId);
@@ -324,7 +332,14 @@ async function pollInbox(): Promise<void> {
     const inboxMessages = (result.messages as Array<Record<string, unknown>>) || [];
     for (const msg of inboxMessages) {
       const msgId = msg.id as string;
-      if (msg.senderAgentId === agentId) continue;
+      // Skip own messages unless cross-studio (same logic as thread path above)
+      if (msg.senderAgentId === agentId) {
+        if (!studioId) continue;
+        const msgPcp = (msg.metadata as Record<string, unknown>)?.pcp as Record<string, unknown> | undefined;
+        const msgSender = msgPcp?.sender as Record<string, unknown> | undefined;
+        const msgStudioId = msgSender?.studioId as string | undefined;
+        if (!msgStudioId || msgStudioId === studioId) continue;
+      }
       if (msgId && seenMessageIds.has(msgId)) continue;
       if (!isLegacyMessageForThisStudio(msg)) continue;
       if (msgId) seenMessageIds.add(msgId);
