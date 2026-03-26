@@ -3487,6 +3487,7 @@ export async function runClaude(
     ...(startupContextBlock ? { startupContextBlock } : {}),
     ...sessionContext,
     ...(studioId ? { studioId } : {}),
+    ...(authEnv.PCP_ACCESS_TOKEN ? { accessToken: authEnv.PCP_ACCESS_TOKEN } : {}),
     ...(options.dangerous ? { dangerous: true } : {}),
   });
 

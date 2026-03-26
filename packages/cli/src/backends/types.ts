@@ -16,6 +16,7 @@ export interface BackendConfig {
   backendSessionId?: string;
   backendSessionSeedId?: string;
   studioId?: string;
+  accessToken?: string;
   dangerous?: boolean;
 }
 
