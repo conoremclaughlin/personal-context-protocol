@@ -374,12 +374,16 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     if (!resolvedRecipientStudioId && recipientStudioHint && senderAgentId) {
       try {
         if (recipientStudioHint === 'main') {
-          // Resolve 'main' hint — find the main studio for this user
+          // Resolve 'main' hint using the same semantics as
+          // SessionService.resolveMainStudioId(): branch='main' match,
+          // not "most recently updated studio" (which could be a
+          // review/feature studio that happens to be newer).
           const { data: mainStudio } = await supabase
             .from('studios')
             .select('id')
             .eq('user_id', resolved.user.id)
-            .in('status', ['active', 'idle'])
+            .eq('branch', 'main')
+            .in('status', ['active', 'idle', 'archived'])
             .order('updated_at', { ascending: false })
             .limit(1)
             .maybeSingle();
