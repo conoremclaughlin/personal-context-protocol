@@ -19,6 +19,7 @@ import {
   getParticipants,
   resolveTriggeredAgents,
 } from './thread-handlers.js';
+import { resolveStudioHint } from '../../services/sessions/index.js';
 
 // The thread tables are new and not yet in generated Supabase types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -112,10 +113,12 @@ const sendToInboxSchema = userIdentifierBaseSchema.extend({
  *
  * Returns true (accept) when:
  * - Agent has no messages on the thread (new/broadcast — accept in any studio)
- * - Agent's messages include one from this studioId
+ * - Agent's messages include one sent FROM this studioId
+ * - Agent's messages include one with recipient.studioId matching this studio
+ *   (cross-studio self-message targeting this studio)
  *
  * Returns false (skip) when:
- * - Agent has messages but none from this studioId (different studio owns it)
+ * - Agent has messages but none match this studioId as sender or recipient
  */
 export function isThreadOwnedByStudio(
   agentMessages: Array<{ metadata: unknown }>,
@@ -127,8 +130,13 @@ export function isThreadOwnedByStudio(
     const pcp = (m.metadata as Record<string, unknown>)?.pcp as
       | Record<string, unknown>
       | undefined;
+    // Check sender studioId (standard ownership)
     const sender = pcp?.sender as Record<string, unknown> | undefined;
-    return sender?.studioId === callerStudioId;
+    if (sender?.studioId === callerStudioId) return true;
+    // Check recipient studioId (cross-studio self-message targeting this studio)
+    const recipient = pcp?.recipient as Record<string, unknown> | undefined;
+    if (recipient?.studioId === callerStudioId) return true;
+    return false;
   });
 }
 
@@ -360,6 +368,27 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
       rawMeta.pcp && typeof rawMeta.pcp === 'object'
         ? (rawMeta.pcp as Record<string, unknown>)
         : {};
+    // Cross-studio self-messaging: stamp recipient studio on the message
+    // so the channelPoll filter can recognize the target studio as an owner.
+    // Resolve recipientStudioHint to a studioId if needed.
+    let resolvedRecipientStudioId: string | undefined = recipientStudioId || undefined;
+    if (!resolvedRecipientStudioId && recipientStudioHint && senderAgentId) {
+      try {
+        // Reuse the shared resolution function (worktree path → branch fallback
+        // for 'main', slug match for named hints).
+        resolvedRecipientStudioId = await resolveStudioHint(
+          supabase, resolved.user.id, recipientStudioHint, senderAgentId
+        );
+      } catch {
+        // Best-effort resolution — proceed without stamping
+      }
+    }
+
+    const selfStudioRecipient = !!(
+      senderAgentId &&
+      resolvedRecipientStudioId &&
+      allRecipients.includes(senderAgentId)
+    );
     const threadMessageMetadata = {
       ...rawMeta,
       pcp: {
@@ -369,6 +398,9 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           sessionId: senderSessionId,
           studioId: senderStudioId,
         },
+        ...(selfStudioRecipient
+          ? { recipient: { studioId: resolvedRecipientStudioId } }
+          : {}),
       },
     };
 
@@ -414,6 +446,15 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
     // For new threads, trigger all recipients (existing behavior).
     let agentsToTrigger: string[] = [];
 
+    // Cross-studio self-messaging: when the sender targets themselves in a
+    // different studio (via recipientStudioId/recipientStudioHint), don't
+    // exclude self from trigger resolution.
+    const selfStudioTarget = !!(
+      senderAgentId &&
+      (recipientStudioId || recipientStudioHint) &&
+      allRecipients.includes(senderAgentId)
+    );
+
     if (trigger !== false && !missingSenderSession) {
       if (existingThread && senderAgentId) {
         // Reply: fetch current participants from DB for accurate trigger resolution
@@ -426,10 +467,11 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           triggerAll,
           messageType,
           recipients: allRecipients,
+          selfStudioTarget,
         });
       } else {
-        // New thread: trigger all recipients except sender
-        agentsToTrigger = allRecipients.filter((a) => a !== senderAgentId);
+        // New thread: trigger all recipients (exclude sender unless cross-studio self-message)
+        agentsToTrigger = allRecipients.filter((a) => selfStudioTarget || a !== senderAgentId);
       }
     }
 
@@ -453,9 +495,14 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
         // message on this thread to extract their sender session. This ensures
         // replies route back to the session that originated the conversation,
         // not whatever session happens to be most recently updated.
+        //
+        // Cross-studio self-message: when sender === recipient, skip auto-resolve
+        // from thread history (it would find our own session). The trigger system
+        // will use recipientStudioId to route to the correct studio session.
         let resolvedRecipientSessionId: string | undefined =
           effectiveRecipientSessionId || undefined;
-        if (!resolvedRecipientSessionId) {
+        const isSelfStudioMessage = selfStudioTarget && toAgentId === senderAgentId;
+        if (!resolvedRecipientSessionId && !isSelfStudioMessage) {
           try {
             const { data: recipientMsg } = await threadTable(supabase, 'inbox_thread_messages')
               .select('metadata')
@@ -497,6 +544,13 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           priority,
           threadKey,
           recipientSessionId: resolvedRecipientSessionId,
+          // Cross-studio self-message: route to the target studio explicitly
+          ...(isSelfStudioMessage && resolvedRecipientStudioId
+            ? { studioId: resolvedRecipientStudioId }
+            : {}),
+          ...(isSelfStudioMessage && !resolvedRecipientStudioId && recipientStudioHint
+            ? { studioHint: recipientStudioHint }
+            : {}),
         };
         const result = gateway.dispatchTrigger(payload);
         if (result.accepted) {

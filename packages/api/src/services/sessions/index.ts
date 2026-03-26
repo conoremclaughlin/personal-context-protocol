@@ -8,6 +8,7 @@
 export {
   SessionService,
   createSessionService,
+  resolveStudioHint,
   type SessionServiceConfig,
   type IActivityStream,
 } from './session-service.js';
