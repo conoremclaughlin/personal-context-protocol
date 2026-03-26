@@ -1771,11 +1771,11 @@ async function onSessionStartHandler(options?: { backend?: string }): Promise<vo
   const cwd = process.cwd();
   const config = getPcpConfig();
   const agentId = resolveAgentId() || 'unknown';
-  const backend = options?.backend || process.env.PCP_HOOK_BACKEND || 'auto';
+  const resolvedBackend = resolveLifecycleBackend(cwd, options?.backend);
 
   hookLog('on_session_start', {
     agentId,
-    backend,
+    backend: resolvedBackend.name,
     hasPcpContextToken: !!process.env.PCP_CONTEXT_TOKEN,
     hasPcpSessionId: !!process.env.PCP_SESSION_ID,
     hasPcpStudioId: !!process.env.PCP_STUDIO_ID,
