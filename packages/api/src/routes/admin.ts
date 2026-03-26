@@ -89,6 +89,13 @@ type ChannelRouteRow = {
   agent_identities: ChannelRouteIdentityRow | ChannelRouteIdentityRow[] | null;
 };
 
+type SandboxSettings = {
+  profile?: 'default' | 'pcp-auth';
+  studioAccess?: 'none' | 'ro' | 'rw';
+  network?: 'default' | 'none';
+  includeSiblingStudios?: boolean;
+};
+
 const ADMIN_ACCESS_TOKEN_LIFETIME_SECONDS = 3600; // 1 hour
 const ADMIN_REFRESH_TOKEN_LIFETIME_DAYS = 90;
 const ADMIN_CLIENT_ID = 'dashboard';
@@ -191,6 +198,56 @@ function parseRouteMetadata(input: unknown): Record<string, unknown> {
   }
 
   return input as Record<string, unknown>;
+}
+
+function normalizeSandboxSettings(input: unknown): SandboxSettings | null {
+  if (input == null) return null;
+  if (typeof input !== 'object' || Array.isArray(input)) {
+    throw new Error('sandboxDefaults must be an object or null');
+  }
+
+  const raw = input as Record<string, unknown>;
+  const next: SandboxSettings = {};
+
+  if ('profile' in raw) {
+    if (raw.profile !== 'default' && raw.profile !== 'pcp-auth') {
+      throw new Error('sandboxDefaults.profile must be "default" or "pcp-auth"');
+    }
+    next.profile = raw.profile;
+  }
+
+  if ('studioAccess' in raw) {
+    if (raw.studioAccess !== 'none' && raw.studioAccess !== 'ro' && raw.studioAccess !== 'rw') {
+      throw new Error('sandboxDefaults.studioAccess must be "none", "ro", or "rw"');
+    }
+    next.studioAccess = raw.studioAccess;
+  }
+
+  if ('network' in raw) {
+    if (raw.network !== 'default' && raw.network !== 'none') {
+      throw new Error('sandboxDefaults.network must be "default" or "none"');
+    }
+    next.network = raw.network;
+  }
+
+  if ('includeSiblingStudios' in raw) {
+    if (typeof raw.includeSiblingStudios !== 'boolean') {
+      throw new Error('sandboxDefaults.includeSiblingStudios must be a boolean');
+    }
+    next.includeSiblingStudios = raw.includeSiblingStudios;
+  }
+
+  return next;
+}
+
+function extractIdentitySandboxDefaults(metadata: unknown): SandboxSettings | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const raw = (metadata as Record<string, unknown>).sandboxDefaults;
+  try {
+    return normalizeSandboxSettings(raw);
+  } catch {
+    return null;
+  }
 }
 
 function extractRouteIdentity(route: ChannelRouteRow): ChannelRouteIdentityRow | null {
@@ -881,7 +938,7 @@ async function resolveWorkspaceIdentityScope(
       id: string;
       agent_id: string;
       name: string;
-      role: string | null;
+      role: string;
     } => Boolean(row.id) && Boolean(row.agent_id) && Boolean(row.name)
   );
 
@@ -2062,7 +2119,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
     const { data: identity, error: identityError } = await supabase
       .from('agent_identities')
       .select(
-        'id, agent_id, name, role, description, backend, studio_hint, workspace_id, updated_at'
+        'id, agent_id, name, role, description, backend, metadata, studio_hint, workspace_id, updated_at'
       )
       .eq('user_id', authReq.pcpUserId)
       .eq('workspace_id', authReq.pcpWorkspaceId)
@@ -2175,6 +2232,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         description: identity.description,
         backend: identity.backend,
         studioHint: identity.studio_hint || null,
+        sandboxDefaults: extractIdentitySandboxDefaults(identity.metadata),
         updatedAt: identity.updated_at,
       },
       studios: (studiosData || []).map((s: Record<string, unknown>) => ({
@@ -2514,10 +2572,28 @@ router.patch('/routing/identities/:identityId', async (req: Request, res: Respon
   try {
     const authReq = req as AdminAuthRequest;
     const { identityId } = req.params;
-    const { studioHint } = req.body;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const studioHint = 'studioHint' in body ? normalizeNullableText(body.studioHint) : undefined;
+    let sandboxDefaults: SandboxSettings | null | undefined = undefined;
 
-    if (typeof studioHint !== 'string' || !studioHint.trim()) {
-      res.status(400).json({ error: 'studioHint is required (non-empty string)' });
+    if ('sandboxDefaults' in body) {
+      try {
+        sandboxDefaults = normalizeSandboxSettings(body.sandboxDefaults);
+      } catch (error) {
+        res.status(400).json({
+          error: error instanceof Error ? error.message : 'Invalid sandboxDefaults payload',
+        });
+        return;
+      }
+    }
+
+    if (studioHint === undefined && sandboxDefaults === undefined) {
+      res.status(400).json({ error: 'Provide studioHint and/or sandboxDefaults' });
+      return;
+    }
+
+    if ('studioHint' in body && !studioHint) {
+      res.status(400).json({ error: 'studioHint must be a non-empty string when provided' });
       return;
     }
 
@@ -2528,7 +2604,7 @@ router.patch('/routing/identities/:identityId', async (req: Request, res: Respon
     // Verify identity belongs to user + workspace
     const { data: identity, error: fetchError } = await supabase
       .from('agent_identities')
-      .select('id, agent_id')
+      .select('id, agent_id, metadata')
       .eq('id', identityId)
       .eq('user_id', authReq.pcpUserId)
       .eq('workspace_id', authReq.pcpWorkspaceId)
@@ -2539,9 +2615,28 @@ router.patch('/routing/identities/:identityId', async (req: Request, res: Respon
       return;
     }
 
+    const updates: Record<string, unknown> = {};
+    if (typeof studioHint === 'string') {
+      updates.studio_hint = studioHint;
+    }
+    if (sandboxDefaults !== undefined) {
+      const metadata =
+        identity.metadata &&
+        typeof identity.metadata === 'object' &&
+        !Array.isArray(identity.metadata)
+          ? { ...(identity.metadata as Record<string, unknown>) }
+          : {};
+      if (sandboxDefaults === null) {
+        delete metadata.sandboxDefaults;
+      } else {
+        metadata.sandboxDefaults = sandboxDefaults;
+      }
+      updates.metadata = metadata;
+    }
+
     const { error: updateError } = await supabase
       .from('agent_identities')
-      .update({ studio_hint: studioHint.trim() })
+      .update(updates)
       .eq('id', identityId);
 
     if (updateError) {
@@ -2550,7 +2645,12 @@ router.patch('/routing/identities/:identityId', async (req: Request, res: Respon
       return;
     }
 
-    res.json({ success: true, identityId, studioHint: studioHint.trim() });
+    res.json({
+      success: true,
+      identityId,
+      studioHint: studioHint?.trim(),
+      sandboxDefaults: sandboxDefaults ?? extractIdentitySandboxDefaults(identity.metadata),
+    });
   } catch (error) {
     logger.error('Failed to update identity studio_hint:', error);
     res.status(500).json(errorJson('Failed to update identity', error));

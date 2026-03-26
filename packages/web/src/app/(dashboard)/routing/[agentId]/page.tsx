@@ -66,6 +66,13 @@ interface AgentStudio {
   routePatterns: string[];
 }
 
+interface AgentSandboxDefaults {
+  profile?: 'default' | 'pcp-auth';
+  studioAccess?: 'none' | 'ro' | 'rw';
+  network?: 'default' | 'none';
+  includeSiblingStudios?: boolean;
+}
+
 interface AgentRoutingResponse {
   heartbeatProcessingEnabled: boolean;
   agent: {
@@ -76,6 +83,7 @@ interface AgentRoutingResponse {
     description: string | null;
     backend: string | null;
     studioHint: string;
+    sandboxDefaults: AgentSandboxDefaults | null;
     updatedAt: string;
   };
   studios: AgentStudio[];
@@ -89,6 +97,13 @@ interface RouteFormState {
   chatId: string;
   studioHint: string;
   isActive: boolean;
+}
+
+interface SandboxDefaultsFormState {
+  profile: '' | 'default' | 'pcp-auth';
+  studioAccess: '' | 'none' | 'ro' | 'rw';
+  network: '' | 'default' | 'none';
+  includeSiblingStudios: boolean;
 }
 
 const PLATFORM_OPTIONS = ['telegram', 'whatsapp', 'discord', 'slack', 'email'];
@@ -128,6 +143,26 @@ function initialFormFromRoute(route: AgentRoute): RouteFormState {
     studioHint: route.studioHint || '',
     isActive: route.isActive,
   };
+}
+
+function initialSandboxForm(
+  sandboxDefaults: AgentSandboxDefaults | null | undefined
+): SandboxDefaultsFormState {
+  return {
+    profile: sandboxDefaults?.profile || '',
+    studioAccess: sandboxDefaults?.studioAccess || '',
+    network: sandboxDefaults?.network || '',
+    includeSiblingStudios: sandboxDefaults?.includeSiblingStudios ?? true,
+  };
+}
+
+function sandboxSummary(sandboxDefaults: AgentSandboxDefaults | null | undefined): string {
+  if (!sandboxDefaults) return 'Inherit / manual';
+  const profile = sandboxDefaults.profile || 'default';
+  const studioAccess = sandboxDefaults.studioAccess || 'rw';
+  const network = sandboxDefaults.network || 'default';
+  const siblings = sandboxDefaults.includeSiblingStudios === false ? 'siblings off' : 'siblings on';
+  return `${profile} · ${studioAccess} · ${network} · ${siblings}`;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -170,6 +205,28 @@ export default function AgentRoutingPage() {
     },
   });
 
+  const [editingSandboxDefaults, setEditingSandboxDefaults] = useState(false);
+  const [sandboxDefaultsForm, setSandboxDefaultsForm] = useState<SandboxDefaultsFormState>({
+    profile: '',
+    studioAccess: '',
+    network: '',
+    includeSiblingStudios: true,
+  });
+
+  const updateSandboxDefaultsMutation = useMutation({
+    mutationFn: ({
+      identityId,
+      sandboxDefaults,
+    }: {
+      identityId: string;
+      sandboxDefaults: AgentSandboxDefaults | null;
+    }) => apiPatch(`/api/admin/routing/identities/${identityId}`, { sandboxDefaults }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['routing-agent', agentId] });
+      setEditingSandboxDefaults(false);
+    },
+  });
+
   // Reminder studio editing
   const [editingReminderId, setEditingReminderId] = useState<string | null>(null);
   const [reminderStudioValue, setReminderStudioValue] = useState('');
@@ -205,6 +262,11 @@ export default function AgentRoutingPage() {
     if (!selectedRoute) return;
     setEditForm(initialFormFromRoute(selectedRoute));
   }, [editingRouteId, data?.routes]);
+
+  useEffect(() => {
+    if (!data?.agent || editingSandboxDefaults) return;
+    setSandboxDefaultsForm(initialSandboxForm(data.agent.sandboxDefaults));
+  }, [data?.agent, editingSandboxDefaults]);
 
   const createRouteMutation = useApiPost<{ route: AgentRoute }, Record<string, unknown>>(
     '/api/admin/routing/routes',
@@ -246,6 +308,7 @@ export default function AgentRoutingPage() {
     updateRouteMutation.error?.message ||
     deleteRouteMutation.error?.message ||
     updateHomeStudioMutation.error?.message ||
+    updateSandboxDefaultsMutation.error?.message ||
     updateReminderStudioMutation.error?.message;
 
   const selectClassName =
@@ -356,6 +419,152 @@ export default function AgentRoutingPage() {
                     }}
                   >
                     {studioHintLabel(data.agent.studioHint, studios)}
+                    <Pencil className="h-3 w-3 text-gray-400" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          {data?.agent && (
+            <div className="mb-6 flex items-start justify-between gap-4 border-b border-gray-100 pb-4">
+              <div className="flex items-start gap-2.5 text-sm text-gray-500">
+                <Info className="mt-0.5 h-4 w-4 text-gray-400" />
+                <div>
+                  <div className="text-gray-700 font-medium">Sandbox defaults</div>
+                  <div className="mt-1">
+                    Advisory defaults for studio sandboxes. These shape local studio runtime
+                    behavior; the internal container mount path remains <code>/studio</code>.
+                  </div>
+                </div>
+              </div>
+              <div className="min-w-[280px] shrink-0">
+                {editingSandboxDefaults ? (
+                  <div className="space-y-2 rounded-md border border-gray-200 p-3">
+                    <div className="grid gap-2 sm:grid-cols-3">
+                      <label className="text-xs text-gray-500">
+                        Profile
+                        <select
+                          className={`${selectClassName} mt-1`}
+                          value={sandboxDefaultsForm.profile}
+                          onChange={(event) =>
+                            setSandboxDefaultsForm((current) => ({
+                              ...current,
+                              profile: event.target.value as SandboxDefaultsFormState['profile'],
+                            }))
+                          }
+                        >
+                          <option value="">Inherit / manual</option>
+                          <option value="default">default</option>
+                          <option value="pcp-auth">pcp-auth</option>
+                        </select>
+                      </label>
+                      <label className="text-xs text-gray-500">
+                        Studio access
+                        <select
+                          className={`${selectClassName} mt-1`}
+                          value={sandboxDefaultsForm.studioAccess}
+                          onChange={(event) =>
+                            setSandboxDefaultsForm((current) => ({
+                              ...current,
+                              studioAccess: event.target
+                                .value as SandboxDefaultsFormState['studioAccess'],
+                            }))
+                          }
+                        >
+                          <option value="">Default</option>
+                          <option value="none">none</option>
+                          <option value="ro">ro</option>
+                          <option value="rw">rw</option>
+                        </select>
+                      </label>
+                      <label className="text-xs text-gray-500">
+                        Network
+                        <select
+                          className={`${selectClassName} mt-1`}
+                          value={sandboxDefaultsForm.network}
+                          onChange={(event) =>
+                            setSandboxDefaultsForm((current) => ({
+                              ...current,
+                              network: event.target.value as SandboxDefaultsFormState['network'],
+                            }))
+                          }
+                        >
+                          <option value="">Default</option>
+                          <option value="default">default</option>
+                          <option value="none">none</option>
+                        </select>
+                      </label>
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-gray-600">
+                      <input
+                        type="checkbox"
+                        checked={sandboxDefaultsForm.includeSiblingStudios}
+                        onChange={(event) =>
+                          setSandboxDefaultsForm((current) => ({
+                            ...current,
+                            includeSiblingStudios: event.target.checked,
+                          }))
+                        }
+                      />
+                      Mount sibling studios under the shared studios area
+                    </label>
+                    <div className="flex items-center justify-end gap-2">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSandboxDefaultsForm(initialSandboxForm(data.agent.sandboxDefaults));
+                          setEditingSandboxDefaults(false);
+                        }}
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={updateSandboxDefaultsMutation.isPending}
+                        onClick={() => {
+                          const hasAnySandboxOverride =
+                            sandboxDefaultsForm.profile ||
+                            sandboxDefaultsForm.studioAccess ||
+                            sandboxDefaultsForm.network ||
+                            sandboxDefaultsForm.includeSiblingStudios === false;
+
+                          updateSandboxDefaultsMutation.mutate({
+                            identityId: data.agent.id,
+                            sandboxDefaults: hasAnySandboxOverride
+                              ? {
+                                  ...(sandboxDefaultsForm.profile
+                                    ? { profile: sandboxDefaultsForm.profile }
+                                    : {}),
+                                  ...(sandboxDefaultsForm.studioAccess
+                                    ? { studioAccess: sandboxDefaultsForm.studioAccess }
+                                    : {}),
+                                  ...(sandboxDefaultsForm.network
+                                    ? { network: sandboxDefaultsForm.network }
+                                    : {}),
+                                  ...(sandboxDefaultsForm.includeSiblingStudios === false
+                                    ? { includeSiblingStudios: false }
+                                    : {}),
+                                }
+                              : null,
+                          });
+                        }}
+                      >
+                        <Save className="mr-2 h-4 w-4" />
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    className="inline-flex min-h-[40px] items-center gap-2 rounded-md border border-gray-200 px-3 py-2 text-left text-sm font-medium text-gray-700 hover:bg-gray-50 hover:border-gray-300 transition-colors cursor-pointer"
+                    onClick={() => {
+                      setSandboxDefaultsForm(initialSandboxForm(data.agent.sandboxDefaults));
+                      setEditingSandboxDefaults(true);
+                    }}
+                  >
+                    <span>{sandboxSummary(data.agent.sandboxDefaults)}</span>
                     <Pencil className="h-3 w-3 text-gray-400" />
                   </button>
                 )}
