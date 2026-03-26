@@ -42,8 +42,12 @@ import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { installHooks, callPcpTool } from './hooks.js';
 import { loadAuth, decodeJwtPayload, isTokenExpired } from '../auth/tokens.js';
-import { resolveAgentId } from '../backends/identity.js';
-import { registerStudioSandboxCommands } from './studio-sandbox.js';
+import { resolveAgentId, type StudioSandboxPreferences } from '../backends/identity.js';
+import {
+  formatSandboxPreferenceSummary,
+  getStudioSandboxRuntimeStatus,
+  registerStudioSandboxCommands,
+} from './studio-sandbox.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -60,6 +64,7 @@ interface StudioIdentity {
   branch: string;
   createdAt: string;
   createdBy?: string;
+  sandbox?: StudioSandboxPreferences;
 }
 
 interface StudioInfo {
@@ -1128,6 +1133,17 @@ function listCommand(): void {
       if (ws.identity.createdBy) {
         console.log(chalk.dim(`    Owner:  ${ws.identity.createdBy}`));
       }
+    }
+    try {
+      const sandbox = getStudioSandboxRuntimeStatus(ws.path);
+      console.log(
+        chalk.dim(`    Sandbox:`) +
+          ' ' +
+          formatSandboxPreferenceSummary(ws.identity?.sandbox) +
+          chalk.dim(` (${sandbox.running ? 'running' : 'stopped'})`)
+      );
+    } catch {
+      // Non-fatal: stale or broken worktrees can fail git-based sandbox introspection.
     }
     console.log('');
   }

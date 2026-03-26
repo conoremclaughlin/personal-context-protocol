@@ -125,6 +125,40 @@ describe('studio sandbox planning', () => {
     expect(plan.mounts).toEqual([]);
     expect(plan.studioAccess).toBe('none');
   });
+
+  it('uses persisted sandbox defaults from .pcp/identity.json when CLI flags are absent', () => {
+    const repoRoot = initRepo(join(tmpRoot, 'repo-defaults'));
+    const studioPath = join(tmpRoot, 'repo-defaults--alpha');
+    git(`worktree add -b lumen/studio/alpha "${studioPath}"`, repoRoot);
+
+    mkdirSync(join(studioPath, '.pcp'), { recursive: true });
+    writeFileSync(
+      join(studioPath, '.pcp', 'identity.json'),
+      JSON.stringify(
+        {
+          agentId: 'lumen',
+          studio: 'alpha',
+          sandbox: {
+            profile: 'default',
+            studioAccess: 'ro',
+            network: 'none',
+            includeSiblingStudios: false,
+          },
+        },
+        null,
+        2
+      ),
+      'utf-8'
+    );
+
+    const plan = buildStudioSandboxPlan(studioPath);
+
+    expect(plan.profile).toBe('default');
+    expect(plan.studioAccess).toBe('ro');
+    expect(plan.network).toBe('none');
+    expect(plan.mounts.some((mount) => mount.target.startsWith('/studios/'))).toBe(false);
+    expect(plan.mounts.find((mount) => mount.target === '/studio')?.readOnly).toBe(true);
+  });
 });
 
 describe('extra mount parsing', () => {
