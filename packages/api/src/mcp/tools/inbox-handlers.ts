@@ -369,9 +369,41 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
         : {};
     // Cross-studio self-messaging: stamp recipient studio on the message
     // so the channelPoll filter can recognize the target studio as an owner.
+    // Resolve recipientStudioHint to a studioId if needed.
+    let resolvedRecipientStudioId: string | undefined = recipientStudioId || undefined;
+    if (!resolvedRecipientStudioId && recipientStudioHint && senderAgentId) {
+      try {
+        if (recipientStudioHint === 'main') {
+          // Resolve 'main' hint — find the main studio for this user
+          const { data: mainStudio } = await supabase
+            .from('studios')
+            .select('id')
+            .eq('user_id', resolved.user.id)
+            .in('status', ['active', 'idle'])
+            .order('updated_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (mainStudio?.id) resolvedRecipientStudioId = mainStudio.id;
+        } else {
+          // Resolve named hint — match by slug
+          const { data: namedStudio } = await supabase
+            .from('studios')
+            .select('id')
+            .eq('user_id', resolved.user.id)
+            .eq('slug', recipientStudioHint)
+            .in('status', ['active', 'idle'])
+            .limit(1)
+            .maybeSingle();
+          if (namedStudio?.id) resolvedRecipientStudioId = namedStudio.id;
+        }
+      } catch {
+        // Best-effort resolution — proceed without stamping
+      }
+    }
+
     const selfStudioRecipient = !!(
       senderAgentId &&
-      (recipientStudioId || recipientStudioHint) &&
+      resolvedRecipientStudioId &&
       allRecipients.includes(senderAgentId)
     );
     const threadMessageMetadata = {
@@ -383,8 +415,8 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           sessionId: senderSessionId,
           studioId: senderStudioId,
         },
-        ...(selfStudioRecipient && recipientStudioId
-          ? { recipient: { studioId: recipientStudioId } }
+        ...(selfStudioRecipient
+          ? { recipient: { studioId: resolvedRecipientStudioId } }
           : {}),
       },
     };
@@ -530,8 +562,12 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
           threadKey,
           recipientSessionId: resolvedRecipientSessionId,
           // Cross-studio self-message: route to the target studio explicitly
-          ...(isSelfStudioMessage && recipientStudioId ? { studioId: recipientStudioId } : {}),
-          ...(isSelfStudioMessage && recipientStudioHint ? { studioHint: recipientStudioHint } : {}),
+          ...(isSelfStudioMessage && resolvedRecipientStudioId
+            ? { studioId: resolvedRecipientStudioId }
+            : {}),
+          ...(isSelfStudioMessage && !resolvedRecipientStudioId && recipientStudioHint
+            ? { studioHint: recipientStudioHint }
+            : {}),
         };
         const result = gateway.dispatchTrigger(payload);
         if (result.accepted) {
