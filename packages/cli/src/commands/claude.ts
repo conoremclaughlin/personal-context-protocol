@@ -2049,9 +2049,11 @@ export function getBackendLocalSessionsForProject(
 ): BackendLocalSessionSummary[] {
   if (backend === 'claude') return getClaudeLocalSessionsForProject(cwd, limit);
   if (backend === 'codex') {
-    return getCodexLocalSessionsForProject(cwd, limit, {
-      includeExecSources: options.includeAllSources,
-    });
+    return getCodexLocalSessionsForProject(
+      cwd,
+      limit,
+      options.includeAllSources ? { includeExecSources: true } : {}
+    );
   }
   if (backend === 'gemini') return getGeminiLocalSessionsForProject(cwd, limit);
   return [];

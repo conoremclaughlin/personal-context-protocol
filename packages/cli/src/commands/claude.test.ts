@@ -12,6 +12,7 @@ import {
   filterPcpSessionsForContext,
   filterUntrackedLocalClaudeSessions,
   buildSessionPickerLabel,
+  getBackendLocalSessionsForProject,
   getClaudeLocalSessionsForProject,
   getKnownClaudeSessionIds,
   getCodexLocalSessionsForProject,
@@ -1330,6 +1331,14 @@ describe('getCodexLocalSessionsForProject', () => {
         includeExecSources: false,
       });
       expect(cliOnlySessions.map((session) => session.sessionId)).toEqual([matchingSessionId]);
+
+      const defaultBackendSessions = getBackendLocalSessionsForProject('codex', projectPath, 10, {
+        includeAllSources: false,
+      });
+      expect(defaultBackendSessions.map((session) => session.sessionId)).toEqual([
+        nonCliSessionId,
+        matchingSessionId,
+      ]);
 
       const sessionsIncludingExec = getCodexLocalSessionsForProject(projectPath, 10, {
         includeExecSources: true,
