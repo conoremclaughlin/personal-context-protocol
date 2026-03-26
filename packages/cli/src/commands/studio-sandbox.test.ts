@@ -91,7 +91,9 @@ describe('studio sandbox planning', () => {
       `/studios/${basename(studioPath)}`
     );
 
-    const gitMount = plan.mounts.find((mount) => mount.reason.includes('worktree .git indirection'));
+    const gitMount = plan.mounts.find((mount) =>
+      mount.reason.includes('worktree .git indirection')
+    );
     expect(gitMount?.source.endsWith(join(basename(repoRoot), '.git'))).toBe(true);
     expect(gitMount?.target.endsWith(join(basename(repoRoot), '.git'))).toBe(true);
 
@@ -146,9 +148,15 @@ describe('backend auth selection', () => {
   });
 
   it('mounts backend auth directories read-only by default', () => {
+    const codexDir = join(homedir(), '.codex');
+    mkdirSync(codexDir, { recursive: true });
+
     const repoRoot = initRepo(join(tmpdir(), `pcp-studio-sandbox-auth-${Date.now()}`, 'repo-auth'));
     const plan = buildStudioSandboxPlan(repoRoot, { backendAuth: ['codex'] });
     const authMount = plan.mounts.find((mount) => mount.reason === 'codex auth/config');
+
+    expect(authMount).toBeTruthy();
+    expect(authMount?.source).toBe(codexDir);
     expect(authMount?.readOnly).toBe(true);
   });
 });
