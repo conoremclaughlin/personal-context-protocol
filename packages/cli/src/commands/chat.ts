@@ -1884,34 +1884,52 @@ export async function runChat(options: ChatOptions): Promise<void> {
   if (options.contactId) {
     runtime.contactId = options.contactId;
   } else if (options.sender) {
-    // --sender resolves platform:id to a contact via the resolve_contact MCP tool
+    // --sender resolves platform:id to a contact via the admin API
     const colonIdx = options.sender.indexOf(':');
     if (colonIdx === -1) {
       console.error(chalk.red('--sender must be in format platform:id (e.g., telegram:99887766)'));
       process.exit(1);
     }
-    const platform = options.sender.slice(0, colonIdx);
+    const platform = options.sender.split(':')[0];
     const platformId = options.sender.slice(colonIdx + 1);
     try {
-      const result = (await pcp
-        .callTool('resolve_contact', { platform, platformId, autoCreate: true })
-        .catch(() => null)) as Record<string, unknown> | null;
-      const contact = (result as any)?.contact;
-      if (contact?.id) {
-        runtime.contactId = contact.id;
-        console.log(chalk.dim(`Resolved sender ${platform}:${platformId} → contact ${contact.id}`));
+      const { getPcpServerUrl } = await import('../lib/pcp-mcp.js');
+      const { getValidAccessToken } = await import('../auth/tokens.js');
+      const serverUrl = getPcpServerUrl().replace(/\/+$/, '');
+      const token = await getValidAccessToken(serverUrl);
+      if (!token) throw new Error('Not authenticated');
+
+      const resp = await fetch(`${serverUrl}/api/admin/contacts/resolve`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ platform, platformId, autoCreate: true }),
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as { contact?: { id?: string; name?: string } };
+        if (data.contact?.id) {
+          runtime.contactId = data.contact.id;
+          console.log(
+            chalk.dim(
+              `Resolved sender ${platform}:${platformId} → contact ${data.contact.name || data.contact.id}`
+            )
+          );
+        }
       } else {
+        const errText = await resp.text().catch(() => '');
         console.log(
           chalk.yellow(
-            `Could not resolve sender ${platform}:${platformId}. ` +
-              'The resolve_contact tool may not be available yet. Use --contact-id <uuid> instead.'
+            `Could not resolve sender: ${errText || resp.statusText}. Continuing without contact scope.`
           )
         );
       }
-    } catch {
+    } catch (error) {
       console.log(
         chalk.yellow(
-          `Failed to resolve sender. Use --contact-id <uuid> for direct contact scoping.`
+          `Failed to resolve sender: ${error instanceof Error ? error.message : String(error)}. ` +
+            `Use --contact-id <uuid> for direct contact scoping.`
         )
       );
     }
