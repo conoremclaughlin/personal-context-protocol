@@ -159,6 +159,13 @@ function rewriteLoopbackUrl(rawUrl: string): string {
   return rawUrl;
 }
 
+function resolveSandboxServerUrl(): string {
+  return rewriteLoopbackUrl(process.env.PCP_SERVER_URL || 'http://localhost:3001').replace(
+    /\/+$/,
+    ''
+  );
+}
+
 function ensurePatchedMcpConfig(studioPath: string): string | undefined {
   const sourcePath = join(studioPath, '.mcp.json');
   if (!existsSync(sourcePath)) return undefined;
@@ -353,7 +360,7 @@ export function buildStudioSandboxPlan(
     const sourceDir = BACKEND_AUTH_DIRS[backend];
     if (existsSync(sourceDir)) {
       mounts.push(
-        makeMount(sourceDir, `${CONTAINER_HOME}/.${backend}`, false, `${backend} auth/config`)
+        makeMount(sourceDir, `${CONTAINER_HOME}/.${backend}`, true, `${backend} auth/config`)
       );
     }
   }
@@ -380,6 +387,7 @@ export function buildStudioSandboxPlan(
     mounts,
     env: {
       HOME: CONTAINER_HOME,
+      PCP_SERVER_URL: resolveSandboxServerUrl(),
       ...(context.agentId ? { AGENT_ID: context.agentId } : {}),
       ...(context.studioId ? { PCP_STUDIO_ID: context.studioId } : {}),
       PCP_SANDBOX: 'docker',
@@ -398,7 +406,7 @@ export function buildDockerRunArgs(
   plan: StudioSandboxPlan,
   options: { detach?: boolean; command?: string[]; interactive?: boolean } = {}
 ): string[] {
-  const args = ['run', '--rm', '--init', '--name', plan.containerName];
+  const args = ['run', '--rm', '--name', plan.containerName];
 
   if (options.detach) {
     args.push('-d');

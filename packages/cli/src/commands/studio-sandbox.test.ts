@@ -79,6 +79,7 @@ describe('studio sandbox planning', () => {
     expect(plan.studioAccess).toBe('rw');
     expect(plan.network).toBe('default');
     expect(plan.containerName).toContain('pcp-studio-sandbox-alpha-');
+    expect(plan.env.PCP_SERVER_URL).toBe('http://host.docker.internal:3001');
 
     const activeStudioMount = plan.mounts.find((mount) => mount.target === '/studio');
     expect(activeStudioMount?.source.endsWith(basename(studioPath))).toBe(true);
@@ -106,6 +107,7 @@ describe('studio sandbox planning', () => {
     const args = buildDockerRunArgs(plan, { command: ['bash', '-lc', 'pwd'] });
     expect(args).toContain('--add-host');
     expect(args).toContain('host.docker.internal:host-gateway');
+    expect(args).not.toContain('--init');
     expect(args).toContain(plan.image);
     expect(args).toContain('bash');
     expect(args).toContain('/studio');
@@ -141,5 +143,12 @@ describe('backend auth selection', () => {
   it('expands the all alias and preserves uniqueness', () => {
     expect(resolveBackendAuthNames('all')).toEqual(['claude', 'codex', 'gemini']);
     expect(resolveBackendAuthNames('codex,codex,gemini')).toEqual(['codex', 'gemini']);
+  });
+
+  it('mounts backend auth directories read-only by default', () => {
+    const repoRoot = initRepo(join(tmpdir(), `pcp-studio-sandbox-auth-${Date.now()}`, 'repo-auth'));
+    const plan = buildStudioSandboxPlan(repoRoot, { backendAuth: ['codex'] });
+    const authMount = plan.mounts.find((mount) => mount.reason === 'codex auth/config');
+    expect(authMount?.readOnly).toBe(true);
   });
 });

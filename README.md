@@ -276,7 +276,7 @@ Useful options:
 
 - `--studio-access none|ro|rw` — disable studio mounts, or make them read-only
 - `--network default|none` — default outbound networking, or no network
-- `--backend-auth claude,codex,gemini` — explicitly mount backend auth/config dirs into the container
+- `--backend-auth claude,codex,gemini` — explicitly mount backend auth/config dirs into the container (read-only by default)
 - `--mount hostPath:containerPath[:ro|rw]` — add a narrow explicit extra mount
 
 The sandbox image currently includes:
