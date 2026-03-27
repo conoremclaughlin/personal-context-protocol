@@ -114,6 +114,9 @@ export class CodexRunner implements IRunner {
       args.push('resume');
     }
 
+    // Non-interactive: never prompt for approvals (no human present).
+    // Keeps sandbox protections — recommended by Codex docs for exec mode.
+    args.push('-a', 'never');
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
