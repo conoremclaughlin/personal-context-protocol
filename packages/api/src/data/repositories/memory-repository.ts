@@ -220,6 +220,7 @@ export class MemoryRepository {
         metadata: input.metadata || {},
         expires_at: input.expiresAt?.toISOString(),
         agent_id: input.agentId || null,
+        contact_id: input.contactId || null,
         identity_id: identityId,
       })
       .select()
@@ -446,6 +447,12 @@ export class MemoryRepository {
       }
     }
 
+    // Filter by contact for per-sender isolation
+    if (options.contactId) {
+      // In per-contact mode: only show this contact's memories
+      queryBuilder = queryBuilder.eq('contact_id', options.contactId);
+    }
+
     // Exclude expired unless requested
     if (!options.includeExpired) {
       queryBuilder = queryBuilder.or('expires_at.is.null,expires_at.gt.now()');
@@ -546,6 +553,12 @@ export class MemoryRepository {
 
     for (const row of rows) {
       const memory = this.rowToMemory(row);
+
+      // Post-filter for contact-scoped isolation (RPC doesn't support contact_id yet)
+      if (options.contactId && memory.contactId !== options.contactId) {
+        continue;
+      }
+
       const semanticScore = Math.max(0, Math.min(1, row.similarity ?? 0));
       const existing = grouped.get(memory.id);
 
@@ -726,7 +739,8 @@ export class MemoryRepository {
     agentId?: string,
     highLimit: number = 10,
     highWindowDays: number = 7,
-    context: KnowledgeMemoryContext = {}
+    context: KnowledgeMemoryContext = {},
+    contactId?: string
   ): Promise<Memory[]> {
     const buildQuery = (salience: string, limit: number) => {
       let q = this.supabase
@@ -740,6 +754,9 @@ export class MemoryRepository {
 
       if (agentId) {
         q = q.or(`agent_id.eq.${agentId},agent_id.is.null`);
+      }
+      if (contactId) {
+        q = q.eq('contact_id', contactId);
       }
       return q;
     };
@@ -758,6 +775,9 @@ export class MemoryRepository {
 
       if (agentId) {
         q = q.or(`agent_id.eq.${agentId},agent_id.is.null`);
+      }
+      if (contactId) {
+        q = q.eq('contact_id', contactId);
       }
       return q;
     };
@@ -992,6 +1012,9 @@ export class MemoryRepository {
     if (input.threadKey) {
       insertData.thread_key = input.threadKey;
     }
+    if (input.contactId) {
+      insertData.contact_id = input.contactId;
+    }
 
     const { data, error } = await this.supabase
       .from('sessions')
@@ -1115,7 +1138,8 @@ export class MemoryRepository {
   async getActiveSession(
     userId: string,
     agentId?: string,
-    studioId?: string | null
+    studioId?: string | null,
+    contactId?: string
   ): Promise<Session | null> {
     let query = this.supabase
       .from('sessions')
@@ -1138,6 +1162,14 @@ export class MemoryRepository {
       }
     }
 
+    // Per-sender isolation: always scope by contact to prevent collision.
+    // Contact sessions match their contact; owner sessions match NULL.
+    if (contactId) {
+      query = query.eq('contact_id', contactId);
+    } else {
+      query = query.is('contact_id', null);
+    }
+
     const { data, error } = await query.single();
 
     if (error) {
@@ -1157,7 +1189,8 @@ export class MemoryRepository {
     userId: string,
     agentId: string,
     threadKey: string,
-    studioId?: string | null
+    studioId?: string | null,
+    contactId?: string
   ): Promise<Session | null> {
     let query = this.supabase
       .from('sessions')
@@ -1176,6 +1209,14 @@ export class MemoryRepository {
       } else {
         query = query.eq('studio_id', studioId);
       }
+    }
+
+    // Per-sender isolation: always scope by contact to prevent collision.
+    // Contact sessions match their contact; owner sessions match NULL.
+    if (contactId) {
+      query = query.eq('contact_id', contactId);
+    } else {
+      query = query.is('contact_id', null);
     }
 
     const { data, error } = await query.single();
@@ -1524,6 +1565,7 @@ export class MemoryRepository {
       salience: row.salience,
       topics: row.topics,
       agentId: row.agent_id || undefined,
+      contactId: (row as MemoryRow).contact_id || undefined,
       embedding: parseEmbeddingValue(row.embedding),
       metadata: row.metadata,
       version: row.version || 1,

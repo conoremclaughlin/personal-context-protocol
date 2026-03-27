@@ -86,6 +86,8 @@ type ChatOptions = {
   toolRouting?: string;
   ui?: string;
   threadKey?: string;
+  sender?: string;
+  contactId?: string;
   autoRun?: boolean;
   new?: boolean;
   attach?: string | boolean;
@@ -130,6 +132,7 @@ interface ChatRuntime {
   uiMode: 'scroll' | 'live';
   threadKey?: string;
   studioId?: string;
+  contactId?: string;
   userTimezone?: string;
   backendTokenWindow: number;
   sessionId?: string;
@@ -1877,6 +1880,61 @@ export async function runChat(options: ChatOptions): Promise<void> {
               : 'auto-deny'
             : 'interactive',
   };
+  // Resolve --sender or --contact-id for per-sender session isolation
+  if (options.contactId) {
+    runtime.contactId = options.contactId;
+  } else if (options.sender) {
+    // --sender resolves platform:id to a contact via the admin API
+    const colonIdx = options.sender.indexOf(':');
+    if (colonIdx === -1) {
+      console.error(chalk.red('--sender must be in format platform:id (e.g., telegram:99887766)'));
+      process.exit(1);
+    }
+    const platform = options.sender.split(':')[0];
+    const platformId = options.sender.slice(colonIdx + 1);
+    try {
+      const { getPcpServerUrl } = await import('../lib/pcp-mcp.js');
+      const { getValidAccessToken } = await import('../auth/tokens.js');
+      const serverUrl = getPcpServerUrl().replace(/\/+$/, '');
+      const token = await getValidAccessToken(serverUrl);
+      if (!token) throw new Error('Not authenticated');
+
+      const resp = await fetch(`${serverUrl}/api/admin/contacts/resolve`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ platform, platformId, autoCreate: true }),
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as { contact?: { id?: string; name?: string } };
+        if (data.contact?.id) {
+          runtime.contactId = data.contact.id;
+          console.log(
+            chalk.dim(
+              `Resolved sender ${platform}:${platformId} → contact ${data.contact.name || data.contact.id}`
+            )
+          );
+        }
+      } else {
+        const errText = await resp.text().catch(() => '');
+        console.log(
+          chalk.yellow(
+            `Could not resolve sender: ${errText || resp.statusText}. Continuing without contact scope.`
+          )
+        );
+      }
+    } catch (error) {
+      console.log(
+        chalk.yellow(
+          `Failed to resolve sender: ${error instanceof Error ? error.message : String(error)}. ` +
+            `Use --contact-id <uuid> for direct contact scoping.`
+        )
+      );
+    }
+  }
+
   await ensureBackendAuthReady(runtime.backend, {
     nonInteractive: Boolean(options.nonInteractive),
     hasMessage: Boolean(options.message?.trim()),
@@ -2144,6 +2202,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     if (identity?.studioId) {
       startArgs.studioId = identity.studioId;
     }
+    if (runtime.contactId) startArgs.contactId = runtime.contactId;
 
     const sessionStartResult = (await pcp
       .callTool('start_session', startArgs)
@@ -2692,7 +2751,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
       for (const entry of recallEntries) {
         const preview = entry.content.replace(/^\[passive-recall\]\s*/, '').slice(0, 120);
         printLine(
-          chalk.dim(`  💡 memory surfaced: "${preview}${entry.content.length > 120 ? '...' : ''}" (${entry.approxTokens} tok)`)
+          chalk.dim(
+            `  💡 memory surfaced: "${preview}${entry.content.length > 120 ? '...' : ''}" (${entry.approxTokens} tok)`
+          )
         );
       }
 
@@ -2975,16 +3036,26 @@ export async function runChat(options: ChatOptions): Promise<void> {
               const content = (r?.content as Array<{ text: string }> | undefined)?.[0]?.text;
               if (content) {
                 const parsed = JSON.parse(content);
-                printLine(chalk.dim(`  🗑 evicted ${parsed.evicted} entries (${parsed.tokensFreed} tok freed, ${parsed.totalAfter} tok remaining)`));
+                printLine(
+                  chalk.dim(
+                    `  🗑 evicted ${parsed.evicted} entries (${parsed.tokensFreed} tok freed, ${parsed.totalAfter} tok remaining)`
+                  )
+                );
               }
             } else if (result.tool === 'list_context') {
               const r = result.result as Record<string, unknown> | undefined;
               const content = (r?.content as Array<{ text: string }> | undefined)?.[0]?.text;
               if (content) {
                 const parsed = JSON.parse(content);
-                printLine(chalk.dim(`  📋 context: ${parsed.totalEntries} entries, ~${parsed.totalTokens} tok`));
+                printLine(
+                  chalk.dim(
+                    `  📋 context: ${parsed.totalEntries} entries, ~${parsed.totalTokens} tok`
+                  )
+                );
                 if (parsed.bySource) {
-                  const sources = Object.entries(parsed.bySource as Record<string, { count: number; tokens: number }>)
+                  const sources = Object.entries(
+                    parsed.bySource as Record<string, { count: number; tokens: number }>
+                  )
                     .map(([src, { count, tokens }]) => `${src}(${count}/${tokens}t)`)
                     .join(' ');
                   printLine(chalk.dim(`     ${sources}`));
@@ -2997,8 +3068,17 @@ export async function runChat(options: ChatOptions): Promise<void> {
                 const parsed = JSON.parse(content);
                 const signal = parsed.signal as { status: string; reason?: string } | undefined;
                 if (signal) {
-                  const icon = signal.status === 'completed' ? '✅' : signal.status === 'blocked' ? '🚫' : '➡️';
-                  printLine(chalk.dim(`  ${icon} signal: ${signal.status}${signal.reason ? ` — ${signal.reason}` : ''}`));
+                  const icon =
+                    signal.status === 'completed'
+                      ? '✅'
+                      : signal.status === 'blocked'
+                        ? '🚫'
+                        : '➡️';
+                  printLine(
+                    chalk.dim(
+                      `  ${icon} signal: ${signal.status}${signal.reason ? ` — ${signal.reason}` : ''}`
+                    )
+                  );
                 }
               }
             } else {
@@ -3162,12 +3242,12 @@ export async function runChat(options: ChatOptions): Promise<void> {
             .slice(-hookResult.injected);
 
           for (const entry of recallEntries) {
-            const preview = entry.content
-              .replace(/^\[passive-recall\]\s*/, '')
-              .slice(0, 120);
+            const preview = entry.content.replace(/^\[passive-recall\]\s*/, '').slice(0, 120);
             const tokens = entry.approxTokens;
             printLine(
-              chalk.dim(`  💡 memory surfaced: "${preview}${entry.content.length > 120 ? '...' : ''}" (${tokens} tok)`)
+              chalk.dim(
+                `  💡 memory surfaced: "${preview}${entry.content.length > 120 ? '...' : ''}" (${tokens} tok)`
+              )
             );
           }
         }
@@ -4806,6 +4886,11 @@ export function registerChatCommand(program: Command): void {
       )
       .option('--ui <mode>', 'UI mode: live (default) or scroll status rendering', 'live')
       .option('--thread-key <key>', 'Thread key for PCP session routing')
+      .option(
+        '--sender <platform:id>',
+        'Simulate sender identity for per-contact isolation (e.g., telegram:99887766)'
+      )
+      .option('--contact-id <uuid>', 'Use existing contact ID for per-contact session isolation')
       .option('--new', 'Always start a new session (disable auto-attach to latest)')
       .option('--attach [query]', 'Attach to an active session for this SB (optional query filter)')
       .option(

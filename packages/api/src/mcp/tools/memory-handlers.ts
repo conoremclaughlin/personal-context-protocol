@@ -12,7 +12,12 @@ import type { DataComposer } from '../../data/composer';
 import type { Json } from '../../data/supabase/types';
 import { logger } from '../../utils/logger';
 import { userIdentifierBaseSchema, resolveUserOrThrow } from '../../services/user-resolver';
-import { setSessionContext, pinSessionAgent, getRequestContext } from '../../utils/request-context';
+import {
+  setSessionContext,
+  getSessionContext,
+  pinSessionAgent,
+  getRequestContext,
+} from '../../utils/request-context';
 import { getEffectiveAgentId } from '../../auth/enforce-identity';
 import type { MemorySource, Salience, Session } from '../../data/models/memory';
 import { getCloudSkillsService } from '../../skills/cloud-service';
@@ -50,6 +55,20 @@ const salienceSchema = z.enum(['low', 'medium', 'high', 'critical']);
 
 function resolveStudioId(params: { studioId?: string }): string | undefined {
   return params.studioId;
+}
+
+/**
+ * Resolve contactId from explicit param or session context.
+ * This is the auto-inheritance mechanism: once a contact-scoped session
+ * is started, all memory tools in that session automatically scope to
+ * the same contact without the SB needing to pass contactId explicitly.
+ */
+function resolveContactId(params: { contactId?: string }): string | undefined {
+  if (params.contactId) return params.contactId;
+  const reqCtx = getRequestContext();
+  if (reqCtx?.contactId) return reqCtx.contactId;
+  const sessCtx = getSessionContext();
+  return sessCtx?.contactId;
 }
 
 /** Coerce a comma-separated string into a string array so callers can pass either format. */
@@ -245,6 +264,13 @@ export const rememberSchema = userIdentifierBaseSchema.extend({
     .string()
     .optional()
     .describe('Which AI being created this memory (e.g., "wren", "benson"). Null = shared memory.'),
+  contactId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Contact ID for per-sender memory scoping. Auto-inherited from session context when available. Null = owner/system memory.'
+    ),
   studioId: z
     .string()
     .uuid()
@@ -275,6 +301,13 @@ export const recallSchema = userIdentifierBaseSchema.extend({
     .boolean()
     .optional()
     .describe('Include shared memories (agentId=null) when filtering by agentId (default: true)'),
+  contactId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Filter by contact ID for per-sender memory isolation. When set, only returns memories scoped to this contact.'
+    ),
 });
 
 export const forgetSchema = userIdentifierBaseSchema.extend({
@@ -320,6 +353,13 @@ export const startSessionSchema = userIdentifierBaseSchema.extend({
     .optional()
     .describe('Backend runtime (e.g., "claude-code", "codex", "gemini")'),
   model: z.string().optional().describe('Model identifier (e.g., "opus-4-6", "sonnet", "o3")'),
+  contactId: z
+    .string()
+    .uuid()
+    .optional()
+    .describe(
+      'Contact ID for per-sender session isolation. When set, the session is scoped to this contact.'
+    ),
   metadata: z.record(z.unknown()).optional().describe('Additional session metadata'),
   forceNew: z
     .boolean()
@@ -550,6 +590,8 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
     ...(params.topicSummary ? { topicSummary: params.topicSummary } : {}),
   };
 
+  const contactId = resolveContactId(params);
+
   const memory = await dataComposer.repositories.memory.remember({
     userId: user.id,
     content: params.content,
@@ -561,6 +603,7 @@ export async function handleRemember(args: unknown, dataComposer: DataComposer) 
     metadata,
     expiresAt: params.expiresAt ? new Date(params.expiresAt) : undefined,
     agentId,
+    contactId,
   });
 
   logger.info(`Memory created for user ${user.id}`, {
@@ -603,6 +646,8 @@ export async function handleRecall(args: unknown, dataComposer: DataComposer) {
   const params = recallSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
 
+  const contactId = resolveContactId(params);
+
   const memories = await dataComposer.repositories.memory.recall(user.id, params.query, {
     recallMode: params.recallMode,
     source: params.source as MemorySource,
@@ -612,6 +657,7 @@ export async function handleRecall(args: unknown, dataComposer: DataComposer) {
     includeExpired: params.includeExpired,
     agentId: params.agentId,
     includeShared: params.includeShared,
+    contactId,
   });
 
   logger.info(`Recalled ${memories.length} memories for user ${user.id}`, {
@@ -740,7 +786,8 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
       user.id,
       agentId,
       params.threadKey,
-      studioId
+      studioId,
+      params.contactId
     );
   }
 
@@ -748,7 +795,8 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     existingSession = await dataComposer.repositories.memory.getActiveSession(
       user.id,
       agentId,
-      studioId
+      studioId,
+      params.contactId
     );
   }
 
@@ -795,6 +843,7 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     backend: params.backend,
     model: params.model,
     metadata: params.metadata,
+    contactId: params.contactId,
   });
 
   // Persist CLI-attached flag from request context to session record.
@@ -805,6 +854,24 @@ export async function handleStartSession(args: unknown, dataComposer: DataCompos
     await dataComposer.repositories.memory.updateSession(session.id, {
       cliAttached: true,
     });
+  }
+
+  // Persist contactId in session context so memory tools auto-inherit it.
+  // This is the key mechanism for per-sender isolation: once a contact-scoped
+  // session is started, all subsequent remember/recall calls in this session
+  // automatically scope to the same contact without the SB needing to pass it.
+  if (params.contactId) {
+    const currentCtx = getRequestContext();
+    if (currentCtx) {
+      // HTTP mode: no-op, per-request context is already set
+    } else {
+      // stdio mode: update the session-scoped context
+      setSessionContext({
+        userId: user.id,
+        agentId,
+        contactId: params.contactId,
+      });
+    }
   }
 
   logger.info(`Session started for user ${user.id}`, {

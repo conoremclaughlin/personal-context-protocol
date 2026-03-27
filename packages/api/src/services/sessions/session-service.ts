@@ -229,6 +229,7 @@ export class SessionService implements ISessionService {
         studioId: metadata?.studioId,
         studioHint: metadata?.studioHint,
         recipientSessionId: metadata?.recipientSessionId,
+        contactId: metadata?.contactId,
       });
 
       // 2. Build lock key - must be per agent + session to support sub-agents
@@ -609,6 +610,7 @@ export class SessionService implements ISessionService {
       studioId?: string;
       studioHint?: string;
       recipientSessionId?: string;
+      contactId?: string;
     }
   ): Promise<Session> {
     const type = options?.type || 'primary';
@@ -644,11 +646,21 @@ export class SessionService implements ISessionService {
       // ThreadKey match takes priority — find session scoped to this topic
       if (options?.threadKey && 'findByThreadKey' in this.repository) {
         const threadRepo = this.repository as {
-          findByThreadKey: (u: string, a: string, t: string, s?: string) => Promise<Session | null>;
+          findByThreadKey: (
+            u: string,
+            a: string,
+            t: string,
+            s?: string,
+            c?: string
+          ) => Promise<Session | null>;
         };
-        const threadMatch = resolvedStudioId
-          ? await threadRepo.findByThreadKey(userId, agentId, options.threadKey, resolvedStudioId)
-          : await threadRepo.findByThreadKey(userId, agentId, options.threadKey);
+        const threadMatch = await threadRepo.findByThreadKey(
+          userId,
+          agentId,
+          options.threadKey,
+          resolvedStudioId,
+          options?.contactId
+        );
         if (threadMatch) {
           logger.debug('Found existing session by threadKey', {
             sessionId: threadMatch.id,
@@ -677,9 +689,12 @@ export class SessionService implements ISessionService {
 
       if (!options?.threadKey) {
         // Fall back to general active session match only for non-threaded requests.
+        // Always pass contactId to enforce isolation: contact sessions match their
+        // contact, owner sessions (contactId=undefined) match only NULL rows.
         const existing = await this.repository.findByUserAndAgent(userId, agentId, {
           type: 'primary',
           ...(resolvedStudioId ? { studioId: resolvedStudioId } : {}),
+          contactId: options?.contactId,
         });
 
         if (existing) {
@@ -712,6 +727,7 @@ export class SessionService implements ISessionService {
       parentSessionId: options?.parentSessionId,
       threadKey: options?.threadKey,
       studioId: resolvedStudioId,
+      contactId: options?.contactId,
       contextTokens: 0,
       totalInputTokens: 0,
       totalOutputTokens: 0,

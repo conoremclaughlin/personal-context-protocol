@@ -6404,4 +6404,63 @@ router.delete('/tasks/:taskId/comments/:commentId', async (req: Request, res: Re
   }
 });
 
+// =============================================================================
+// Contacts
+// =============================================================================
+
+/**
+ * POST /api/admin/contacts/resolve
+ * Resolve a platform identity to a contact, optionally auto-creating.
+ * Used by `sb chat --sender telegram:123` for per-sender session isolation.
+ */
+router.post('/contacts/resolve', async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AdminAuthRequest;
+    const { platform, platformId, autoCreate } = req.body as {
+      platform?: string;
+      platformId?: string;
+      autoCreate?: boolean;
+    };
+
+    if (!platform || !platformId) {
+      res.status(400).json({ error: 'platform and platformId are required' });
+      return;
+    }
+
+    const validPlatforms = ['telegram', 'discord', 'whatsapp', 'imessage'] as const;
+    if (!validPlatforms.includes(platform as (typeof validPlatforms)[number])) {
+      res
+        .status(400)
+        .json({ error: `Invalid platform. Must be one of: ${validPlatforms.join(', ')}` });
+      return;
+    }
+
+    const dataComposer = await getDataComposer();
+    const contactsRepo = dataComposer.repositories.contacts;
+
+    if (autoCreate) {
+      const contact = await contactsRepo.findOrCreateByPlatformId(
+        authReq.pcpUserId,
+        platform as 'telegram' | 'discord' | 'whatsapp' | 'imessage',
+        platformId
+      );
+      res.json({ contact });
+    } else {
+      const contact = await contactsRepo.findByPlatformId(
+        authReq.pcpUserId,
+        platform as 'telegram' | 'discord' | 'whatsapp' | 'imessage',
+        platformId
+      );
+      if (!contact) {
+        res.status(404).json({ error: 'Contact not found' });
+        return;
+      }
+      res.json({ contact });
+    }
+  } catch (error) {
+    logger.error('Failed to resolve contact:', error);
+    res.status(500).json(errorJson('Failed to resolve contact', error));
+  }
+});
+
 export default router;

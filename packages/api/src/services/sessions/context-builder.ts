@@ -135,7 +135,7 @@ export class ContextBuilder implements IContextBuilder {
       this.getAgentIdentity(userId, agentId, session.identityId),
       this.getUser(userId),
       this.getContacts(userId),
-      this.getRecentMemories(userId, agentId),
+      this.getRecentMemories(userId, agentId, 10, session.contactId),
       this.getActiveProjects(userId),
     ]);
 
@@ -323,16 +323,24 @@ export class ContextBuilder implements IContextBuilder {
   private async getRecentMemories(
     userId: string,
     agentId: string,
-    limit: number = 10
+    limit: number = 10,
+    contactId?: string
   ): Promise<DbMemory[]> {
     // Get memories for this agent + shared memories (agentId = null)
-    const { data, error } = await this.supabase
+    let query = this.supabase
       .from('memories')
       .select('*')
       .eq('user_id', userId)
       .or(`agent_id.eq.${agentId},agent_id.is.null`)
       .order('created_at', { ascending: false })
       .limit(limit);
+
+    // Per-sender isolation: only show contact-scoped memories
+    if (contactId) {
+      query = query.eq('contact_id', contactId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       logger.error('Error fetching recent memories', { userId, agentId, error });

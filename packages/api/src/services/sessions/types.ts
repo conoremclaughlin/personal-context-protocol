@@ -52,6 +52,8 @@ export interface Session {
   identityId?: string;
   /** Studio/worktree scope for this session */
   studioId?: string;
+  /** Contact scope for per-sender session isolation */
+  contactId?: string;
   /** Backend-specific session ID for resume (Claude Code, Codex thread UUID, Gemini session) */
   backendSessionId: string | null;
 
@@ -123,6 +125,8 @@ export interface SessionRequest {
     studioId?: string;
     // Convenience routing hint (e.g., force main studio without UUID lookup)
     studioHint?: string;
+    // Contact scope for per-sender session isolation
+    contactId?: string;
     // Recipient session to inherit studio scope from
     recipientSessionId?: string;
     // For task sessions
@@ -258,6 +262,7 @@ export interface ISessionService {
       studioId?: string;
       studioHint?: string;
       recipientSessionId?: string;
+      contactId?: string;
     }
   ): Promise<Session>;
 
@@ -312,7 +317,7 @@ export interface ISessionRepository {
   findByUserAndAgent(
     userId: string,
     agentId: string,
-    options?: { status?: SessionStatus; type?: SessionType; studioId?: string }
+    options?: { status?: SessionStatus; type?: SessionType; studioId?: string; contactId?: string }
   ): Promise<Session | null>;
 
   findByThreadKey?(
