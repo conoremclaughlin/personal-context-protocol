@@ -109,14 +109,14 @@ export class CodexRunner implements IRunner {
     config: ClaudeRunnerConfig,
     promptPath: string
   ): string[] {
-    const args: string[] = ['exec'];
+    // -a never must come BEFORE the exec subcommand — it's a root-level flag.
+    // Non-interactive: never prompt for approvals (no human present).
+    // Keeps sandbox protections — recommended by Codex docs for exec mode.
+    const args: string[] = ['-a', 'never', 'exec'];
     if (isResume) {
       args.push('resume');
     }
 
-    // Non-interactive: never prompt for approvals (no human present).
-    // Keeps sandbox protections — recommended by Codex docs for exec mode.
-    args.push('-a', 'never');
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
