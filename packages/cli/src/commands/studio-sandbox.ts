@@ -5,11 +5,18 @@ import { homedir } from 'os';
 import { basename, dirname, join, resolve as resolvePath } from 'path';
 import { Command } from 'commander';
 import chalk from 'chalk';
-import { readIdentityJson } from '../backends/identity.js';
+import {
+  clearStudioSandboxPreferences,
+  readIdentityJson,
+  saveStudioSandboxPreferences,
+  type IdentityJson,
+  type StudioSandboxPreferences,
+} from '../backends/identity.js';
 
 export type StudioAccessMode = 'none' | 'ro' | 'rw';
 export type StudioNetworkMode = 'default' | 'none';
 export type BackendAuthName = 'claude' | 'codex' | 'gemini';
+export type StudioSandboxProfile = 'default' | 'pcp-auth';
 
 export interface StudioSandboxMount {
   source: string;
@@ -23,6 +30,7 @@ export interface StudioSandboxContext {
   studioName: string;
   studioId?: string;
   agentId?: string;
+  identity?: IdentityJson | null;
   canonicalRepoRoot: string;
   canonicalGitDir?: string;
   worktreePaths: string[];
@@ -30,6 +38,7 @@ export interface StudioSandboxContext {
 
 export interface StudioSandboxPlanOptions {
   image?: string;
+  profile?: StudioSandboxProfile;
   studioAccess?: StudioAccessMode;
   network?: StudioNetworkMode;
   includeSiblingStudios?: boolean;
@@ -43,6 +52,7 @@ export interface StudioSandboxPlan {
   workdir: '/studio';
   uid?: number;
   gid?: number;
+  profile: StudioSandboxProfile;
   network: StudioNetworkMode;
   studioAccess: StudioAccessMode;
   context: StudioSandboxContext;
@@ -64,6 +74,18 @@ const BACKEND_AUTH_DIRS: Record<BackendAuthName, string> = {
   codex: join(homedir(), '.codex'),
   gemini: join(homedir(), '.gemini'),
 };
+const PCP_AUTH_FILES = [
+  {
+    source: join(homedir(), '.pcp', 'auth.json'),
+    target: `${CONTAINER_HOME}/.pcp/auth.json`,
+    reason: 'pcp auth token',
+  },
+  {
+    source: join(homedir(), '.pcp', 'config.json'),
+    target: `${CONTAINER_HOME}/.pcp/config.json`,
+    reason: 'pcp config',
+  },
+] as const;
 
 function git(args: string[], cwd: string): string {
   return execFileSync('git', args, {
@@ -225,9 +247,7 @@ function isDangerousSourcePath(source: string): boolean {
 export function parseExtraMount(spec: string): ParsedExtraMount {
   const parts = spec.split(':');
   if (parts.length < 2 || parts.length > 3) {
-    throw new Error(
-      `Invalid mount "${spec}". Expected hostPath:containerPath[:ro|rw] format.`
-    );
+    throw new Error(`Invalid mount "${spec}". Expected hostPath:containerPath[:ro|rw] format.`);
   }
 
   const [source, target, mode = 'rw'] = parts;
@@ -290,6 +310,7 @@ export function getStudioSandboxContext(cwd: string): StudioSandboxContext {
     studioName: identity?.studio || basename(studioPath),
     studioId: identity?.studioId,
     agentId: identity?.agentId,
+    identity,
     canonicalRepoRoot,
     canonicalGitDir: resolveCanonicalGitDir(canonicalRepoRoot),
     worktreePaths: getWorktreePaths(canonicalRepoRoot),
@@ -310,13 +331,39 @@ function makeMount(
   };
 }
 
+function normalizeSandboxProfile(
+  value: unknown,
+  fallback: StudioSandboxProfile = 'default'
+): StudioSandboxProfile {
+  return value === 'pcp-auth' ? 'pcp-auth' : fallback;
+}
+
+function getIdentitySandboxPreferences(
+  context: StudioSandboxContext
+): StudioSandboxPreferences | undefined {
+  return context.identity?.sandbox;
+}
+
+function addPcpAuthMounts(mounts: StudioSandboxMount[]): void {
+  for (const mount of PCP_AUTH_FILES) {
+    if (!existsSync(mount.source)) continue;
+    mounts.push(makeMount(mount.source, mount.target, true, mount.reason));
+  }
+}
+
 export function buildStudioSandboxPlan(
   cwd: string,
   options: StudioSandboxPlanOptions = {}
 ): StudioSandboxPlan {
   const context = getStudioSandboxContext(cwd);
-  const studioAccess = options.studioAccess || 'rw';
-  const includeSiblingStudios = options.includeSiblingStudios ?? true;
+  const sandboxPrefs = getIdentitySandboxPreferences(context);
+  const profile = normalizeSandboxProfile(options.profile ?? sandboxPrefs?.profile);
+  const studioAccess =
+    options.studioAccess ?? sandboxPrefs?.studioAccess ?? ('rw' satisfies StudioAccessMode);
+  const includeSiblingStudios =
+    options.includeSiblingStudios ?? sandboxPrefs?.includeSiblingStudios ?? true;
+  const network =
+    options.network ?? sandboxPrefs?.network ?? ('default' satisfies StudioNetworkMode);
   const readOnly = studioAccess === 'ro';
   const mounts: StudioSandboxMount[] = [];
 
@@ -365,6 +412,10 @@ export function buildStudioSandboxPlan(
     }
   }
 
+  if (profile === 'pcp-auth') {
+    addPcpAuthMounts(mounts);
+  }
+
   for (const spec of options.extraMountSpecs || []) {
     const parsed = parseExtraMount(spec);
     mounts.push(makeMount(parsed.source, parsed.target, parsed.readOnly, 'explicit extra mount'));
@@ -381,7 +432,8 @@ export function buildStudioSandboxPlan(
     workdir: '/studio',
     uid,
     gid,
-    network: options.network || 'default',
+    profile,
+    network,
     studioAccess,
     context,
     mounts,
@@ -456,11 +508,34 @@ function runDocker(args: string[], inherit = true): void {
   }
 }
 
-function inspectContainerName(containerName: string): boolean {
+export function inspectContainerName(containerName: string): boolean {
   const result = spawnSync('docker', ['container', 'inspect', containerName], {
     stdio: 'ignore',
   });
   return result.status === 0;
+}
+
+export function getStudioSandboxRuntimeStatus(cwd: string): {
+  containerName: string;
+  running: boolean;
+  preferences?: StudioSandboxPreferences;
+} {
+  const context = getStudioSandboxContext(cwd);
+  const containerName = buildContainerName(context);
+  return {
+    containerName,
+    running: inspectContainerName(containerName),
+    preferences: getIdentitySandboxPreferences(context),
+  };
+}
+
+export function formatSandboxPreferenceSummary(prefs?: StudioSandboxPreferences): string {
+  if (!prefs) return 'manual';
+  const profile = normalizeSandboxProfile(prefs.profile);
+  const studioAccess = prefs.studioAccess || 'rw';
+  const network = prefs.network || 'default';
+  const siblings = prefs.includeSiblingStudios === false ? 'siblings:off' : 'siblings:on';
+  return `${profile}, ${studioAccess}, ${network}, ${siblings}`;
 }
 
 function printPlan(plan: StudioSandboxPlan, json = false): void {
@@ -475,6 +550,7 @@ function printPlan(plan: StudioSandboxPlan, json = false): void {
   console.log(chalk.dim(`  Studio:    ${plan.context.studioPath}`));
   console.log(chalk.dim(`  Access:    ${plan.studioAccess}`));
   console.log(chalk.dim(`  Network:   ${plan.network}`));
+  console.log(chalk.dim(`  Profile:   ${plan.profile}`));
   if (plan.patchedMcpConfigPath) {
     console.log(chalk.dim(`  MCP file:  ${plan.patchedMcpConfigPath}`));
   }
@@ -490,29 +566,43 @@ function printPlan(plan: StudioSandboxPlan, json = false): void {
 
 function addCommonSandboxOptions(command: Command): Command {
   return command
-    .option('--image <image>', 'Sandbox image', DEFAULT_IMAGE)
-    .option('--studio-access <mode>', 'Studio access: none|ro|rw', 'rw')
-    .option('--network <mode>', 'Network mode: default|none', 'default')
+    .option('--image <image>', 'Sandbox image')
+    .option('--sandbox-profile <profile>', 'Sandbox profile: default|pcp-auth')
+    .option('--pcp-auth', 'Mount narrow PCP auth/config files for direct CLI continuity')
+    .option('--studio-access <mode>', 'Studio access: none|ro|rw')
+    .option('--network <mode>', 'Network mode: default|none')
     .option('--backend-auth <list>', 'Mount backend auth dirs: claude,codex,gemini,all')
     .option('--mount <spec...>', 'Extra mount(s): hostPath:containerPath[:ro|rw]')
     .option('--no-sibling-studios', 'Do not mount sibling studios under /studios');
 }
 
 function buildPlanFromCommand(cwd: string, options: Record<string, unknown>): StudioSandboxPlan {
-  const studioAccess = String(options.studioAccess || 'rw') as StudioAccessMode;
-  if (!['none', 'ro', 'rw'].includes(studioAccess)) {
+  const studioAccess =
+    options.studioAccess === undefined ? undefined : String(options.studioAccess);
+  if (studioAccess !== undefined && !['none', 'ro', 'rw'].includes(studioAccess)) {
     throw new Error(`Invalid --studio-access value: ${studioAccess}`);
   }
 
-  const network = String(options.network || 'default') as StudioNetworkMode;
-  if (!['default', 'none'].includes(network)) {
+  const network = options.network === undefined ? undefined : String(options.network);
+  if (network !== undefined && !['default', 'none'].includes(network)) {
     throw new Error(`Invalid --network value: ${network}`);
   }
 
+  const rawProfile =
+    options.pcpAuth === true
+      ? 'pcp-auth'
+      : typeof options.sandboxProfile === 'string'
+        ? options.sandboxProfile
+        : undefined;
+  if (rawProfile !== undefined && rawProfile !== 'default' && rawProfile !== 'pcp-auth') {
+    throw new Error(`Invalid --sandbox-profile value: ${rawProfile}`);
+  }
+
   return buildStudioSandboxPlan(cwd, {
-    image: typeof options.image === 'string' ? options.image : DEFAULT_IMAGE,
-    studioAccess,
-    network,
+    image: typeof options.image === 'string' ? options.image : undefined,
+    profile: rawProfile,
+    studioAccess: studioAccess as StudioAccessMode | undefined,
+    network: network as StudioNetworkMode | undefined,
     includeSiblingStudios: options.siblingStudios !== false,
     backendAuth: resolveBackendAuthNames(
       typeof options.backendAuth === 'string' ? options.backendAuth : undefined
@@ -523,6 +613,71 @@ function buildPlanFromCommand(cwd: string, options: Record<string, unknown>): St
         ? [options.mount]
         : [],
   });
+}
+
+function configCommand(options: Record<string, unknown>): void {
+  const cwd = process.cwd();
+
+  if (options.clear) {
+    if (!clearStudioSandboxPreferences(cwd)) {
+      throw new Error('No studio sandbox preferences found to clear');
+    }
+    console.log(chalk.green('✓ Cleared studio sandbox defaults from .pcp/identity.json'));
+    return;
+  }
+
+  const prefs: StudioSandboxPreferences = {};
+  let changed = false;
+
+  if (typeof options.sandboxProfile === 'string') {
+    if (options.sandboxProfile !== 'default' && options.sandboxProfile !== 'pcp-auth') {
+      throw new Error(`Invalid --sandbox-profile value: ${options.sandboxProfile}`);
+    }
+    prefs.profile = options.sandboxProfile;
+    changed = true;
+  }
+
+  if (typeof options.studioAccess === 'string') {
+    if (!['none', 'ro', 'rw'].includes(options.studioAccess)) {
+      throw new Error(`Invalid --studio-access value: ${options.studioAccess}`);
+    }
+    prefs.studioAccess = options.studioAccess as StudioAccessMode;
+    changed = true;
+  }
+
+  if (typeof options.network === 'string') {
+    if (!['default', 'none'].includes(options.network)) {
+      throw new Error(`Invalid --network value: ${options.network}`);
+    }
+    prefs.network = options.network as StudioNetworkMode;
+    changed = true;
+  }
+
+  if (typeof options.siblings === 'string') {
+    if (options.siblings !== 'on' && options.siblings !== 'off') {
+      throw new Error(`Invalid --siblings value: ${options.siblings}. Use on or off.`);
+    }
+    prefs.includeSiblingStudios = options.siblings === 'on';
+    changed = true;
+  }
+
+  if (!changed) {
+    const current = readIdentityJson(cwd)?.sandbox;
+    if (options.json) {
+      console.log(JSON.stringify(current || {}, null, 2));
+      return;
+    }
+    console.log(chalk.bold('Studio sandbox defaults'));
+    console.log(chalk.dim(`  ${formatSandboxPreferenceSummary(current)}`));
+    return;
+  }
+
+  if (!saveStudioSandboxPreferences(cwd, prefs)) {
+    throw new Error('Failed to save studio sandbox defaults to .pcp/identity.json');
+  }
+
+  console.log(chalk.green('✓ Updated studio sandbox defaults'));
+  console.log(chalk.dim(`  ${formatSandboxPreferenceSummary(readIdentityJson(cwd)?.sandbox)}`));
 }
 
 function buildSandboxImage(options: { image?: string; noCache?: boolean }, cwd: string): void {
@@ -585,7 +740,9 @@ function shellCommand(options: Record<string, unknown>): void {
 function execCommand(command: string[], options: Record<string, unknown>): void {
   const plan = buildPlanFromCommand(process.cwd(), options);
   if (!inspectContainerName(plan.containerName)) {
-    throw new Error(`Sandbox is not running: ${plan.containerName}. Start it with sb studio sandbox up`);
+    throw new Error(
+      `Sandbox is not running: ${plan.containerName}. Start it with sb studio sandbox up`
+    );
   }
   if (command.length === 0) {
     throw new Error('No command provided for sandbox exec');
@@ -604,6 +761,8 @@ function statusCommand(options: Record<string, unknown>): void {
           running,
           image: plan.image,
           studioPath: plan.context.studioPath,
+          profile: plan.profile,
+          preferences: plan.context.identity?.sandbox || null,
         },
         null,
         2
@@ -617,6 +776,10 @@ function statusCommand(options: Record<string, unknown>): void {
   console.log(chalk.dim(`  Running:   ${running ? 'yes' : 'no'}`));
   console.log(chalk.dim(`  Image:     ${plan.image}`));
   console.log(chalk.dim(`  Studio:    ${plan.context.studioPath}`));
+  console.log(chalk.dim(`  Profile:   ${plan.profile}`));
+  console.log(
+    chalk.dim(`  Defaults:   ${formatSandboxPreferenceSummary(plan.context.identity?.sandbox)}`)
+  );
 }
 
 function downCommand(options: Record<string, unknown>): void {
@@ -655,10 +818,14 @@ export function registerStudioSandboxCommands(studio: Command): void {
       .command('run [command...]')
       .allowExcessArguments(true)
       .description('Run a one-shot command in a new studio sandbox container')
-  ).action((command: string[], options: Record<string, unknown>) => runCommand(command || [], options));
+  ).action((command: string[], options: Record<string, unknown>) =>
+    runCommand(command || [], options)
+  );
 
   addCommonSandboxOptions(
-    sandbox.command('shell').description('Open a shell in the running sandbox, or start an ephemeral one')
+    sandbox
+      .command('shell')
+      .description('Open a shell in the running sandbox, or start an ephemeral one')
   ).action(shellCommand);
 
   addCommonSandboxOptions(
@@ -666,13 +833,26 @@ export function registerStudioSandboxCommands(studio: Command): void {
       .command('exec <command...>')
       .allowExcessArguments(true)
       .description('Run a command inside the running studio sandbox')
-  ).action((command: string[], options: Record<string, unknown>) => execCommand(command || [], options));
+  ).action((command: string[], options: Record<string, unknown>) =>
+    execCommand(command || [], options)
+  );
 
   addCommonSandboxOptions(
     sandbox.command('status').description('Show status for the current studio sandbox')
   )
     .option('--json', 'Output JSON')
     .action(statusCommand);
+
+  sandbox
+    .command('config')
+    .description('Show or persist default studio sandbox settings in .pcp/identity.json')
+    .option('--sandbox-profile <profile>', 'Default profile: default|pcp-auth')
+    .option('--studio-access <mode>', 'Default studio access: none|ro|rw')
+    .option('--network <mode>', 'Default network mode: default|none')
+    .option('--siblings <mode>', 'Default sibling studio mounts: on|off')
+    .option('--clear', 'Clear stored sandbox defaults')
+    .option('--json', 'Output JSON when showing current config')
+    .action(configCommand);
 
   addCommonSandboxOptions(
     sandbox.command('down').description('Stop the running studio sandbox for this studio')

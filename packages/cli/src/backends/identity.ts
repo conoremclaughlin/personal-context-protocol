@@ -22,6 +22,17 @@ export interface RuntimePreferences {
   approvalMode?: 'interactive' | 'jsonl' | 'auto-approve';
 }
 
+export type StudioSandboxProfile = 'default' | 'pcp-auth';
+export type StudioSandboxAccessMode = 'none' | 'ro' | 'rw';
+export type StudioSandboxNetworkMode = 'default' | 'none';
+
+export interface StudioSandboxPreferences {
+  profile?: StudioSandboxProfile;
+  studioAccess?: StudioSandboxAccessMode;
+  network?: StudioSandboxNetworkMode;
+  includeSiblingStudios?: boolean;
+}
+
 export interface IdentityJson {
   agentId: string;
   identityId?: string;
@@ -32,6 +43,8 @@ export interface IdentityJson {
   studio?: string;
   /** Persisted runtime preferences for sb chat */
   runtime?: RuntimePreferences;
+  /** Persisted studio sandbox preferences for sb studio sandbox */
+  sandbox?: StudioSandboxPreferences;
 }
 
 /**
@@ -56,6 +69,42 @@ export function saveRuntimePreferences(cwd: string, prefs: RuntimePreferences): 
   try {
     const existing = readIdentityJson(cwd) || ({} as Record<string, unknown>);
     const merged = { ...existing, runtime: { ...(existing.runtime || {}), ...prefs } };
+    writeFileSync(identityPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Save studio sandbox preferences to .pcp/identity.json.
+ * Merges with existing content — only updates the `sandbox` field.
+ */
+export function saveStudioSandboxPreferences(
+  cwd: string,
+  prefs: StudioSandboxPreferences
+): boolean {
+  const identityPath = join(cwd, '.pcp', 'identity.json');
+  try {
+    const existing = readIdentityJson(cwd) || ({} as Record<string, unknown>);
+    const merged = { ...existing, sandbox: { ...(existing.sandbox || {}), ...prefs } };
+    writeFileSync(identityPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Remove persisted studio sandbox preferences from .pcp/identity.json.
+ */
+export function clearStudioSandboxPreferences(cwd: string): boolean {
+  const identityPath = join(cwd, '.pcp', 'identity.json');
+  try {
+    const existing = readIdentityJson(cwd);
+    if (!existing) return false;
+    const merged = { ...existing } as Record<string, unknown>;
+    delete merged.sandbox;
     writeFileSync(identityPath, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
     return true;
   } catch {

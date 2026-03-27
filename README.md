@@ -276,6 +276,20 @@ Useful options:
 
 - `--studio-access none|ro|rw` — disable studio mounts, or make them read-only
 - `--network default|none` — default outbound networking, or no network
+- `--sandbox-profile pcp-auth` / `--pcp-auth` — mount narrow PCP auth continuity files (`~/.pcp/auth.json`, `~/.pcp/config.json`) for direct CLI access inside the container
+
+Persist default sandbox settings for a studio:
+
+```bash
+sb studio sandbox config
+sb studio sandbox config --sandbox-profile pcp-auth --studio-access rw --network default --siblings on
+```
+
+Notes:
+
+- `/studio` is an **internal container path**, not a slash command
+- sandbox defaults live in the studio’s local `.pcp/identity.json`
+- `sb studio list` shows the current sandbox default summary and whether the studio’s sandbox container is running
 - `--backend-auth claude,codex,gemini` — explicitly mount backend auth/config dirs into the container (read-only by default)
 - `--mount hostPath:containerPath[:ro|rw]` — add a narrow explicit extra mount
 
