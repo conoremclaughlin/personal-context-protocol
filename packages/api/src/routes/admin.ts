@@ -2062,7 +2062,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
     const { data: identity, error: identityError } = await supabase
       .from('agent_identities')
       .select(
-        'id, agent_id, name, role, description, backend, studio_hint, workspace_id, updated_at'
+        'id, agent_id, name, role, description, backend, studio_hint, workspace_id, updated_at, sandbox_bypass'
       )
       .eq('user_id', authReq.pcpUserId)
       .eq('workspace_id', authReq.pcpWorkspaceId)
@@ -2158,7 +2158,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
     // Fetch studios owned by this agent
     const { data: studiosData } = await supabase
       .from('studios')
-      .select('id, slug, branch, status, route_patterns')
+      .select('id, slug, branch, status, route_patterns, sandbox_bypass')
       .eq('user_id', authReq.pcpUserId)
       .eq('agent_id', identity.agent_id)
       .in('status', ['active', 'idle'])
@@ -2175,6 +2175,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         description: identity.description,
         backend: identity.backend,
         studioHint: identity.studio_hint || null,
+        sandboxBypass: identity.sandbox_bypass ?? false,
         updatedAt: identity.updated_at,
       },
       studios: (studiosData || []).map((s: Record<string, unknown>) => ({
@@ -2183,6 +2184,7 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
         branch: s.branch,
         status: s.status,
         routePatterns: (s.route_patterns as string[] | null) || [],
+        sandboxBypass: s.sandbox_bypass ?? null,
       })),
       routes,
       reminders: (remindersData || []).map((reminder) => ({
@@ -2204,6 +2206,123 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to load routing agent detail:', error);
     res.status(500).json(errorJson('Failed to load routing agent detail', error));
+  }
+});
+
+/**
+ * PATCH /api/admin/identities/:agentId/settings
+ * Update SB-level settings (sandbox_bypass, etc.). Admin-only — not exposed via MCP.
+ */
+router.patch('/identities/:agentId/settings', async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AdminAuthRequest;
+    const { agentId } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Find the identity for this agent + workspace
+    const { data: identity, error: fetchErr } = await supabase
+      .from('agent_identities')
+      .select('id')
+      .eq('user_id', authReq.pcpUserId)
+      .eq('workspace_id', authReq.pcpWorkspaceId)
+      .eq('agent_id', agentId)
+      .maybeSingle();
+
+    if (fetchErr || !identity) {
+      res.status(404).json({ error: 'Agent identity not found' });
+      return;
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const updates: Record<string, unknown> = {};
+
+    if (typeof body.sandboxBypass === 'boolean') {
+      updates.sandbox_bypass = body.sandboxBypass;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: 'No valid fields to update' });
+      return;
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    const { error: updateErr } = await supabase
+      .from('agent_identities')
+      .update(updates)
+      .eq('id', identity.id);
+
+    if (updateErr) {
+      logger.error('Failed to update identity settings:', updateErr);
+      res.status(500).json(errorJson('Failed to update identity settings', updateErr));
+      return;
+    }
+
+    logger.info('Identity settings updated', { agentId, updates });
+    res.json({ success: true, agentId, ...updates });
+  } catch (error) {
+    logger.error('Failed to update identity settings:', error);
+    res.status(500).json(errorJson('Failed to update identity settings', error));
+  }
+});
+
+/**
+ * PATCH /api/admin/studios/:studioId
+ * Update studio settings (sandbox_bypass, etc.). Admin-only — not exposed via MCP.
+ */
+router.patch('/studios/:studioId', async (req: Request, res: Response) => {
+  try {
+    const authReq = req as AdminAuthRequest;
+    const { studioId } = req.params;
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+
+    // Verify studio belongs to this user
+    const { data: studio, error: fetchErr } = await supabase
+      .from('studios')
+      .select('id, user_id')
+      .eq('id', studioId)
+      .eq('user_id', authReq.pcpUserId)
+      .maybeSingle();
+
+    if (fetchErr || !studio) {
+      res.status(404).json({ error: 'Studio not found' });
+      return;
+    }
+
+    const body = (req.body || {}) as Record<string, unknown>;
+    const updates: Record<string, unknown> = {};
+
+    if (typeof body.sandboxBypass === 'boolean') {
+      updates.sandbox_bypass = body.sandboxBypass;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      res.status(400).json({ error: 'No valid fields to update' });
+      return;
+    }
+
+    updates.updated_at = new Date().toISOString();
+
+    const { error: updateErr } = await supabase
+      .from('studios')
+      .update(updates)
+      .eq('id', studioId);
+
+    if (updateErr) {
+      logger.error('Failed to update studio settings:', updateErr);
+      res.status(500).json(errorJson('Failed to update studio', updateErr));
+      return;
+    }
+
+    logger.info('Studio settings updated', { studioId, updates });
+    res.json({ success: true, studioId, ...updates });
+  } catch (error) {
+    logger.error('Failed to update studio:', error);
+    res.status(500).json(errorJson('Failed to update studio', error));
   }
 });
 

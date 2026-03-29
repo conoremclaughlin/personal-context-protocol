@@ -110,14 +110,14 @@ export class CodexRunner implements IRunner {
     promptPath: string
   ): string[] {
     // Triggered sessions are non-interactive (no human present).
-    // -a never: suppress all approval prompts (no human to approve)
-    // sandbox_workspace_write.network_access=true: allow HTTP MCP calls to PCP server
-    //   (default workspace-write sandbox blocks network, causing "user cancelled MCP tool call")
-    const args: string[] = [
-      '-a', 'never',
-      '-c', 'sandbox_workspace_write.network_access=true',
-      'exec',
-    ];
+    // sandbox_bypass (opt-in per studio): bypasses sandbox + approvals so
+    // HTTP MCP tools work in exec mode. Without it, Codex's sandbox blocks
+    // network access and MCP calls return "user cancelled".
+    // -a never: fallback when sandbox_bypass is off — suppresses shell
+    // approval prompts but MCP tools remain blocked.
+    const args: string[] = config.sandboxBypass
+      ? ['--dangerously-bypass-approvals-and-sandbox', 'exec']
+      : ['-a', 'never', 'exec'];
     if (isResume) {
       args.push('resume');
     }

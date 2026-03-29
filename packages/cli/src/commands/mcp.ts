@@ -165,6 +165,11 @@ function toCodexToml(servers: Record<string, McpServerConfig>): string {
       lines.push(`url = ${tomlString(config.url)}`);
     }
 
+    // PCP server: mark as required so Codex fails loudly if it can't connect
+    if (name === 'pcp') {
+      lines.push('required = true');
+    }
+
     if (config.command) {
       lines.push(`command = ${tomlString(config.command)}`);
     }

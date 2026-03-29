@@ -403,6 +403,8 @@ export interface ClaudeRunnerConfig {
   agentId?: string;
   /** Studio/worktree scope — written to runtime hint so findRuntimeSessionByLinkId matches */
   studioId?: string;
+  /** When true, bypass sandbox restrictions (e.g., Codex --dangerously-bypass-approvals-and-sandbox). Opt-in per studio. */
+  sandboxBypass?: boolean;
 }
 
 export interface RunnerResult {

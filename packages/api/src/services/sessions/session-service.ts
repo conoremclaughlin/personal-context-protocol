@@ -377,6 +377,33 @@ export class SessionService implements ISessionService {
           ? this.config.defaultGeminiModel
           : this.config.defaultModel;
 
+    // Resolve sandbox_bypass: studio override > SB default > false
+    let sandboxBypass = false;
+    if (this.supabase) {
+      // SB-level default from agent_identities
+      const { data: identity } = await this.supabase
+        .from('agent_identities')
+        .select('sandbox_bypass')
+        .eq('user_id', userId)
+        .eq('agent_id', agentId)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      sandboxBypass = identity?.sandbox_bypass ?? false;
+
+      // Studio-level override (null = inherit from SB)
+      if (session.studioId) {
+        const { data: studio } = await this.supabase
+          .from('studios')
+          .select('sandbox_bypass')
+          .eq('id', session.studioId)
+          .maybeSingle();
+        if (studio?.sandbox_bypass !== null && studio?.sandbox_bypass !== undefined) {
+          sandboxBypass = studio.sandbox_bypass;
+        }
+      }
+    }
+
     const runnerConfig: ClaudeRunnerConfig = {
       workingDirectory: resolvedWorkingDirectory,
       mcpConfigPath: this.config.mcpConfigPath,
@@ -397,6 +424,7 @@ export class SessionService implements ISessionService {
       pcpSessionId: session.id,
       agentId,
       ...(session.studioId ? { studioId: session.studioId } : {}),
+      ...(sandboxBypass ? { sandboxBypass: true } : {}),
     };
 
     // 5. Run with selected backend
