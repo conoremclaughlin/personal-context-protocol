@@ -125,14 +125,17 @@ export class CodexRunner implements IRunner {
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
-    // Ink headers — Codex resolves env var names to values at runtime.
-    // Phase 2: x-ink-context carries consolidated session metadata.
-    // Individual headers kept for backward compat during transition.
-    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-context="INK_CONTEXT_TOKEN"');
-    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-agent-id="AGENT_ID"');
-    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-session-id="INK_SESSION_ID"');
-    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-studio-id="INK_STUDIO_ID"');
-    args.push('-c', 'mcp_servers.inkstand.env_http_headers.Authorization="INK_AUTH_BEARER"');
+    // Ink session headers — Codex resolves env var names to values at runtime.
+    // Use 'pcp' as the server key — Codex config.toml defines the server under
+    // mcp_servers.pcp (with url/transport). Creating mcp_servers.inkstand via -c
+    // flags without a url/transport causes Codex to reject it as "invalid transport".
+    // The server key in config.toml is independent of the product name.
+    const codexServerKey = 'pcp';
+    args.push('-c', `mcp_servers.${codexServerKey}.env_http_headers.x-ink-context="INK_CONTEXT_TOKEN"`);
+    args.push('-c', `mcp_servers.${codexServerKey}.env_http_headers.x-ink-agent-id="AGENT_ID"`);
+    args.push('-c', `mcp_servers.${codexServerKey}.env_http_headers.x-ink-session-id="INK_SESSION_ID"`);
+    args.push('-c', `mcp_servers.${codexServerKey}.env_http_headers.x-ink-studio-id="INK_STUDIO_ID"`);
+    args.push('-c', `mcp_servers.${codexServerKey}.env_http_headers.Authorization="INK_AUTH_BEARER"`);
 
     if (config.model) {
       args.push('-m', config.model);

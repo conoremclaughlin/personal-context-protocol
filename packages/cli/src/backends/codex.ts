@@ -51,9 +51,11 @@ export class CodexAdapter implements BackendAdapter {
     // as root --config and as resume's -c flag)
     args.push('-c', `model_instructions_file=${promptFile}`);
 
-    // PCP session headers — Codex resolves env var names to values at runtime
+    // Ink session headers — Codex resolves env var names to values at runtime.
+    // Use 'pcp' as the server key — Codex config.toml defines the server under
+    // mcp_servers.pcp. Creating a new key via -c without url/transport fails.
     for (const { header, envVar } of PCP_ENV_HEADERS) {
-      args.push('-c', `mcp_servers.inkstand.env_http_headers.${header}="${envVar}"`);
+      args.push('-c', `mcp_servers.pcp.env_http_headers.${header}="${envVar}"`);
     }
 
     // Model (only if explicitly specified by user)

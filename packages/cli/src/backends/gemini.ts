@@ -42,13 +42,14 @@ function buildGeminiSettings(cwd: string): { path: string; cleanup: () => void }
     }
   }
 
-  // Merge Inkstand auth + session headers
-  const inkConfig = (mcpServers.inkstand || {}) as Record<string, unknown>;
-  const existingHeaders = (inkConfig.headers || {}) as Record<string, string>;
-  mcpServers.inkstand = {
-    ...inkConfig,
-    type: inkConfig.type || 'http',
-    url: inkConfig.url || 'http://localhost:3001/mcp',
+  // Merge Inkstand auth + session headers — prefer 'inkstand', fall back to 'pcp'
+  const serverKey = mcpServers.inkstand ? 'inkstand' : mcpServers.pcp ? 'pcp' : 'inkstand';
+  const serverConfig = (mcpServers[serverKey] || {}) as Record<string, unknown>;
+  const existingHeaders = (serverConfig.headers || {}) as Record<string, string>;
+  mcpServers[serverKey] = {
+    ...serverConfig,
+    type: serverConfig.type || 'http',
+    url: serverConfig.url || 'http://localhost:3001/mcp',
     headers: {
       ...existingHeaders,
       Authorization: 'Bearer ${INK_ACCESS_TOKEN}',
