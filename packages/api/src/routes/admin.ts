@@ -2238,7 +2238,7 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
     const body = (req.body || {}) as Record<string, unknown>;
     const updates: Record<string, unknown> = {};
 
-    if (typeof body.sandboxBypass === 'boolean') {
+    if (typeof body.sandboxBypass === 'boolean' || body.sandboxBypass === null) {
       updates.sandbox_bypass = body.sandboxBypass;
     }
 
@@ -2296,7 +2296,7 @@ router.patch('/studios/:studioId', async (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const updates: Record<string, unknown> = {};
 
-    if (typeof body.sandboxBypass === 'boolean') {
+    if (typeof body.sandboxBypass === 'boolean' || body.sandboxBypass === null) {
       updates.sandbox_bypass = body.sandboxBypass;
     }
 
