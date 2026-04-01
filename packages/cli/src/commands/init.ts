@@ -57,7 +57,7 @@ function resolveChannelPluginPath(cwd: string): string | null {
 
 function buildDefaultMcpJson(serverUrl: string, cwd?: string): Record<string, unknown> {
   const servers: Record<string, unknown> = {
-    pcp: {
+    inkstand: {
       type: 'http',
       url: `${serverUrl}/mcp`,
     },
@@ -97,11 +97,11 @@ function ensurePcpDir(cwd: string): InitStepResult {
 function ensureMcpJson(cwd: string): InitStepResult {
   const mcpPath = join(cwd, '.mcp.json');
   if (existsSync(mcpPath)) {
-    // Check if pcp server entry exists
+    // Check if inkstand server entry exists
     try {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf-8')) as Record<string, unknown>;
       const servers = existing.mcpServers as Record<string, unknown> | undefined;
-      if (servers?.pcp) {
+      if (servers?.inkstand) {
         // Add inkmail if missing and plugin exists locally
         if (!servers['inkmail']) {
           const channelPath = resolveChannelPluginPath(cwd);
@@ -116,22 +116,22 @@ function ensureMcpJson(cwd: string): InitStepResult {
             };
           }
         }
-        return { label: '.mcp.json', status: 'exists', detail: 'pcp server configured' };
+        return { label: '.mcp.json', status: 'exists', detail: 'inkstand server configured' };
       }
-      // Add pcp server to existing config
+      // Add inkstand server to existing config
       const serverUrl = getPcpServerUrl();
       const updated = {
         ...existing,
         mcpServers: {
           ...(servers || {}),
-          pcp: {
+          inkstand: {
             type: 'http',
             url: `${serverUrl}/mcp`,
           },
         },
       };
       writeFileSync(mcpPath, JSON.stringify(updated, null, 2) + '\n');
-      return { label: '.mcp.json', status: 'updated', detail: 'added pcp server' };
+      return { label: '.mcp.json', status: 'updated', detail: 'added inkstand server' };
     } catch {
       return { label: '.mcp.json', status: 'exists', detail: 'unparseable, skipping' };
     }
@@ -139,7 +139,7 @@ function ensureMcpJson(cwd: string): InitStepResult {
 
   const serverUrl = getPcpServerUrl();
   writeFileSync(mcpPath, JSON.stringify(buildDefaultMcpJson(serverUrl, cwd), null, 2) + '\n');
-  return { label: '.mcp.json', status: 'created', detail: `pcp → ${serverUrl}/mcp` };
+  return { label: '.mcp.json', status: 'created', detail: `inkstand → ${serverUrl}/mcp` };
 }
 
 function runInstallHooks(cwd: string, force?: boolean): InitStepResult[] {

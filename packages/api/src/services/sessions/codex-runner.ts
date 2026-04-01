@@ -128,11 +128,11 @@ export class CodexRunner implements IRunner {
     // Ink headers — Codex resolves env var names to values at runtime.
     // Phase 2: x-ink-context carries consolidated session metadata.
     // Individual headers kept for backward compat during transition.
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-context="INK_CONTEXT_TOKEN"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-agent-id="AGENT_ID"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-session-id="INK_SESSION_ID"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-studio-id="INK_STUDIO_ID"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.Authorization="INK_AUTH_BEARER"');
+    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-context="INK_CONTEXT_TOKEN"');
+    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-agent-id="AGENT_ID"');
+    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-session-id="INK_SESSION_ID"');
+    args.push('-c', 'mcp_servers.inkstand.env_http_headers.x-ink-studio-id="INK_STUDIO_ID"');
+    args.push('-c', 'mcp_servers.inkstand.env_http_headers.Authorization="INK_AUTH_BEARER"');
 
     if (config.model) {
       args.push('-m', config.model);
@@ -566,7 +566,7 @@ export class CodexRunner implements IRunner {
             input: input as Record<string, unknown>,
           });
 
-          if (name === 'mcp__pcp__send_response') {
+          if (name === 'mcp__inkstand__send_response') {
             const channel = (input as Record<string, unknown>).channel as ChannelType | undefined;
             const conversationId = (input as Record<string, unknown>).conversationId as
               | string

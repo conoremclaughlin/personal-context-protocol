@@ -103,10 +103,10 @@ interface ClaudePermissionsStatus {
 function hasPcpMcpAllowRule(rule: string): boolean {
   const normalized = rule.trim();
   return (
-    normalized === 'mcp__pcp__*' ||
+    normalized === 'mcp__inkstand__*' ||
     normalized === 'mcp__*' ||
     normalized === '*' ||
-    normalized.startsWith('mcp__pcp__')
+    normalized.startsWith('mcp__inkstand__')
   );
 }
 
@@ -170,7 +170,7 @@ export function getMcpConfigStatus(cwd: string): McpConfigStatus {
     const parsed = JSON.parse(readFileSync(mcpPath, 'utf-8')) as {
       mcpServers?: Record<string, { url?: unknown }>;
     };
-    const pcpServer = parsed.mcpServers?.pcp;
+    const pcpServer = parsed.mcpServers?.inkstand;
     const pcpUrl = typeof pcpServer?.url === 'string' ? pcpServer.url : undefined;
     return {
       configExists: true,
@@ -255,7 +255,7 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
       `  ${chalk.green('Configured')} (${claudePermissions.allowCount} allow, ${claudePermissions.denyCount} deny)`
     );
     if (!claudePermissions.hasPcpMcpAllowance) {
-      console.log(chalk.yellow('  No MCP PCP allow rule detected (mcp__pcp__*)'));
+      console.log(chalk.yellow('  No MCP PCP allow rule detected (mcp__inkstand__*)'));
     }
   }
   console.log('');
@@ -268,7 +268,7 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
   } else if (mcpConfig.parseError) {
     console.log(chalk.red('  Parse error'));
   } else if (!mcpConfig.hasPcpServer) {
-    console.log(chalk.yellow('  Missing mcpServers.pcp'));
+    console.log(chalk.yellow('  Missing mcpServers.inkstand'));
     console.log(chalk.dim('  Run: ink init'));
   } else {
     console.log(

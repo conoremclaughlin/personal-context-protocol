@@ -1061,7 +1061,7 @@ describe('runChat integration', () => {
       JSON.stringify(
         {
           mcpServers: {
-            pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+            inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
             github: { command: 'github-mcp-server', args: ['stdio'] },
           },
         },
@@ -1099,7 +1099,7 @@ describe('runChat integration', () => {
       JSON.stringify(
         {
           mcpServers: {
-            pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+            inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
           },
         },
         null,
@@ -1431,7 +1431,7 @@ describe('runChat integration', () => {
       '--config',
       'features.apps=false',
       '--config',
-      'mcp_servers.pcp.enabled=false',
+      'mcp_servers.inkstand.enabled=false',
       '--config',
       'mcp_servers.next-devtools.enabled=false',
       '--config',

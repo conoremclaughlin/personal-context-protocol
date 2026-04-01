@@ -36,7 +36,7 @@ const DEFAULT_ALLOW_RULES: string[] = [
   'Read(*)',
   'WebFetch(*)',
   'WebSearch',
-  'mcp__pcp__*',
+  'mcp__inkstand__*',
   'mcp__github__*',
   'mcp__supabase__*',
 ];

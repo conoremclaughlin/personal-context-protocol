@@ -73,9 +73,9 @@ Workspace: {workspace name}
 
 Context is about to be compacted. Before compaction completes:
 
-1. **Save critical decisions** — Use `mcp__pcp__remember` to persist any
+1. **Save critical decisions** — Use `mcp__inkstand__remember` to persist any
    important reasoning, decisions, or context that should survive compaction.
-2. **Note current task state** — Use `mcp__pcp__update_session_phase` to record
+2. **Note current task state** — Use `mcp__inkstand__update_session_phase` to record
    where you are in the current task so you can resume smoothly after compaction.
 
 This context will be lost after compaction unless you save it now.
@@ -151,7 +151,7 @@ Agent: {agentId}
 ```
 <pcp-reminder>
 You have completed ~{count} tool calls this session. Consider using
-`mcp__pcp__remember` to save a progress snapshot.
+`mcp__inkstand__remember` to save a progress snapshot.
 </pcp-reminder>
 
 <inkmail count="{count}">

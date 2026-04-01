@@ -439,7 +439,7 @@ export class ClaudeRunner implements IRunner {
       const toolName = event.name as string;
       const input = event.input as Record<string, unknown>;
 
-      if (toolName === 'mcp__pcp__send_response') {
+      if (toolName === 'mcp__inkstand__send_response') {
         const channel = (input.channel as ChannelType) || 'telegram';
         const response: ChannelResponse = {
           channel,

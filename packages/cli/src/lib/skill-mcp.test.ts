@@ -111,7 +111,7 @@ describe('buildMergedMcpConfig', () => {
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
         },
       })
     );
@@ -159,7 +159,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
         },
       })
     );
@@ -171,7 +171,7 @@ mcp:
       expect(mcpConfigPath).not.toBe(join(tmpDir, '.mcp.json'));
 
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
-      expect(merged.mcpServers.pcp).toBeDefined();
+      expect(merged.mcpServers.inkstand).toBeDefined();
       expect(merged.mcpServers.playwright).toBeDefined();
       expect(merged.mcpServers.playwright.type).toBe('stdio');
       expect(merged.mcpServers.playwright.command).toBe('npx');
@@ -190,7 +190,7 @@ mcp:
 name: pcp-override
 description: Should not override
 mcp:
-  name: pcp
+  name: inkstand
   command: fake
   args: ["--bad"]
   env: {}
@@ -204,7 +204,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
         },
       })
     );
@@ -212,9 +212,9 @@ mcp:
     const { mcpConfigPath, cleanup } = buildMergedMcpConfig(tmpDir);
     try {
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
-      // Original pcp config preserved, not overridden by skill
-      expect(merged.mcpServers.pcp.type).toBe('http');
-      expect(merged.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+      // Original inkstand config preserved, not overridden by skill
+      expect(merged.mcpServers.inkstand.type).toBe('http');
+      expect(merged.mcpServers.inkstand.url).toBe('http://localhost:3001/mcp');
     } finally {
       cleanup();
     }
@@ -228,7 +228,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
         },
       })
     );
@@ -240,10 +240,10 @@ mcp:
       expect(mcpConfigPath).not.toBe(join(tmpDir, '.mcp.json'));
 
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
-      expect(merged.mcpServers.pcp.headers).toBeDefined();
-      expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
+      expect(merged.mcpServers.inkstand.headers).toBeDefined();
+      expect(merged.mcpServers.inkstand.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
       // Original config preserved
-      expect(merged.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+      expect(merged.mcpServers.inkstand.url).toBe('http://localhost:3001/mcp');
     } finally {
       cleanup();
     }
@@ -254,7 +254,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
         },
       })
     );
@@ -274,7 +274,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: {
+          inkstand: {
             type: 'http',
             url: 'http://localhost:3001/mcp',
             headers: {
@@ -301,7 +301,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: {
+          inkstand: {
             type: 'http',
             url: 'http://localhost:3001/mcp',
             headers: { Authorization: 'Bearer existing-token' },
@@ -314,8 +314,8 @@ mcp:
     try {
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
       // Both headers present
-      expect(merged.mcpServers.pcp.headers.Authorization).toBe('Bearer existing-token');
-      expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
+      expect(merged.mcpServers.inkstand.headers.Authorization).toBe('Bearer existing-token');
+      expect(merged.mcpServers.inkstand.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
     } finally {
       cleanup();
     }
@@ -328,7 +328,7 @@ mcp:
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
         mcpServers: {
-          pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+          inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
         },
       })
     );
@@ -340,8 +340,8 @@ mcp:
     try {
       expect(mcpConfigPath).not.toBe(join(tmpDir, '.mcp.json'));
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
-      expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
-      expect(merged.mcpServers.pcp.headers['x-ink-studio-id']).toBe('${INK_STUDIO_ID}');
+      expect(merged.mcpServers.inkstand.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
+      expect(merged.mcpServers.inkstand.headers['x-ink-studio-id']).toBe('${INK_STUDIO_ID}');
     } finally {
       cleanup();
     }

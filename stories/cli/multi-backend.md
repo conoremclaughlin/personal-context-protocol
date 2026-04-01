@@ -72,8 +72,8 @@ For now, each backend adapter writes its own config:
 
 ```typescript
 // Claude: .mcp.json already exists, no transform needed
-// Codex: write [mcp_servers.pcp] section to a temp config.toml
-// Gemini: write mcpServers.pcp to a temp settings.json (or project .gemini/settings.json)
+// Codex: write [mcp_servers.inkstand] section to a temp config.toml
+// Gemini: write mcpServers.inkstand to a temp settings.json (or project .gemini/settings.json)
 ```
 
 ## Adapter Interface

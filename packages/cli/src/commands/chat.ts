@@ -309,7 +309,7 @@ function buildBackendToolPassthrough(
           '--config',
           'features.apps=false',
           '--config',
-          'mcp_servers.pcp.enabled=false',
+          'mcp_servers.inkstand.enabled=false',
           '--config',
           'mcp_servers.next-devtools.enabled=false',
           '--config',
@@ -1757,7 +1757,7 @@ function buildPromptEnvelope(
 
   const toolInstruction =
     runtime.toolRouting === 'local'
-      ? 'IMPORTANT: To call PCP tools (get_inbox, recall, remember, list_tasks, send_response, etc.), you MUST emit fenced code blocks in this exact format:\n\n```ink-tool\n{"tool":"tool_name","args":{}}\n```\n\nDo NOT use ToolSearch, mcp__pcp__*, or native MCP tool calling for PCP tools — those will not work in this runtime. Only the fenced block format above will execute PCP tools. You can emit multiple ink-tool blocks in one response.\n\nClient-local tools (also via ink-tool blocks, no server round-trip):\n- list_context: Introspect your context window — see all entries with IDs, token counts, sources, and previews.\n- evict_context: Remove specific entries from your context to reclaim tokens. Args: entryIds (number[]), source (string), or role (string).\n- signal_status: Signal your session status. Args: status ("completed" | "blocked" | "continuing"), reason (string, optional). Use this at the end of your work to tell the runtime whether you are done, blocked on something, or need another turn.'
+      ? 'IMPORTANT: To call PCP tools (get_inbox, recall, remember, list_tasks, send_response, etc.), you MUST emit fenced code blocks in this exact format:\n\n```ink-tool\n{"tool":"tool_name","args":{}}\n```\n\nDo NOT use ToolSearch, mcp__inkstand__*, or native MCP tool calling for PCP tools — those will not work in this runtime. Only the fenced block format above will execute PCP tools. You can emit multiple ink-tool blocks in one response.\n\nClient-local tools (also via ink-tool blocks, no server round-trip):\n- list_context: Introspect your context window — see all entries with IDs, token counts, sources, and previews.\n- evict_context: Remove specific entries from your context to reclaim tokens. Args: entryIds (number[]), source (string), or role (string).\n- signal_status: Signal your session status. Args: status ("completed" | "blocked" | "continuing"), reason (string, optional). Use this at the end of your work to tell the runtime whether you are done, blocked on something, or need another turn.'
       : runtime.toolMode === 'off'
         ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
         : runtime.toolMode === 'privileged'
@@ -2946,9 +2946,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
             const result = handleClientLocalTool(tool, args, ledger);
             if (result) return Promise.resolve(result);
           }
-          // Strip MCP namespace prefix — the SB may emit mcp__pcp__tool_name
+          // Strip MCP namespace prefix — the SB may emit mcp__inkstand__tool_name
           // but PcpClient expects bare tool names (get_inbox, recall, etc.)
-          const bareTool = tool.replace(/^mcp__pcp__/, '');
+          const bareTool = tool.replace(/^mcp__inkstand__/, '');
           return pcp.callTool(bareTool, args);
         },
         sessionId: runtime.sessionId,

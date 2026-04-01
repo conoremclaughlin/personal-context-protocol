@@ -55,14 +55,14 @@ export interface InjectSessionHeadersResult {
  * Inject Ink session headers into an MCP config file.
  *
  * Reads the given .mcp.json, adds x-ink-session-id (and optionally
- * x-ink-studio-id) headers to the "pcp" server entry, and writes
+ * x-ink-studio-id) headers to the "inkstand" server entry, and writes
  * a temp file if modifications were needed.
  *
  * The header values use ${VAR} interpolation so Claude Code resolves
  * them from the spawned process's env vars at runtime.
  *
  * If the config already has the headers, or the file doesn't exist,
- * or there's no "pcp" server entry, returns the original path unchanged.
+ * or there's no "inkstand" server entry, returns the original path unchanged.
  */
 export function injectSessionHeaders(
   options: InjectSessionHeadersOptions
@@ -82,26 +82,26 @@ export function injectSessionHeaders(
     return { mcpConfigPath, cleanup: () => {}, modified: false };
   }
 
-  // No PCP server entry — nothing to inject into
-  if (!config.mcpServers.pcp) {
+  // No Inkstand server entry — nothing to inject into
+  if (!config.mcpServers.inkstand) {
     return { mcpConfigPath, cleanup: () => {}, modified: false };
   }
 
   let modified = false;
 
   // Inject session ID header (uses ${VAR} interpolation — Claude Code resolves at runtime)
-  if (!config.mcpServers.pcp.headers?.['x-ink-session-id']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
+  if (!config.mcpServers.inkstand.headers?.['x-ink-session-id']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
       'x-ink-session-id': '${INK_SESSION_ID}',
     };
     modified = true;
   }
 
   // Inject studio ID header
-  if (studioId && !config.mcpServers.pcp.headers?.['x-ink-studio-id']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
+  if (studioId && !config.mcpServers.inkstand.headers?.['x-ink-studio-id']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
       'x-ink-studio-id': '${INK_STUDIO_ID}',
     };
     modified = true;
@@ -110,18 +110,18 @@ export function injectSessionHeaders(
   // Inject Authorization header for triggered sessions.
   // Uses ${VAR} interpolation so the token is resolved from INK_ACCESS_TOKEN
   // env var at runtime, not hardcoded in the config file.
-  if (accessToken && !config.mcpServers.pcp.headers?.['Authorization']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
+  if (accessToken && !config.mcpServers.inkstand.headers?.['Authorization']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
       Authorization: 'Bearer ${INK_ACCESS_TOKEN}',
     };
     modified = true;
   }
 
   // Inject consolidated context token (Phase 1 — alongside individual headers)
-  if (!config.mcpServers.pcp.headers?.['x-ink-context']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
+  if (!config.mcpServers.inkstand.headers?.['x-ink-context']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
       'x-ink-context': '${INK_CONTEXT_TOKEN}',
     };
     modified = true;

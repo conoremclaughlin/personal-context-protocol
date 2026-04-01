@@ -166,7 +166,7 @@ function toCodexToml(servers: Record<string, McpServerConfig>): string {
     }
 
     // PCP server: mark as required so Codex fails loudly if it can't connect
-    if (name === 'pcp') {
+    if (name === 'inkstand') {
       lines.push('required = true');
     }
 

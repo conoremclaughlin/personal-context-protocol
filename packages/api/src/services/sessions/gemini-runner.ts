@@ -86,9 +86,9 @@ export class GeminiRunner implements IRunner {
       }
 
       // Ensure PCP server has auth + session headers
-      const pcpConfig = (mcpServers.pcp || {}) as Record<string, unknown>;
+      const pcpConfig = (mcpServers.inkstand || {}) as Record<string, unknown>;
       const existingHeaders = (pcpConfig.headers || {}) as Record<string, string>;
-      mcpServers.pcp = {
+      mcpServers.inkstand = {
         ...pcpConfig,
         type: pcpConfig.type || 'http',
         url: pcpConfig.url || 'http://localhost:3001/mcp',
@@ -491,7 +491,7 @@ export class GeminiRunner implements IRunner {
             input: input as Record<string, unknown>,
           });
 
-          if (name === 'mcp__pcp__send_response') {
+          if (name === 'mcp__inkstand__send_response') {
             const typedInput = input as Record<string, unknown>;
             const channel = (typedInput.channel as ChannelType) || 'telegram';
             const conversationId = typedInput.conversationId as string | undefined;

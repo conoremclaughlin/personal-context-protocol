@@ -83,7 +83,7 @@ describe('CodexRunner', () => {
           `${JSON.stringify({
             type: 'tool_use',
             id: 'tu-1',
-            name: 'mcp__pcp__send_response',
+            name: 'mcp__inkstand__send_response',
             input: { channel: 'telegram', conversationId: 'chat-1', content: 'hi from codex' },
           })}\n`
         )
@@ -331,7 +331,7 @@ describe('CodexRunner', () => {
             type: 'item.completed',
             item: {
               type: 'function_call',
-              name: 'mcp__pcp__send_response',
+              name: 'mcp__inkstand__send_response',
               arguments: JSON.stringify({
                 channel: 'agent',
                 conversationId: 'trigger:lumen:thread:some-thread',

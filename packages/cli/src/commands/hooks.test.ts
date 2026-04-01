@@ -209,13 +209,13 @@ describe('installHooks: Gemini', () => {
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'settings.json'),
-      JSON.stringify({ mcpServers: { pcp: { url: 'http://localhost:3001/mcp' } } })
+      JSON.stringify({ mcpServers: { inkstand: { url: 'http://localhost:3001/mcp' } } })
     );
 
     installHooks(TEST_DIR, { backend: 'gemini' });
 
     const config = JSON.parse(readFileSync(join(configDir, 'settings.json'), 'utf-8'));
-    expect(config.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+    expect(config.mcpServers.inkstand.url).toBe('http://localhost:3001/mcp');
     expect(config.hooks).toBeDefined();
   });
 
@@ -279,7 +279,7 @@ describe('installHooks: Codex', () => {
       join(configDir, 'config.toml'),
       [
         '# ink-managed:start mcp_servers',
-        '[mcp_servers.pcp]',
+        '[mcp_servers.inkstand]',
         'url = "http://localhost:3001/mcp"',
         '# ink-managed:end mcp_servers',
         '',
@@ -308,13 +308,13 @@ describe('installHooks: Codex', () => {
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.toml'),
-      '[mcp_servers.pcp]\nurl = "http://localhost:3001/mcp"\n'
+      '[mcp_servers.inkstand]\nurl = "http://localhost:3001/mcp"\n'
     );
 
     installHooks(TEST_DIR, { backend: 'codex' });
 
     const content = readFileSync(join(configDir, 'config.toml'), 'utf-8');
-    expect(content).toContain('[mcp_servers.pcp]');
+    expect(content).toContain('[mcp_servers.inkstand]');
     expect(content).toContain('# ink-managed:hooks:start');
   });
 

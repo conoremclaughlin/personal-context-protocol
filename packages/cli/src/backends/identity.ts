@@ -198,11 +198,11 @@ Skip directly to loading user config from ~/.ink/config.json and bootstrap as "$
 
 ## Tool Priority (IMPORTANT)
 
-Always use **PCP cloud tools** (mcp__pcp__*) over file reads or Claude Code builtins:
-- Identity: use mcp__pcp__bootstrap, not file reads
-- Tasks: use mcp__pcp__create_task, not TaskCreate
-- Memory: use mcp__pcp__remember, not local notes
-- Sessions: use mcp__pcp__update_session_phase/get_session/list_sessions
+Always use **PCP cloud tools** (mcp__inkstand__*) over file reads or Claude Code builtins:
+- Identity: use mcp__inkstand__bootstrap, not file reads
+- Tasks: use mcp__inkstand__create_task, not TaskCreate
+- Memory: use mcp__inkstand__remember, not local notes
+- Sessions: use mcp__inkstand__update_session_phase/get_session/list_sessions
 
 PCP tools persist across sessions and are shared with the user and other agents.`;
 
