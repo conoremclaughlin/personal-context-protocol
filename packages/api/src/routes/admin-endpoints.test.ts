@@ -1185,6 +1185,41 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       expect((res._json as any).sandbox_bypass).toBe(true);
     });
 
+    it('should accept null to reset sandbox_bypass to inherited', async () => {
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'studios') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: 'studio-123', user_id: 'user-123' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          };
+        }
+        return createQueryChain(null);
+      });
+
+      const handler = findRouteHandler('patch', '/studios/:studioId');
+      const req = createAuthenticatedReq({
+        params: { studioId: 'studio-123' },
+        body: { sandboxBypass: null },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).success).toBe(true);
+      expect((res._json as any).sandbox_bypass).toBeNull();
+    });
+
     it('should return 404 for non-existent studio', async () => {
       mockSupabaseFrom.mockImplementation(() => ({
         select: vi.fn().mockReturnValue({
