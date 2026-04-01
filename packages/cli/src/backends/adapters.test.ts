@@ -399,6 +399,54 @@ describe('backend adapters session resume wiring', () => {
     }
   });
 
-  // TODO: Gemini adapter auth regression test — needs settings.json override
-  // wiring first. See packages/cli/src/backends/gemini.ts TODO comment.
+  it('gemini adapter produces PCP_CONTEXT_TOKEN with session/studio/agent', () => {
+    const adapter = new GeminiAdapter();
+    const prepared = adapter.prepare({
+      agentId: 'aster',
+      model: undefined,
+      promptParts: [],
+      passthroughArgs: [],
+      pcpSessionId: 'sess-gemini-789',
+      studioId: 'studio-aster-012',
+    });
+
+    try {
+      expect(prepared.env.PCP_CONTEXT_TOKEN).toBeDefined();
+      const token = decodeContextToken(prepared.env.PCP_CONTEXT_TOKEN);
+      expect(token).not.toBeNull();
+      expect(token!.sessionId).toBe('sess-gemini-789');
+      expect(token!.studioId).toBe('studio-aster-012');
+      expect(token!.agentId).toBe('aster');
+      expect(token!.runtime).toBe('gemini');
+      expect(token!.cliAttached).toBe(true);
+    } finally {
+      prepared.cleanup();
+    }
+  });
+
+  it('gemini adapter generates settings.json with auth + context headers', () => {
+    const adapter = new GeminiAdapter();
+    const prepared = adapter.prepare({
+      agentId: 'aster',
+      model: undefined,
+      promptParts: [],
+      passthroughArgs: [],
+      pcpSessionId: 'sess-gemini-789',
+    });
+
+    try {
+      // Should have GEMINI_CLI_SYSTEM_SETTINGS_PATH pointing to temp file
+      expect(prepared.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toBeDefined();
+      const settingsContent = readFileSync(prepared.env.GEMINI_CLI_SYSTEM_SETTINGS_PATH, 'utf-8');
+      const settings = JSON.parse(settingsContent);
+
+      // PCP server should have auth + context headers
+      expect(settings.mcpServers.pcp).toBeDefined();
+      expect(settings.mcpServers.pcp.headers.Authorization).toBe('Bearer ${PCP_ACCESS_TOKEN}');
+      expect(settings.mcpServers.pcp.headers['x-pcp-context']).toBe('${PCP_CONTEXT_TOKEN}');
+      expect(settings.mcpServers.pcp.headers['x-pcp-session-id']).toBe('${PCP_SESSION_ID}');
+    } finally {
+      prepared.cleanup();
+    }
+  });
 });
