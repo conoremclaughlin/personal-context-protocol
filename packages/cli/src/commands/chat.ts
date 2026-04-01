@@ -605,7 +605,7 @@ function hydrateLedgerFromTranscript(
       continue;
     }
     if (type === 'inbox' && typeof event.rendered === 'string') {
-      ledger.addEntry('inbox', compactForLedger(event.rendered), 'ink-inbox-history');
+      ledger.addEntry('inbox', compactForLedger(event.rendered), 'inkmail-history');
       loaded += 1;
       messageCount += 1;
       pushPreview('inbox', event.rendered, typeof event.ts === 'string' ? event.ts : undefined);
@@ -2486,7 +2486,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         const from = msg.from || 'unknown';
         const heading = msg.subject ? `${from} — ${msg.subject}` : from;
         const rendered = `📥 ${heading}: ${msg.content}`.trim();
-        ledger.addEntry('inbox', compactForLedger(rendered), 'ink-inbox');
+        ledger.addEntry('inbox', compactForLedger(rendered), 'inkmail');
         appendTranscript(runtime.transcriptPath, {
           type: 'inbox',
           messageId: msg.id,
@@ -2539,7 +2539,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         }
       }
       const rendered = `📥 ${heading}${delegationLabel}: ${msg.content}`.trim();
-      ledger.addEntry('inbox', compactForLedger(rendered), 'ink-inbox');
+      ledger.addEntry('inbox', compactForLedger(rendered), 'inkmail');
       appendTranscript(runtime.transcriptPath, {
         type: 'inbox',
         messageId: msg.id,

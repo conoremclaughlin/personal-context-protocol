@@ -66,7 +66,7 @@ function buildDefaultMcpJson(serverUrl: string, cwd?: string): Record<string, un
   // Add PCP channel plugin for real-time inbox push notifications
   const channelPath = cwd ? resolveChannelPluginPath(cwd) : null;
   if (channelPath) {
-    servers['ink-inbox'] = {
+    servers['inkmail'] = {
       command: 'npx',
       args: ['tsx', channelPath],
     };
@@ -102,17 +102,17 @@ function ensureMcpJson(cwd: string): InitStepResult {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf-8')) as Record<string, unknown>;
       const servers = existing.mcpServers as Record<string, unknown> | undefined;
       if (servers?.pcp) {
-        // Add ink-inbox if missing and plugin exists locally
-        if (!servers['ink-inbox']) {
+        // Add inkmail if missing and plugin exists locally
+        if (!servers['inkmail']) {
           const channelPath = resolveChannelPluginPath(cwd);
           if (channelPath) {
-            const updatedServers = { ...servers, 'ink-inbox': { command: 'npx', args: ['tsx', channelPath] } };
+            const updatedServers = { ...servers, 'inkmail': { command: 'npx', args: ['tsx', channelPath] } };
             const updated = { ...existing, mcpServers: updatedServers };
             writeFileSync(mcpPath, JSON.stringify(updated, null, 2) + '\n');
             return {
               label: '.mcp.json',
               status: 'updated',
-              detail: 'added ink-inbox channel plugin',
+              detail: 'added inkmail channel plugin',
             };
           }
         }

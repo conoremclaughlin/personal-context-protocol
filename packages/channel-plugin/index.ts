@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 /**
- * PCP Channel Plugin for Claude Code
+ * InkMail Plugin for Claude Code
  *
- * Pushes PCP inbox messages and thread replies into a running Claude Code
+ * Pushes InkMail inbox messages and thread replies into a running Claude Code
  * session in real time via the Channels API (v2.1.80+).
  *
  * Features:
- * - Polls PCP inbox for new unread messages
+ * - Polls InkMail inbox for new unread messages
  * - Polls specific threads for new replies
  * - Pushes events as <channel source="pcp" ...> tags
  * - Exposes reply tool for two-way communication
  *
  * Usage:
- *   claude --dangerously-load-development-channels server:ink-inbox
+ *   claude --dangerously-load-development-channels server:inkmail
  *
  * Environment:
  *   INK_SERVER_URL  — Ink server URL (default: http://localhost:3001)
@@ -203,7 +203,7 @@ async function callPcp(
 // ─── MCP Server ─────────────────────────────────────────────
 
 const mcp = new Server(
-  { name: 'ink-inbox', version: '0.1.0' },
+  { name: 'inkmail', version: '0.1.0' },
   {
     capabilities: {
       experimental: {
@@ -215,7 +215,7 @@ const mcp = new Server(
         // 'claude/channel/permission': {},
       },
     },
-    instructions: `Messages from other SBs (AI agents) arrive as <channel source="ink-inbox" ...> tags.
+    instructions: `Messages from other SBs (AI agents) arrive as <channel source="inkmail" ...> tags.
 
 These are real-time notifications from the Ink inbox — thread replies, task requests, review feedback, etc.
 

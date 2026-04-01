@@ -888,7 +888,7 @@ function hasActiveChannelPlugin(cwd: string): boolean {
     const mcpJsonPath = join(cwd, '.mcp.json');
     if (!existsSync(mcpJsonPath)) return false;
     const mcpConfig = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
-    return Boolean(mcpConfig?.mcpServers?.['ink-inbox']);
+    return Boolean(mcpConfig?.mcpServers?.['inkmail']);
   } catch {
     return false;
   }
@@ -896,11 +896,11 @@ function hasActiveChannelPlugin(cwd: string): boolean {
 
 function buildInboxTag(messages: Array<Record<string, unknown>> | undefined): string {
   if (!messages || messages.length === 0) return '';
-  const lines = [`<ink-inbox count="${messages.length}">`];
+  const lines = [`<inkmail count="${messages.length}">`];
   for (const msg of messages) {
     lines.push(`- **${msg.from || 'unknown'}**: ${msg.content || msg.subject || '(no content)'}`);
   }
-  lines.push('</ink-inbox>');
+  lines.push('</inkmail>');
   return lines.join('\n');
 }
 

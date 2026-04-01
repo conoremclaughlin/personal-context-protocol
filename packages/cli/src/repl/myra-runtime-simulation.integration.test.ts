@@ -396,7 +396,7 @@ describe('Myra simulation: Phase 6 — Full Heartbeat Cycle', () => {
     if (messages.length > 0) {
       for (const msg of messages.slice(0, 3)) {
         const content = `From ${msg.senderAgentId || 'unknown'}: ${((msg.content as string) || '').slice(0, 200)}`;
-        ledger.addEntry('inbox', content, 'ink-inbox');
+        ledger.addEntry('inbox', content, 'inkmail');
       }
     }
 
@@ -415,7 +415,7 @@ describe('Myra simulation: Phase 6 — Full Heartbeat Cycle', () => {
     console.log(`  4. Passive recall: +${turnResult.injected} memories`);
 
     // 8. Evict processed inbox
-    const evictResult = handleClientLocalTool('evict_context', { source: 'ink-inbox' }, ledger);
+    const evictResult = handleClientLocalTool('evict_context', { source: 'inkmail' }, ledger);
     const evictParsed = JSON.parse((evictResult!.content as Array<{ text: string }>)[0].text);
     console.log(`  5. Evicted ${evictParsed.evicted} inbox entries`);
 
@@ -429,7 +429,7 @@ describe('Myra simulation: Phase 6 — Full Heartbeat Cycle', () => {
     console.log(`     Sources: ${[...new Set(finalEntries.map((e) => e.source))].join(', ')}`);
 
     // Verify: inbox is gone, user/assistant preserved
-    expect(finalEntries.every((e) => e.source !== 'ink-inbox')).toBe(true);
+    expect(finalEntries.every((e) => e.source !== 'inkmail')).toBe(true);
     expect(finalEntries.some((e) => e.role === 'user')).toBe(true);
     expect(finalEntries.some((e) => e.role === 'assistant')).toBe(true);
 

@@ -251,7 +251,7 @@ describe('SbHookRegistry: eviction', () => {
   it('evicts entries specified by hook', async () => {
     const registry = new SbHookRegistry();
     const ledger = makeLedger();
-    const e1 = ledger.addEntry('inbox', 'stale message', 'ink-inbox');
+    const e1 = ledger.addEntry('inbox', 'stale message', 'inkmail');
     ledger.addEntry('user', 'keep this');
 
     registry.register({

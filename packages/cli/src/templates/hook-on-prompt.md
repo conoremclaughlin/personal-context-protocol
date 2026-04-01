@@ -1,3 +1,3 @@
-<ink-inbox count="{{COUNT}}">
+<inkmail count="{{COUNT}}">
 {{MESSAGES}}
-</ink-inbox>
+</inkmail>

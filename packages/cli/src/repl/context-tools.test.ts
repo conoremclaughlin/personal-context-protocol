@@ -186,7 +186,7 @@ describe('handleClientLocalTool: evict_context', () => {
   it('limits removedPreviews to 10 entries', () => {
     const ledger = new ContextLedger();
     for (let i = 0; i < 15; i++) {
-      ledger.addEntry('inbox', `message ${i}`, 'ink-inbox');
+      ledger.addEntry('inbox', `message ${i}`, 'inkmail');
     }
 
     const result = handleClientLocalTool('evict_context', { role: 'inbox' }, ledger);
@@ -214,31 +214,31 @@ describe('evict → list consistency', () => {
     const ledger = new ContextLedger();
     ledger.addEntry('system', 'bootstrap', 'bootstrap');
     ledger.addEntry('user', 'question');
-    ledger.addEntry('inbox', 'stale message', 'ink-inbox');
+    ledger.addEntry('inbox', 'stale message', 'inkmail');
     ledger.addEntry('assistant', 'answer');
 
     // Evict inbox
-    handleClientLocalTool('evict_context', { source: 'ink-inbox' }, ledger);
+    handleClientLocalTool('evict_context', { source: 'inkmail' }, ledger);
 
-    // List should show 3 entries, no ink-inbox source
+    // List should show 3 entries, no inkmail source
     const listResult = handleClientLocalTool('list_context', {}, ledger);
     const parsed = parseResult(listResult);
 
     expect(parsed.totalEntries).toBe(3);
-    expect(parsed.bySource['ink-inbox']).toBeUndefined();
-    expect(parsed.entries.every((e: { source?: string }) => e.source !== 'ink-inbox')).toBe(true);
+    expect(parsed.bySource['inkmail']).toBeUndefined();
+    expect(parsed.entries.every((e: { source?: string }) => e.source !== 'inkmail')).toBe(true);
   });
 
   it('multiple sequential evictions accumulate correctly', () => {
     const ledger = new ContextLedger();
     ledger.addEntry('system', 'bootstrap', 'bootstrap');
-    ledger.addEntry('inbox', 'inbox 1', 'ink-inbox');
+    ledger.addEntry('inbox', 'inbox 1', 'inkmail');
     ledger.addEntry('system', 'tool result', 'local-tool');
     ledger.addEntry('user', 'question');
     ledger.addEntry('assistant', 'answer');
 
     // Evict inbox
-    handleClientLocalTool('evict_context', { source: 'ink-inbox' }, ledger);
+    handleClientLocalTool('evict_context', { source: 'inkmail' }, ledger);
     expect(ledger.listEntries()).toHaveLength(4);
 
     // Evict tool results
@@ -262,7 +262,7 @@ describe('eviction affects prompt transcript', () => {
     const ledger = new ContextLedger();
     ledger.addEntry('system', 'BOOTSTRAP_MARKER', 'bootstrap');
     ledger.addEntry('user', 'USER_MARKER');
-    ledger.addEntry('inbox', 'INBOX_MARKER', 'ink-inbox');
+    ledger.addEntry('inbox', 'INBOX_MARKER', 'inkmail');
     ledger.addEntry('assistant', 'ASSISTANT_MARKER');
 
     // Before eviction: all present

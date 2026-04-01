@@ -328,7 +328,7 @@ describe('Inbox polling + passive recall interaction', () => {
     ledger.addEntry(
       'inbox',
       'From lumen: Please review PR #242 — context eviction + hooks',
-      'ink-inbox'
+      'inkmail'
     );
 
     // User responds to the inbox message
@@ -357,16 +357,16 @@ describe('Inbox polling + passive recall interaction', () => {
     const ledger = new ContextLedger();
 
     // Add inbox messages
-    ledger.addEntry('inbox', 'Message 1 from myra', 'ink-inbox');
-    ledger.addEntry('inbox', 'Message 2 from lumen', 'ink-inbox');
+    ledger.addEntry('inbox', 'Message 1 from myra', 'inkmail');
+    ledger.addEntry('inbox', 'Message 2 from lumen', 'inkmail');
     ledger.addEntry('user', 'Got it, processing those');
     ledger.addEntry('assistant', 'Processing inbox messages...');
 
     // Evict inbox after processing
-    handleClientLocalTool('evict_context', { source: 'ink-inbox' }, ledger);
+    handleClientLocalTool('evict_context', { source: 'inkmail' }, ledger);
 
     expect(ledger.listEntries()).toHaveLength(2); // user + assistant remain
-    expect(ledger.listEntries().every((e) => e.source !== 'ink-inbox')).toBe(true);
+    expect(ledger.listEntries().every((e) => e.source !== 'inkmail')).toBe(true);
 
     // Topic extraction still works on remaining entries
     const signal = extractTopicSignal('Got it, processing those', 'Processing inbox messages...');
@@ -412,7 +412,7 @@ describe('Inbox polling + passive recall interaction', () => {
       ledger.addEntry(
         'inbox',
         'From lumen: Reviewed PR #242. Two design blockers on hook execution semantics.',
-        'ink-inbox'
+        'inkmail'
       );
       ledger.addEntry('user', 'Let me address Lumen review feedback on the hook system');
       ledger.addEntry(

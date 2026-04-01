@@ -125,10 +125,10 @@ Agent: {agentId}
 **Output (only if messages exist and inbox is stale):**
 
 ```
-<ink-inbox count="{count}">
+<inkmail count="{count}">
 - **{from}**: {content or subject}
 ...
-</ink-inbox>
+</inkmail>
 ```
 
 ---
@@ -154,10 +154,10 @@ You have completed ~{count} tool calls this session. Consider using
 `mcp__pcp__remember` to save a progress snapshot.
 </pcp-reminder>
 
-<ink-inbox count="{count}">
+<inkmail count="{count}">
 - **{from}**: {content or subject}
 ...
-</ink-inbox>
+</inkmail>
 ```
 
 ## Runtime State

@@ -21,7 +21,7 @@ function hasPcpInboxPlugin(cwd: string): boolean {
   if (!existsSync(mcpJsonPath)) return false;
   try {
     const config = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
-    return Boolean(config?.mcpServers?.['ink-inbox']);
+    return Boolean(config?.mcpServers?.['inkmail']);
   } catch {
     return false;
   }
@@ -78,7 +78,7 @@ export class ClaudeAdapter implements BackendAdapter {
     // The channel plugin is a stdio MCP server that bridges PCP's HTTP
     // inbox to Claude Code's channel notification system.
     if (hasPcpInboxPlugin(process.cwd())) {
-      args.push('--dangerously-load-development-channels', 'server:ink-inbox');
+      args.push('--dangerously-load-development-channels', 'server:inkmail');
     }
 
     // Passthrough flags
