@@ -53,7 +53,7 @@ interface InboxResult {
 // ============================================================================
 
 function getPcpConfig(): PcpConfig | null {
-  const configPath = join(homedir(), '.pcp', 'config.json');
+  const configPath = join(homedir(), '.ink', 'config.json');
   if (existsSync(configPath)) {
     try {
       return JSON.parse(readFileSync(configPath, 'utf-8'));

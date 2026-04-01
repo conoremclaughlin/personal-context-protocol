@@ -146,7 +146,7 @@ interface ToolPolicyRulesState {
   allowedSkills: Set<string>;
 }
 
-const DEFAULT_POLICY_PATH = join(homedir(), '.pcp', 'security', 'tool-policy.json');
+const DEFAULT_POLICY_PATH = join(homedir(), '.ink', 'security', 'tool-policy.json');
 
 export const DEFAULT_SAFE_PCP_TOOLS = new Set<string>([
   'bootstrap',
@@ -170,10 +170,10 @@ export const DEFAULT_SAFE_PCP_TOOLS = new Set<string>([
 ]);
 
 export const TOOL_GROUPS: ToolGroupMap = {
-  'group:pcp-safe': Array.from(DEFAULT_SAFE_PCP_TOOLS),
-  'group:pcp-comms': ['send_to_inbox', 'trigger_agent', 'send_response'],
-  'group:pcp-memory': ['remember', 'recall', 'forget', 'update_memory', 'restore_memory'],
-  'group:pcp-session': [
+  'group:ink-safe': Array.from(DEFAULT_SAFE_PCP_TOOLS),
+  'group:ink-comms': ['send_to_inbox', 'trigger_agent', 'send_response'],
+  'group:ink-memory': ['remember', 'recall', 'forget', 'update_memory', 'restore_memory'],
+  'group:ink-session': [
     'start_session',
     'update_session_phase',
     'get_session',

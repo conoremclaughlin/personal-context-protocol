@@ -115,7 +115,7 @@ describe('MCPServer workspace context resolution', () => {
 
     const server = new MCPServer(createDataComposerMock());
     const req = {
-      header: vi.fn((name: string) => (name === 'x-pcp-workspace-id' ? 'ws-header' : undefined)),
+      header: vi.fn((name: string) => (name === 'x-ink-workspace-id' ? 'ws-header' : undefined)),
     } as any;
 
     const result = await (server as any).resolveWorkspaceContextForMcpRequest(req, {
@@ -133,7 +133,7 @@ describe('MCPServer workspace context resolution', () => {
     mockFindById.mockResolvedValue(null);
     const server = new MCPServer(createDataComposerMock());
     const req = {
-      header: vi.fn((name: string) => (name === 'x-pcp-workspace-id' ? 'ws-missing' : undefined)),
+      header: vi.fn((name: string) => (name === 'x-ink-workspace-id' ? 'ws-missing' : undefined)),
     } as any;
 
     await expect(

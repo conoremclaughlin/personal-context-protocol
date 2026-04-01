@@ -156,7 +156,7 @@ describe('CodexRunner', () => {
     expect(args).toContain('resume msg');
   });
 
-  it('injects PCP_ACCESS_TOKEN into codex subprocess env when provided', async () => {
+  it('injects INK_ACCESS_TOKEN into codex subprocess env when provided', async () => {
     const mockProc = createMockProcess();
     (spawn as Mock).mockReturnValue(mockProc);
 
@@ -184,7 +184,7 @@ describe('CodexRunner', () => {
       string[],
       { env?: Record<string, string> },
     ];
-    expect(options.env?.PCP_ACCESS_TOKEN).toBe('test-pcp-token');
+    expect(options.env?.INK_ACCESS_TOKEN).toBe('test-pcp-token');
   });
 
   it('should return null backendSessionId when no session ID is found in stdout', async () => {

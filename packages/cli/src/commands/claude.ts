@@ -430,7 +430,7 @@ async function resolvePcpAuthEnv(verbose: boolean): Promise<Record<string, strin
     const token = await getValidAccessToken(getPcpServerUrl());
     if (token) {
       if (verbose) console.log(chalk.dim('PCP auth: token injected'));
-      return { PCP_ACCESS_TOKEN: token };
+      return { INK_ACCESS_TOKEN: token };
     }
   } catch {
     // Silently skip — auth is best-effort
@@ -577,7 +577,7 @@ async function resolveCodexStartupContextBlock(options: {
 }
 
 function getPcpConfig(): PcpConfig | null {
-  const configPath = join(homedir(), '.pcp', 'config.json');
+  const configPath = join(homedir(), '.ink', 'config.json');
   if (!existsSync(configPath)) return null;
   try {
     return JSON.parse(readFileSync(configPath, 'utf-8')) as PcpConfig;
@@ -591,7 +591,7 @@ function getIdentityContextFromIdentityJson(cwd = process.cwd()): {
   identityId?: string;
   studioName?: string;
 } {
-  const identityPath = join(cwd, '.pcp', 'identity.json');
+  const identityPath = join(cwd, '.ink', 'identity.json');
   if (!existsSync(identityPath)) return {};
   try {
     const identity = JSON.parse(readFileSync(identityPath, 'utf-8')) as {
@@ -1033,7 +1033,7 @@ function findLatestPcpReplTranscriptForSession(
   const prefix = `${sessionId}-`;
   const candidates: string[] = [];
   for (const root of searchRoots) {
-    const dir = join(root, '.pcp', 'runtime', 'repl');
+    const dir = join(root, '.ink', 'runtime', 'repl');
     if (!existsSync(dir)) continue;
     try {
       for (const entry of readdirSync(dir)) {
@@ -2062,7 +2062,7 @@ export function getBackendLocalSessionsForProject(
 function printPcpUnavailableWarning(reason: string, cwd = process.cwd()): void {
   const serverUrl = getPcpServerUrl();
   console.log(chalk.yellow(`\n⚠ PCP session service unavailable (${reason}).`));
-  console.log(chalk.yellow(`  PCP_SERVER_URL: ${serverUrl}`));
+  console.log(chalk.yellow(`  INK_SERVER_URL: ${serverUrl}`));
   const mcpPath = join(cwd, '.mcp.json');
   if (!existsSync(mcpPath)) {
     console.log(chalk.yellow('  .mcp.json not found in this repo.'));
@@ -3473,7 +3473,7 @@ export async function runClaude(
     backend: options.backend,
     agentId,
     pcpConfig,
-    hasAuthToken: Boolean(authEnv.PCP_ACCESS_TOKEN || process.env.PCP_ACCESS_TOKEN),
+    hasAuthToken: Boolean(authEnv.INK_ACCESS_TOKEN || process.env.INK_ACCESS_TOKEN),
     verbose: options.verbose,
     pcpSessionId: sessionContext.pcpSessionId,
   });
@@ -3558,12 +3558,12 @@ export async function runClaude(
     env: {
       ...process.env,
       ...authEnv,
-      // PCP_AUTH_BEARER: full "Bearer <token>" for Codex env_http_headers
-      ...(authEnv.PCP_ACCESS_TOKEN
-        ? { PCP_AUTH_BEARER: `Bearer ${authEnv.PCP_ACCESS_TOKEN}` }
+      // INK_AUTH_BEARER: full "Bearer <token>" for Codex env_http_headers
+      ...(authEnv.INK_ACCESS_TOKEN
+        ? { INK_AUTH_BEARER: `Bearer ${authEnv.INK_ACCESS_TOKEN}` }
         : {}),
       ...prepared.env,
-      ...(runtimeLinkId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
+      ...(runtimeLinkId ? { INK_RUNTIME_LINK_ID: runtimeLinkId } : {}),
     },
   });
 
@@ -3686,7 +3686,7 @@ export async function runClaudeInteractive(
     backend: options.backend,
     agentId,
     pcpConfig,
-    hasAuthToken: Boolean(authEnv.PCP_ACCESS_TOKEN || process.env.PCP_ACCESS_TOKEN),
+    hasAuthToken: Boolean(authEnv.INK_ACCESS_TOKEN || process.env.INK_ACCESS_TOKEN),
     verbose: options.verbose,
     pcpSessionId: sessionContext.pcpSessionId,
   });
@@ -3750,7 +3750,7 @@ export async function runClaudeInteractive(
           ...process.env,
           ...authEnv,
           ...prepared.env,
-          ...(runtimeLinkId ? { PCP_RUNTIME_LINK_ID: runtimeLinkId } : {}),
+          ...(runtimeLinkId ? { INK_RUNTIME_LINK_ID: runtimeLinkId } : {}),
         },
       });
 

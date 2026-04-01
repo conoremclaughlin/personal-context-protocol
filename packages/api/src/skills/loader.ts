@@ -11,8 +11,8 @@
  * Loading order (lowest → highest precedence, later overrides by name):
  * 1. Built-in:  packages/api/src/skills/builtin/   (shipped with PCP)
  * 2. Extra dirs: configurable paths                 (ClawHub interop, etc.)
- * 3. Managed:   ~/.pcp/skills/                      (user-installed, all SBs)
- * 4. Workspace:  <cwd>/.pcp/skills/                 (per-worktree, per-SB)
+ * 3. Managed:   ~/.ink/skills/                      (user-installed, all SBs)
+ * 4. Workspace:  <cwd>/.ink/skills/                 (per-worktree, per-SB)
  */
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
@@ -28,9 +28,9 @@ const HOME = process.env.HOME || '';
  * Options for skill loading.
  */
 export interface SkillLoadOptions {
-  /** Override the default ~/.pcp/skills/ managed path */
+  /** Override the default ~/.ink/skills/ managed path */
   userSkillsPath?: string;
-  /** Working directory for workspace-level skills (<cwd>/.pcp/skills/) */
+  /** Working directory for workspace-level skills (<cwd>/.ink/skills/) */
   workspacePath?: string;
   /** Additional skill directories (e.g., ["~/.openclaw/skills"]) */
   extraDirs?: string[];
@@ -302,13 +302,13 @@ export function loadAllSkills(options?: string | SkillLoadOptions): LoadedSkill[
     }
   }
 
-  // Tier 3: Managed (~/.pcp/skills/)
+  // Tier 3: Managed (~/.ink/skills/)
   const userPath = opts.userSkillsPath || join(HOME, '.pcp', 'skills');
   for (const s of scanDirectory(userPath)) {
     skills.set(s.manifest.name, s);
   }
 
-  // Tier 4: Workspace (<cwd>/.pcp/skills/) — highest precedence
+  // Tier 4: Workspace (<cwd>/.ink/skills/) — highest precedence
   if (opts.workspacePath) {
     const wsSkillsPath = join(opts.workspacePath, '.pcp', 'skills');
     for (const s of scanDirectory(wsSkillsPath)) {

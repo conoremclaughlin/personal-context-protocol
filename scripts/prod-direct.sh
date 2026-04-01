@@ -44,27 +44,27 @@ if [[ ! -f "${ROOT_DIR}/packages/api/dist/server.js" ]]; then
   exit 1
 fi
 
-if [[ "${PCP_RUN_WEB:-true}" != "false" && ! -d "${ROOT_DIR}/packages/web/.next" ]]; then
+if [[ "${INK_RUN_WEB:-true}" != "false" && ! -d "${ROOT_DIR}/packages/web/.next" ]]; then
   echo "Missing packages/web/.next build output."
   echo "Run: yarn prod:refresh"
   exit 1
 fi
 
-BASE_PORT="${PCP_PORT_BASE:-3001}"
+BASE_PORT="${INK_PORT_BASE:-3001}"
 WEB_PORT="${WEB_PORT:-$((BASE_PORT + 1))}"
 MYRA_PORT="${MYRA_HTTP_PORT:-$((BASE_PORT + 2))}"
 API_URL="${API_URL:-http://localhost:${BASE_PORT}}"
 
 echo "Starting direct prod mode (no PM2)"
-echo "  PCP_PORT_BASE=${BASE_PORT}"
+echo "  INK_PORT_BASE=${BASE_PORT}"
 echo "  WEB_PORT=${WEB_PORT}"
 echo "  MYRA_HTTP_PORT=${MYRA_PORT}"
 echo "  API_URL=${API_URL}"
-echo "  PCP_RUN_WEB=${PCP_RUN_WEB:-true}"
+echo "  INK_RUN_WEB=${INK_RUN_WEB:-true}"
 
 (
   NODE_ENV="production" \
-  PCP_PORT_BASE="${BASE_PORT}" \
+  INK_PORT_BASE="${BASE_PORT}" \
   MYRA_HTTP_PORT="${MYRA_PORT}" \
   API_URL="${API_URL}" \
   node "${ROOT_DIR}/packages/api/dist/server.js"
@@ -96,8 +96,8 @@ wait_for_api() {
 
 wait_for_api
 
-if [[ "${PCP_RUN_WEB:-true}" == "false" ]]; then
-  echo "Web disabled (PCP_RUN_WEB=false). Running API only."
+if [[ "${INK_RUN_WEB:-true}" == "false" ]]; then
+  echo "Web disabled (INK_RUN_WEB=false). Running API only."
   wait "${API_PID}"
   exit 0
 fi

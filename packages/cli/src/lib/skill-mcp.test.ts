@@ -85,24 +85,24 @@ describe('buildMergedMcpConfig', () => {
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), 'merged-mcp-'));
-    // Isolate PCP_SESSION_ID and PCP_STUDIO_ID — some tests depend on them being absent
-    savedPcpSessionId = process.env.PCP_SESSION_ID;
-    savedPcpStudioId = process.env.PCP_STUDIO_ID;
-    delete process.env.PCP_SESSION_ID;
-    delete process.env.PCP_STUDIO_ID;
+    // Isolate INK_SESSION_ID and INK_STUDIO_ID — some tests depend on them being absent
+    savedPcpSessionId = process.env.INK_SESSION_ID;
+    savedPcpStudioId = process.env.INK_STUDIO_ID;
+    delete process.env.INK_SESSION_ID;
+    delete process.env.INK_STUDIO_ID;
   });
 
   afterEach(() => {
     rmSync(tmpDir, { recursive: true, force: true });
     if (savedPcpSessionId !== undefined) {
-      process.env.PCP_SESSION_ID = savedPcpSessionId;
+      process.env.INK_SESSION_ID = savedPcpSessionId;
     } else {
-      delete process.env.PCP_SESSION_ID;
+      delete process.env.INK_SESSION_ID;
     }
     if (savedPcpStudioId !== undefined) {
-      process.env.PCP_STUDIO_ID = savedPcpStudioId;
+      process.env.INK_STUDIO_ID = savedPcpStudioId;
     } else {
-      delete process.env.PCP_STUDIO_ID;
+      delete process.env.INK_STUDIO_ID;
     }
   });
 
@@ -222,8 +222,8 @@ mcp:
 
   // ─── PCP Session Header Injection ───
 
-  it('injects x-pcp-session-id header when PCP_SESSION_ID is set', () => {
-    process.env.PCP_SESSION_ID = 'abc-123-def';
+  it('injects x-ink-session-id header when INK_SESSION_ID is set', () => {
+    process.env.INK_SESSION_ID = 'abc-123-def';
     writeFileSync(
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
@@ -241,7 +241,7 @@ mcp:
 
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
       expect(merged.mcpServers.pcp.headers).toBeDefined();
-      expect(merged.mcpServers.pcp.headers['x-pcp-session-id']).toBe('${PCP_SESSION_ID}');
+      expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
       // Original config preserved
       expect(merged.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
     } finally {
@@ -249,7 +249,7 @@ mcp:
     }
   });
 
-  it('does not inject header when PCP_SESSION_ID is not set', () => {
+  it('does not inject header when INK_SESSION_ID is not set', () => {
     writeFileSync(
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
@@ -268,8 +268,8 @@ mcp:
     }
   });
 
-  it('respects existing user-configured x-pcp-session-id header', () => {
-    process.env.PCP_SESSION_ID = 'should-not-override';
+  it('respects existing user-configured x-ink-session-id header', () => {
+    process.env.INK_SESSION_ID = 'should-not-override';
     writeFileSync(
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
@@ -278,7 +278,7 @@ mcp:
             type: 'http',
             url: 'http://localhost:3001/mcp',
             headers: {
-              'x-pcp-session-id': 'user-configured-value',
+              'x-ink-session-id': 'user-configured-value',
               'x-pcp-context': 'already-set',
             },
           },
@@ -296,7 +296,7 @@ mcp:
   });
 
   it('preserves existing headers when injecting session id', () => {
-    process.env.PCP_SESSION_ID = 'abc-123';
+    process.env.INK_SESSION_ID = 'abc-123';
     writeFileSync(
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
@@ -315,7 +315,7 @@ mcp:
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
       // Both headers present
       expect(merged.mcpServers.pcp.headers.Authorization).toBe('Bearer existing-token');
-      expect(merged.mcpServers.pcp.headers['x-pcp-session-id']).toBe('${PCP_SESSION_ID}');
+      expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
     } finally {
       cleanup();
     }
@@ -323,7 +323,7 @@ mcp:
 
   it('injects header via explicit options even without env var', () => {
     // Simulates the CLI passing pcpSessionId directly (before setting spawn env)
-    delete process.env.PCP_SESSION_ID;
+    delete process.env.INK_SESSION_ID;
     writeFileSync(
       join(tmpDir, '.mcp.json'),
       JSON.stringify({
@@ -340,15 +340,15 @@ mcp:
     try {
       expect(mcpConfigPath).not.toBe(join(tmpDir, '.mcp.json'));
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
-      expect(merged.mcpServers.pcp.headers['x-pcp-session-id']).toBe('${PCP_SESSION_ID}');
-      expect(merged.mcpServers.pcp.headers['x-pcp-studio-id']).toBe('${PCP_STUDIO_ID}');
+      expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
+      expect(merged.mcpServers.pcp.headers['x-pcp-studio-id']).toBe('${INK_STUDIO_ID}');
     } finally {
       cleanup();
     }
   });
 
   it('does not inject header when no PCP server entry exists', () => {
-    process.env.PCP_SESSION_ID = 'abc-123';
+    process.env.INK_SESSION_ID = 'abc-123';
     writeFileSync(
       join(tmpDir, '.mcp.json'),
       JSON.stringify({

@@ -145,14 +145,14 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CLAUDE_SESSION_ID || '
 
     const oldHome = process.env.HOME;
     const oldPath = process.env.PATH;
-    const oldPcpUrl = process.env.PCP_SERVER_URL;
+    const oldPcpUrl = process.env.INK_SERVER_URL;
     const oldArgsPath = process.env.FAKE_CLAUDE_ARGS_PATH;
     const oldFakeSessionId = process.env.FAKE_CLAUDE_SESSION_ID;
     const oldCwd = process.cwd();
 
     process.env.HOME = homeDir;
     process.env.PATH = `${binDir}:${oldPath || ''}`;
-    process.env.PCP_SERVER_URL = 'http://pcp.test.local';
+    process.env.INK_SERVER_URL = 'http://pcp.test.local';
     process.env.FAKE_CLAUDE_ARGS_PATH = fakeClaudeArgsPath;
     process.env.FAKE_CLAUDE_SESSION_ID = 'claude-session-int-1';
     process.chdir(repoDir);
@@ -203,8 +203,8 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CLAUDE_SESSION_ID || '
       if (oldPath === undefined) delete process.env.PATH;
       else process.env.PATH = oldPath;
 
-      if (oldPcpUrl === undefined) delete process.env.PCP_SERVER_URL;
-      else process.env.PCP_SERVER_URL = oldPcpUrl;
+      if (oldPcpUrl === undefined) delete process.env.INK_SERVER_URL;
+      else process.env.INK_SERVER_URL = oldPcpUrl;
 
       if (oldArgsPath === undefined) delete process.env.FAKE_CLAUDE_ARGS_PATH;
       else process.env.FAKE_CLAUDE_ARGS_PATH = oldArgsPath;
@@ -310,7 +310,7 @@ console.log('fake-claude-run-complete');
 
     const oldHome = process.env.HOME;
     const oldPath = process.env.PATH;
-    const oldPcpUrl = process.env.PCP_SERVER_URL;
+    const oldPcpUrl = process.env.INK_SERVER_URL;
     const oldArgsPath = process.env.FAKE_CLAUDE_ARGS_PATH;
     const oldDelayedTranscriptPath = process.env.DELAYED_TRANSCRIPT_PATH;
     const oldDelayedSessionId = process.env.DELAYED_SESSION_ID;
@@ -319,7 +319,7 @@ console.log('fake-claude-run-complete');
 
     process.env.HOME = homeDir;
     process.env.PATH = `${binDir}:${oldPath || ''}`;
-    process.env.PCP_SERVER_URL = 'http://pcp.test.local';
+    process.env.INK_SERVER_URL = 'http://pcp.test.local';
     process.env.FAKE_CLAUDE_ARGS_PATH = fakeClaudeArgsPath;
     process.env.DELAYED_SESSION_ID = delayedSessionId;
     process.env.DELAYED_TRANSCRIPT_DELAY_MS = '120';
@@ -379,8 +379,8 @@ console.log('fake-claude-run-complete');
       if (oldPath === undefined) delete process.env.PATH;
       else process.env.PATH = oldPath;
 
-      if (oldPcpUrl === undefined) delete process.env.PCP_SERVER_URL;
-      else process.env.PCP_SERVER_URL = oldPcpUrl;
+      if (oldPcpUrl === undefined) delete process.env.INK_SERVER_URL;
+      else process.env.INK_SERVER_URL = oldPcpUrl;
 
       if (oldArgsPath === undefined) delete process.env.FAKE_CLAUDE_ARGS_PATH;
       else process.env.FAKE_CLAUDE_ARGS_PATH = oldArgsPath;
@@ -484,14 +484,14 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CODEX_SESSION_ID || 'c
 
     const oldHome = process.env.HOME;
     const oldPath = process.env.PATH;
-    const oldPcpUrl = process.env.PCP_SERVER_URL;
+    const oldPcpUrl = process.env.INK_SERVER_URL;
     const oldArgsPath = process.env.FAKE_CODEX_ARGS_PATH;
     const oldFakeSessionId = process.env.FAKE_CODEX_SESSION_ID;
     const oldCwd = process.cwd();
 
     process.env.HOME = homeDir;
     process.env.PATH = `${binDir}:${oldPath || ''}`;
-    process.env.PCP_SERVER_URL = 'http://pcp.test.local';
+    process.env.INK_SERVER_URL = 'http://pcp.test.local';
     process.env.FAKE_CODEX_ARGS_PATH = fakeCodexArgsPath;
     process.env.FAKE_CODEX_SESSION_ID = 'codex-session-int-1';
     process.chdir(repoDir);
@@ -538,8 +538,8 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CODEX_SESSION_ID || 'c
       if (oldPath === undefined) delete process.env.PATH;
       else process.env.PATH = oldPath;
 
-      if (oldPcpUrl === undefined) delete process.env.PCP_SERVER_URL;
-      else process.env.PCP_SERVER_URL = oldPcpUrl;
+      if (oldPcpUrl === undefined) delete process.env.INK_SERVER_URL;
+      else process.env.INK_SERVER_URL = oldPcpUrl;
 
       if (oldArgsPath === undefined) delete process.env.FAKE_CODEX_ARGS_PATH;
       else process.env.FAKE_CODEX_ARGS_PATH = oldArgsPath;
@@ -634,14 +634,14 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_GEMINI_SESSION_ID || '
 
     const oldHome = process.env.HOME;
     const oldPath = process.env.PATH;
-    const oldPcpUrl = process.env.PCP_SERVER_URL;
+    const oldPcpUrl = process.env.INK_SERVER_URL;
     const oldArgsPath = process.env.FAKE_GEMINI_ARGS_PATH;
     const oldFakeSessionId = process.env.FAKE_GEMINI_SESSION_ID;
     const oldCwd = process.cwd();
 
     process.env.HOME = homeDir;
     process.env.PATH = `${binDir}:${oldPath || ''}`;
-    process.env.PCP_SERVER_URL = 'http://pcp.test.local';
+    process.env.INK_SERVER_URL = 'http://pcp.test.local';
     process.env.FAKE_GEMINI_ARGS_PATH = fakeGeminiArgsPath;
     process.env.FAKE_GEMINI_SESSION_ID = 'gemini-session-int-1';
     process.chdir(repoDir);
@@ -689,8 +689,8 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_GEMINI_SESSION_ID || '
       if (oldPath === undefined) delete process.env.PATH;
       else process.env.PATH = oldPath;
 
-      if (oldPcpUrl === undefined) delete process.env.PCP_SERVER_URL;
-      else process.env.PCP_SERVER_URL = oldPcpUrl;
+      if (oldPcpUrl === undefined) delete process.env.INK_SERVER_URL;
+      else process.env.INK_SERVER_URL = oldPcpUrl;
 
       if (oldArgsPath === undefined) delete process.env.FAKE_GEMINI_ARGS_PATH;
       else process.env.FAKE_GEMINI_ARGS_PATH = oldArgsPath;

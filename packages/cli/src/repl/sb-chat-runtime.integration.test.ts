@@ -6,10 +6,10 @@
  * 2. turn_end is fire-and-forget — injections appear in NEXT turn's prompt
  * 3. Inbox messages enter the ledger and inform passive recall topic signal
  *
- * Requires PCP server on localhost:3001 (or PCP_SERVER_URL).
+ * Requires PCP server on localhost:3001 (or INK_SERVER_URL).
  *
  * Run with:
- *   PCP_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
+ *   INK_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
  *     packages/cli/src/repl/sb-chat-runtime.integration.test.ts
  */
 
@@ -23,7 +23,7 @@ import { isClientLocalTool, handleClientLocalTool } from './context-tools.js';
 
 // ─── Server check ───────────────────────────────────────────────
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 let serverAvailable = false;
 try {
   const result = execSync(`curl -sf -m 2 ${PCP_URL}/health`, { encoding: 'utf-8' });

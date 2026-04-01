@@ -1,7 +1,7 @@
 /**
  * Init Command Tests
  *
- * Tests for sb init: .pcp/ creation, .mcp.json setup,
+ * Tests for sb init: .ink/ creation, .mcp.json setup,
  * hooks installation, and idempotency.
  */
 
@@ -27,19 +27,19 @@ afterEach(() => {
 });
 
 // ============================================================================
-// .pcp/ directory
+// .ink/ directory
 // ============================================================================
 
-describe('init: .pcp/ directory', () => {
-  it('should create .pcp/ if it does not exist', () => {
-    const pcpDir = join(TEST_DIR, '.pcp');
+describe('init: .ink/ directory', () => {
+  it('should create .ink/ if it does not exist', () => {
+    const pcpDir = join(TEST_DIR, '.ink');
     expect(existsSync(pcpDir)).toBe(false);
     mkdirSync(pcpDir, { recursive: true });
     expect(existsSync(pcpDir)).toBe(true);
   });
 
-  it('should be idempotent if .pcp/ already exists', () => {
-    const pcpDir = join(TEST_DIR, '.pcp');
+  it('should be idempotent if .ink/ already exists', () => {
+    const pcpDir = join(TEST_DIR, '.ink');
     mkdirSync(pcpDir, { recursive: true });
     writeFileSync(join(pcpDir, 'identity.json'), JSON.stringify({ agentId: 'wren' }));
 
@@ -70,7 +70,7 @@ describe('init: .mcp.json', () => {
 
     expect(existsSync(mcpPath)).toBe(true);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    expect(config.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+    expect(config.mcpServers.ink.url).toBe('http://localhost:3001/mcp');
   });
 
   it('should add pcp server to existing .mcp.json without it', () => {
@@ -86,14 +86,14 @@ describe('init: .mcp.json', () => {
 
     // Simulate init logic: add pcp server
     const existing = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    if (!existing.mcpServers.pcp) {
-      existing.mcpServers.pcp = { type: 'http', url: 'http://localhost:3001/mcp' };
+    if (!existing.mcpServers.ink) {
+      existing.mcpServers.ink = { type: 'http', url: 'http://localhost:3001/mcp' };
       writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
     }
 
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
     expect(config.mcpServers.supabase.url).toBe('https://supabase.example.com/mcp');
-    expect(config.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+    expect(config.mcpServers.ink.url).toBe('http://localhost:3001/mcp');
   });
 
   it('should not modify .mcp.json if pcp server already exists', () => {
@@ -107,11 +107,11 @@ describe('init: .mcp.json', () => {
 
     // Simulate init logic: skip if pcp exists
     const existing = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    expect(existing.mcpServers.pcp).toBeDefined();
+    expect(existing.mcpServers.ink).toBeDefined();
 
     // Verify it wasn't changed
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    expect(config.mcpServers.pcp.url).toBe('http://custom-server:4000/mcp');
+    expect(config.mcpServers.ink.url).toBe('http://custom-server:4000/mcp');
   });
 });
 
@@ -191,8 +191,8 @@ describe('init: full flow idempotency', () => {
     hooks: string;
     sync: boolean;
   } {
-    // Step 1: .pcp/
-    const pcpDir = join(cwd, '.pcp');
+    // Step 1: .ink/
+    const pcpDir = join(cwd, '.ink');
     const pcpResult = existsSync(pcpDir) ? 'exists' as const : 'created' as const;
     mkdirSync(pcpDir, { recursive: true });
 
@@ -209,7 +209,7 @@ describe('init: full flow idempotency', () => {
       mcpResult = 'created';
     } else {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-      if (existing.mcpServers?.pcp) {
+      if (existing.mcpServers?.ink) {
         mcpResult = 'exists';
       } else {
         existing.mcpServers = { ...(existing.mcpServers || {}), pcp: { type: 'http', url: 'http://localhost:3001/mcp' } };
@@ -234,7 +234,7 @@ describe('init: full flow idempotency', () => {
 
   it('should create everything on first run', () => {
     const result = simulateInit(TEST_DIR);
-    expect(result.pcp).toBe('created');
+    expect(result.ink).toBe('created');
     expect(result.mcp).toBe('created');
     expect(result.hooks).toBe('installed');
     expect(result.sync).toBe(true);
@@ -243,7 +243,7 @@ describe('init: full flow idempotency', () => {
   it('should detect everything exists on second run', () => {
     simulateInit(TEST_DIR);
     const result = simulateInit(TEST_DIR);
-    expect(result.pcp).toBe('exists');
+    expect(result.ink).toBe('exists');
     expect(result.mcp).toBe('exists');
     expect(result.hooks).toBe('already-installed');
     // sync still returns true because it overwrites
@@ -264,6 +264,6 @@ describe('init: full flow idempotency', () => {
 
     const config = JSON.parse(readFileSync(join(TEST_DIR, '.mcp.json'), 'utf-8'));
     expect(config.mcpServers.supabase).toBeDefined();
-    expect(config.mcpServers.pcp).toBeDefined();
+    expect(config.mcpServers.ink).toBeDefined();
   });
 });

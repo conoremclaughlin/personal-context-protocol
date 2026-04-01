@@ -85,7 +85,7 @@ function resolveDefaultCliName(fsOps: Pick<DoctorFs, 'existsSync' | 'readFileSyn
   if (fromEnv) return `sb-${fromEnv}`;
 
   const cwd = process.cwd();
-  const identityPath = join(cwd, '.pcp', 'identity.json');
+  const identityPath = join(cwd, '.ink', 'identity.json');
   if (fsOps.existsSync(identityPath)) {
     try {
       const identity = JSON.parse(fsOps.readFileSync(identityPath, 'utf-8'));

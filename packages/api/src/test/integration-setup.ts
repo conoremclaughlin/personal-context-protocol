@@ -24,7 +24,7 @@ if (!process.env.SUPABASE_URL || !hasSupabaseKey) {
 }
 
 // Safety guard: default to local-only integration DB targets unless explicitly overridden.
-if (process.env.PCP_ALLOW_REMOTE_INTEGRATION_DB !== '1') {
+if (process.env.INK_ALLOW_REMOTE_INTEGRATION_DB !== '1') {
   let hostname: string;
   try {
     hostname = new URL(process.env.SUPABASE_URL).hostname;
@@ -37,7 +37,7 @@ if (process.env.PCP_ALLOW_REMOTE_INTEGRATION_DB !== '1') {
       [
         `Refusing to run integration tests against non-local SUPABASE_URL host: ${hostname}`,
         'Use a local Supabase stack (scripts/test-integration-db-local.sh), or set',
-        'PCP_ALLOW_REMOTE_INTEGRATION_DB=1 if you intentionally want a remote target.',
+        'INK_ALLOW_REMOTE_INTEGRATION_DB=1 if you intentionally want a remote target.',
       ].join('\n')
     );
   }

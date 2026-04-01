@@ -79,7 +79,7 @@ describe('studio sandbox planning', () => {
     expect(plan.studioAccess).toBe('rw');
     expect(plan.network).toBe('default');
     expect(plan.containerName).toContain('pcp-studio-sandbox-alpha-');
-    expect(plan.env.PCP_SERVER_URL).toBe('http://host.docker.internal:3001');
+    expect(plan.env.INK_SERVER_URL).toBe('http://host.docker.internal:3001');
 
     const activeStudioMount = plan.mounts.find((mount) => mount.target === '/studio');
     expect(activeStudioMount?.source.endsWith(basename(studioPath))).toBe(true);

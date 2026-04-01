@@ -1216,7 +1216,7 @@ process.on('unhandledRejection', (reason) => {
 
 // Start the server
 startServer({
-  workingDirectory: process.env.PCP_WORKING_DIR || path.resolve(__dirname, '../../..'),
+  workingDirectory: process.env.INK_WORKING_DIR || path.resolve(__dirname, '../../..'),
   mcpConfigPath: process.env.MCP_CONFIG_PATH,
 }).catch((error) => {
   logger.error('Failed to start server:', error);

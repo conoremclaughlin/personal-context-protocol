@@ -275,7 +275,7 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
       `  ${chalk.green('PCP server configured')} (${mcpConfig.pcpUrl || chalk.dim('<url not set>')})`
     );
   }
-  console.log(`  ${chalk.dim('PCP_SERVER_URL')} ${pcpServerUrl}`);
+  console.log(`  ${chalk.dim('INK_SERVER_URL')} ${pcpServerUrl}`);
   console.log('');
 
   const permissionsHealthy =

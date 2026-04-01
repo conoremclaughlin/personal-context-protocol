@@ -22,7 +22,7 @@ function pickDebugArgValues(args: Record<string, unknown>): Record<string, unkno
 }
 
 export function getPcpServerUrl(): string {
-  return process.env.PCP_SERVER_URL || 'http://localhost:3001';
+  return process.env.INK_SERVER_URL || 'http://localhost:3001';
 }
 
 function formatPcpFetchFailure(url: string, error: unknown): string {
@@ -71,13 +71,13 @@ export async function callPcpTool<T = Record<string, unknown>>(
     headers.Authorization = `Bearer ${token}`;
   }
   if (options?.callerProfile) {
-    headers['x-pcp-caller-profile'] = options.callerProfile;
+    headers['x-ink-caller-profile'] = options.callerProfile;
   }
   if (options?.sessionId) {
-    headers['x-pcp-session-id'] = options.sessionId;
+    headers['x-ink-session-id'] = options.sessionId;
   }
   if (options?.studioId) {
-    headers['x-pcp-studio-id'] = options.studioId;
+    headers['x-ink-studio-id'] = options.studioId;
   }
 
   sbDebugLog('pcp-mcp', 'call_start', {
@@ -114,7 +114,7 @@ export async function callPcpTool<T = Record<string, unknown>>(
           ? String((error as { cause?: unknown }).cause)
           : null,
     });
-    throw new Error(`${diagnostic}. Ensure PCP server is running and PCP_SERVER_URL is correct.`);
+    throw new Error(`${diagnostic}. Ensure PCP server is running and INK_SERVER_URL is correct.`);
   }
 
   if (!response.ok) {

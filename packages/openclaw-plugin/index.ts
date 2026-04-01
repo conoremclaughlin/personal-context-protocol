@@ -75,7 +75,7 @@ function resolveAgentId(pluginAgentId?: string): string | null {
   if (pluginAgentId) return pluginAgentId;
 
   // Check ~/.pcp/config.json agentMapping
-  const config = readJsonFile<PcpUserConfig>(join(homedir(), '.pcp', 'config.json'));
+  const config = readJsonFile<PcpUserConfig>(join(homedir(), '.ink', 'config.json'));
   if (config?.agentMapping?.openclaw) return config.agentMapping.openclaw;
 
   // Fall back to first mapping
@@ -90,16 +90,16 @@ function resolveAgentId(pluginAgentId?: string): string | null {
 function resolveAccessToken(pluginToken?: string): string | null {
   if (pluginToken) return pluginToken;
 
-  // Check PCP_ACCESS_TOKEN env var
-  if (process.env.PCP_ACCESS_TOKEN) return process.env.PCP_ACCESS_TOKEN;
+  // Check INK_ACCESS_TOKEN env var
+  if (process.env.INK_ACCESS_TOKEN) return process.env.INK_ACCESS_TOKEN;
 
   // Check ~/.pcp/auth.json
-  const auth = readJsonFile<PcpAuthConfig>(join(homedir(), '.pcp', 'auth.json'));
+  const auth = readJsonFile<PcpAuthConfig>(join(homedir(), '.ink', 'auth.json'));
   return auth?.accessToken ?? null;
 }
 
 function resolveUserId(): string | null {
-  const config = readJsonFile<PcpUserConfig>(join(homedir(), '.pcp', 'config.json'));
+  const config = readJsonFile<PcpUserConfig>(join(homedir(), '.ink', 'config.json'));
   return config?.userId ?? null;
 }
 
@@ -228,7 +228,7 @@ export default function pcpPlugin(api: OpenClawPluginApi) {
   if (!accessToken) {
     api.logger.warn(
       'pcp: no access token found. Set plugins.entries.pcp.config.accessToken, ' +
-        "PCP_ACCESS_TOKEN env var, or run 'sb login'. PCP hooks disabled."
+        "INK_ACCESS_TOKEN env var, or run 'sb login'. PCP hooks disabled."
     );
     return;
   }

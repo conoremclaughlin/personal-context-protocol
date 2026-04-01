@@ -125,14 +125,14 @@ export class CodexRunner implements IRunner {
     args.push('--json');
     args.push('-c', `model_instructions_file=${promptPath}`);
 
-    // PCP headers — Codex resolves env var names to values at runtime.
-    // Phase 2: x-pcp-context carries consolidated session metadata.
+    // Ink headers — Codex resolves env var names to values at runtime.
+    // Phase 2: x-ink-context carries consolidated session metadata.
     // Individual headers kept for backward compat during transition.
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-context="PCP_CONTEXT_TOKEN"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-agent-id="AGENT_ID"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-session-id="PCP_SESSION_ID"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-pcp-studio-id="PCP_STUDIO_ID"');
-    args.push('-c', 'mcp_servers.pcp.env_http_headers.Authorization="PCP_AUTH_BEARER"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-context="INK_CONTEXT_TOKEN"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-agent-id="AGENT_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-session-id="INK_SESSION_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.x-ink-studio-id="INK_STUDIO_ID"');
+    args.push('-c', 'mcp_servers.pcp.env_http_headers.Authorization="INK_AUTH_BEARER"');
 
     if (config.model) {
       args.push('-m', config.model);

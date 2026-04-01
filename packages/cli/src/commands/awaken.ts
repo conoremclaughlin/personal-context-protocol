@@ -348,8 +348,8 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
   // 5. Resolve PCP auth token (same as sb chat) so MCP tools work
   const authEnv: Record<string, string> = {};
   try {
-    const token = await getValidAccessToken(process.env.PCP_SERVER_URL || 'http://localhost:3001');
-    if (token) authEnv.PCP_ACCESS_TOKEN = token;
+    const token = await getValidAccessToken(process.env.INK_SERVER_URL || 'http://localhost:3001');
+    if (token) authEnv.INK_ACCESS_TOKEN = token;
   } catch {
     // Auth is best-effort — the backend can fall back to MCP OAuth
   }

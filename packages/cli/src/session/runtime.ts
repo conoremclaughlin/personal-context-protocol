@@ -32,7 +32,7 @@ interface RuntimeSessionState {
 const RUNTIME_STATE_FILE = 'sessions.json';
 
 function getRuntimeDir(cwd: string): string {
-  return join(cwd, '.pcp', 'runtime');
+  return join(cwd, '.ink', 'runtime');
 }
 
 function getRuntimeStatePath(cwd: string): string {

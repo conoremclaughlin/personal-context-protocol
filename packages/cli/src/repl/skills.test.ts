@@ -44,7 +44,7 @@ describe('discoverSkills', () => {
     const root = mkdtempSync(join(tmpdir(), 'sb-skills-'));
     dirs.push(root);
 
-    const skillDir = join(root, '.pcp', 'skills', 'registry-skill');
+    const skillDir = join(root, '.ink', 'skills', 'registry-skill');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, 'SKILL.md'), '# Registry skill\\n');
     writeFileSync(

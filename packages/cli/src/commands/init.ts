@@ -1,11 +1,11 @@
 /**
  * Init Command
  *
- * Set up a repo for PCP: install hooks, create default .mcp.json,
- * ensure .pcp/ directory. Idempotent — skips steps already done.
+ * Set up a repo for Ink: install hooks, create default .mcp.json,
+ * ensure .ink/ directory. Idempotent — skips steps already done.
  *
  * Commands:
- *   init    Initialize PCP in the current repo
+ *   init    Initialize Ink in the current repo
  */
 
 import { Command } from 'commander';
@@ -28,7 +28,7 @@ interface PcpConfig {
 }
 
 function getPcpConfig(): PcpConfig | null {
-  const configPath = join(homedir(), '.pcp', 'config.json');
+  const configPath = join(homedir(), '.ink', 'config.json');
   if (existsSync(configPath)) {
     try {
       return JSON.parse(readFileSync(configPath, 'utf-8'));
@@ -40,7 +40,7 @@ function getPcpConfig(): PcpConfig | null {
 }
 
 function getPcpServerUrl(): string {
-  return process.env.PCP_SERVER_URL || 'http://localhost:3001';
+  return process.env.INK_SERVER_URL || 'http://localhost:3001';
 }
 
 function resolveChannelPluginPath(cwd: string): string | null {
@@ -66,7 +66,7 @@ function buildDefaultMcpJson(serverUrl: string, cwd?: string): Record<string, un
   // Add PCP channel plugin for real-time inbox push notifications
   const channelPath = cwd ? resolveChannelPluginPath(cwd) : null;
   if (channelPath) {
-    servers['pcp-inbox'] = {
+    servers['ink-inbox'] = {
       command: 'npx',
       args: ['tsx', channelPath],
     };
@@ -86,12 +86,12 @@ interface InitStepResult {
 }
 
 function ensurePcpDir(cwd: string): InitStepResult {
-  const pcpDir = join(cwd, '.pcp');
+  const pcpDir = join(cwd, '.ink');
   if (existsSync(pcpDir)) {
-    return { label: '.pcp/', status: 'exists' };
+    return { label: '.ink/', status: 'exists' };
   }
   mkdirSync(pcpDir, { recursive: true });
-  return { label: '.pcp/', status: 'created' };
+  return { label: '.ink/', status: 'created' };
 }
 
 function ensureMcpJson(cwd: string): InitStepResult {
@@ -102,17 +102,17 @@ function ensureMcpJson(cwd: string): InitStepResult {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf-8')) as Record<string, unknown>;
       const servers = existing.mcpServers as Record<string, unknown> | undefined;
       if (servers?.pcp) {
-        // Add pcp-inbox if missing and plugin exists locally
-        if (!servers['pcp-inbox']) {
+        // Add ink-inbox if missing and plugin exists locally
+        if (!servers['ink-inbox']) {
           const channelPath = resolveChannelPluginPath(cwd);
           if (channelPath) {
-            const updatedServers = { ...servers, 'pcp-inbox': { command: 'npx', args: ['tsx', channelPath] } };
+            const updatedServers = { ...servers, 'ink-inbox': { command: 'npx', args: ['tsx', channelPath] } };
             const updated = { ...existing, mcpServers: updatedServers };
             writeFileSync(mcpPath, JSON.stringify(updated, null, 2) + '\n');
             return {
               label: '.mcp.json',
               status: 'updated',
-              detail: 'added pcp-inbox channel plugin',
+              detail: 'added ink-inbox channel plugin',
             };
           }
         }

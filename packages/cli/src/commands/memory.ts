@@ -10,7 +10,7 @@ import { parseEnvFile } from './mcp.js';
 const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434';
 const DEFAULT_OLLAMA_MODEL = 'mxbai-embed-large';
 const DEFAULT_BACKFILL_BATCH_SIZE = 100;
-const DEFAULT_JOB_LOG_DIR = join(homedir(), '.pcp', 'logs', 'jobs');
+const DEFAULT_JOB_LOG_DIR = join(homedir(), '.ink', 'logs', 'jobs');
 
 interface InstallOptions {
   model?: string;
@@ -87,7 +87,7 @@ function getWorktrees(cwd: string): string[] {
 
 function readUserIdFromConfig(): string | undefined {
   try {
-    const configPath = join(homedir(), '.pcp', 'config.json');
+    const configPath = join(homedir(), '.ink', 'config.json');
     const raw = JSON.parse(readFileSync(configPath, 'utf-8')) as { userId?: string };
     return raw.userId;
   } catch {
@@ -240,7 +240,7 @@ async function backfillCommand(options: BackfillOptions): Promise<void> {
 
   if (!userId) {
     throw new Error(
-      'Could not determine PCP userId. Pass --user-id <uuid> or ensure ~/.pcp/config.json contains userId.'
+      'Could not determine PCP userId. Pass --user-id <uuid> or ensure ~/.ink/config.json contains userId.'
     );
   }
 
@@ -284,7 +284,7 @@ export function registerMemoryCommands(program: Command): void {
   memory
     .command('backfill')
     .description('Generate embeddings for existing memories that do not have them yet')
-    .option('--user-id <uuid>', 'PCP user ID to backfill (defaults to ~/.pcp/config.json userId)')
+    .option('--user-id <uuid>', 'PCP user ID to backfill (defaults to ~/.ink/config.json userId)')
     .option('--agent <id>', 'Optional agent filter (e.g. lumen, wren)')
     .option('--limit <n>', 'Maximum number of memories to backfill in this run')
     .option(
@@ -295,7 +295,7 @@ export function registerMemoryCommands(program: Command): void {
     .option('--dry-run', 'Show what would be backfilled without writing embeddings')
     .option(
       '--log-file <path>',
-      'Write a dedicated job log for this run (defaults to ~/.pcp/logs/jobs/memory-backfill-<timestamp>.log)'
+      'Write a dedicated job log for this run (defaults to ~/.ink/logs/jobs/memory-backfill-<timestamp>.log)'
     )
     .action((options: BackfillOptions) => {
       backfillCommand(options).catch((error) => {

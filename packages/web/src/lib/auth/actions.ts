@@ -28,7 +28,7 @@ export async function signInWithPassword(
 
   // MCP OAuth flow: build callback URL with tokens
   if (mcpPendingId && data.session) {
-    const apiUrl = process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
+    const apiUrl = process.env.API_URL || `http://localhost:${process.env.INK_PORT_BASE || 3001}`;
     const callbackUrl = new URL(`${apiUrl}/mcp/auth/callback`);
     callbackUrl.searchParams.set('pending_id', mcpPendingId);
     callbackUrl.searchParams.set('access_token', data.session.access_token);
@@ -111,7 +111,7 @@ export async function signOut(): Promise<never> {
   const refreshToken = cookieStore.get('pcp-admin-refresh')?.value;
 
   if (refreshToken) {
-    const apiUrl = process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
+    const apiUrl = process.env.API_URL || `http://localhost:${process.env.INK_PORT_BASE || 3001}`;
     try {
       await fetch(`${apiUrl}/api/admin/auth/logout`, {
         method: 'POST',

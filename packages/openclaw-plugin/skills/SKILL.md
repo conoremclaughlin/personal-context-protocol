@@ -33,7 +33,7 @@ capabilities:
   network: true
 requirements:
   config:
-    - ~/.pcp/config.json
+    - ~/.ink/config.json
 metadata:
   openclaw:
     emoji: '🧠'
@@ -72,7 +72,7 @@ PCP tools are available via MCP. If the PCP MCP server is not already configured
     "pcp": {
       "url": "http://localhost:3001/mcp",
       "headers": {
-        "Authorization": "Bearer ${PCP_ACCESS_TOKEN}"
+        "Authorization": "Bearer ${INK_ACCESS_TOKEN}"
       }
     }
   }

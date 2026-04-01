@@ -6,13 +6,13 @@
  * 1. Start the Express MCP server on a random port
  * 2. Sign a test JWT (no network call — local jwt.sign)
  * 3. Create session + studio in DB
- * 4. Send POST /mcp with x-pcp-session-id header + JSON-RPC tools/call
+ * 4. Send POST /mcp with x-ink-session-id header + JSON-RPC tools/call
  * 5. Verify the tool response reflects correct studio scope (proves:
  *    header parsing → session DB lookup → request context enrichment → tool handler)
  *
  * Also tests:
- * - x-pcp-session-id without x-pcp-studio-id → derives studioId from session
- * - x-pcp-studio-id header takes priority over session-derived workspace
+ * - x-ink-session-id without x-ink-studio-id → derives studioId from session
+ * - x-ink-studio-id header takes priority over session-derived workspace
  * - Missing session header → falls back to agent-derived workspace
  * - send_to_inbox thread metadata enrichment via HTTP round-trip
  *
@@ -218,13 +218,13 @@ describe('Session Identity Chain — HTTP Integration', () => {
     }
   }
 
-  // ── Core chain: x-pcp-session-id → session lookup → studioId enrichment ──
+  // ── Core chain: x-ink-session-id → session lookup → studioId enrichment ──
 
-  it('should derive studioId from session when x-pcp-session-id header is provided', async () => {
+  it('should derive studioId from session when x-ink-session-id header is provided', async () => {
     const studioId = await createTestStudio('derive-studio');
     const sessionId = await createTestSession(studioId);
 
-    // Call get_session with x-pcp-session-id header but NO x-pcp-studio-id
+    // Call get_session with x-ink-session-id header but NO x-ink-studio-id
     // The server should derive the studioId from the session record
     const { result, status } = await callTool(
       'get_session',
@@ -232,7 +232,7 @@ describe('Session Identity Chain — HTTP Integration', () => {
         userId: INTEGRATION_TEST_USER_ID,
         sessionId,
       },
-      { 'x-pcp-session-id': sessionId }
+      { 'x-ink-session-id': sessionId }
     );
 
     expect(status).toBe(200);
@@ -265,7 +265,7 @@ describe('Session Identity Chain — HTTP Integration', () => {
         userId: INTEGRATION_TEST_USER_ID,
         sessionId,
       },
-      { 'x-pcp-session-id': sessionId }
+      { 'x-ink-session-id': sessionId }
     );
 
     // Should not be 401 (auth works) or 403 (workspace-scope OK)
@@ -300,7 +300,7 @@ describe('Session Identity Chain — HTTP Integration', () => {
     const threadKey = `test:http-sender-${Date.now()}`;
     createdThreadKeys.push(threadKey);
 
-    // Send a thread message with x-pcp-session-id header
+    // Send a thread message with x-ink-session-id header
     const { result, status } = await callTool(
       'send_to_inbox',
       {
@@ -312,7 +312,7 @@ describe('Session Identity Chain — HTTP Integration', () => {
         messageType: 'message',
         trigger: false, // don't trigger actual agent
       },
-      { 'x-pcp-session-id': sessionId }
+      { 'x-ink-session-id': sessionId }
     );
 
     expect(status).toBe(200);
@@ -348,16 +348,16 @@ describe('Session Identity Chain — HTTP Integration', () => {
     const sender = pcp?.sender as Record<string, unknown>;
 
     // The sender metadata should have been enriched with session context
-    // from the x-pcp-session-id header → request context → send_to_inbox handler
+    // from the x-ink-session-id header → request context → send_to_inbox handler
     expect(sender).toBeDefined();
     expect(sender.agentId).toBe(INTEGRATION_TEST_AGENT_ID);
     expect(sender.sessionId).toBe(sessionId);
     expect(sender.studioId).toBe(studioId);
   });
 
-  // ── Priority: x-pcp-studio-id header overrides session-derived studioId ──
+  // ── Priority: x-ink-studio-id header overrides session-derived studioId ──
 
-  it('should prefer explicit x-pcp-studio-id over session-derived studio', async () => {
+  it('should prefer explicit x-ink-studio-id over session-derived studio', async () => {
     const sessionStudioId = await createTestStudio('session-studio');
     const explicitStudioId = await createTestStudio('explicit-studio');
     const sessionId = await createTestSession(sessionStudioId);
@@ -371,8 +371,8 @@ describe('Session Identity Chain — HTTP Integration', () => {
         sessionId,
       },
       {
-        'x-pcp-session-id': sessionId,
-        'x-pcp-studio-id': explicitStudioId,
+        'x-ink-session-id': sessionId,
+        'x-ink-studio-id': explicitStudioId,
       }
     );
 
@@ -407,8 +407,8 @@ describe('Session Identity Chain — HTTP Integration', () => {
         trigger: false,
       },
       {
-        'x-pcp-session-id': sessionId,
-        'x-pcp-studio-id': studioId,
+        'x-ink-session-id': sessionId,
+        'x-ink-studio-id': studioId,
       }
     );
 
@@ -455,7 +455,7 @@ describe('Session Identity Chain — HTTP Integration', () => {
     const threadKey = `test:codex-session-only-${Date.now()}`;
     createdThreadKeys.push(threadKey);
 
-    // Codex might not always have PCP_STUDIO_ID set. When only x-pcp-session-id
+    // Codex might not always have INK_STUDIO_ID set. When only x-ink-session-id
     // is present, the server should derive studioId from the session record.
     const { status } = await callTool(
       'send_to_inbox',
@@ -468,8 +468,8 @@ describe('Session Identity Chain — HTTP Integration', () => {
         messageType: 'message',
         trigger: false,
       },
-      { 'x-pcp-session-id': sessionId }
-      // No x-pcp-studio-id — server should derive from session
+      { 'x-ink-session-id': sessionId }
+      // No x-ink-studio-id — server should derive from session
     );
 
     expect(status).toBe(200);

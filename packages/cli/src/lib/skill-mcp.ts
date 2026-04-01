@@ -166,8 +166,8 @@ export function buildMergedMcpConfig(
   const cleanups: Array<() => void> = [];
   let effectivePath = hasProjectConfig ? projectMcpPath : null;
 
-  const sessionId = options?.pcpSessionId || process.env.PCP_SESSION_ID;
-  const studioId = options?.studioId || process.env.PCP_STUDIO_ID;
+  const sessionId = options?.pcpSessionId || process.env.INK_SESSION_ID;
+  const studioId = options?.studioId || process.env.INK_STUDIO_ID;
 
   if (effectivePath && sessionId) {
     const injection = injectSessionHeaders({

@@ -55,7 +55,7 @@ interface GetWorkspaceResult {
 }
 
 function getConfigPath(): string {
-  return join(homedir(), '.pcp', 'config.json');
+  return join(homedir(), '.ink', 'config.json');
 }
 
 function getPcpConfig(): PcpConfig | null {
@@ -71,7 +71,7 @@ function getPcpConfig(): PcpConfig | null {
 
 function savePcpConfig(config: PcpConfig): void {
   const configPath = getConfigPath();
-  const configDir = join(homedir(), '.pcp');
+  const configDir = join(homedir(), '.ink');
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true });
   }

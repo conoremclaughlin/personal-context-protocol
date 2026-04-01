@@ -26,7 +26,7 @@ export async function maybeWarnServerUpdate(): Promise<void> {
     return;
   }
 
-  const baseUrl = (process.env.PCP_SERVER_URL || 'http://localhost:3001').replace(/\/+$/, '');
+  const baseUrl = (process.env.INK_SERVER_URL || 'http://localhost:3001').replace(/\/+$/, '');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 750);
 

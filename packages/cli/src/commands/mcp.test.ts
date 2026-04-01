@@ -10,7 +10,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { syncMcpConfig, parseEnvFile } from './mcp.js';
 
-const TEST_DIR = join(tmpdir(), 'pcp-mcp-test-' + Date.now());
+const TEST_DIR = join(tmpdir(), 'ink-mcp-test-' + Date.now());
 
 beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });

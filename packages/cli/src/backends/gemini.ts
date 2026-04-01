@@ -11,7 +11,7 @@ import { createIdentityPromptFile } from './identity.js';
 import type { BackendAdapter, BackendConfig, PreparedBackend } from './types.js';
 
 // TODO: Gemini reads MCP headers from .gemini/settings.json, not env vars.
-// PCP_CONTEXT_TOKEN + Authorization need to be wired via a generated
+// INK_CONTEXT_TOKEN + Authorization need to be wired via a generated
 // settings.json override (like gemini-runner.ts does server-side).
 // See: packages/api/src/services/sessions/gemini-runner.ts:88-102
 
@@ -57,8 +57,8 @@ export class GeminiAdapter implements BackendAdapter {
       env: {
         AGENT_ID: config.agentId,
         GEMINI_SYSTEM_MD: promptFile,
-        ...(config.pcpSessionId ? { PCP_SESSION_ID: config.pcpSessionId } : {}),
-        ...(config.studioId ? { PCP_STUDIO_ID: config.studioId } : {}),
+        ...(config.pcpSessionId ? { INK_SESSION_ID: config.pcpSessionId } : {}),
+        ...(config.studioId ? { INK_STUDIO_ID: config.studioId } : {}),
       },
       cleanup,
     };

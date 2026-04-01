@@ -2,7 +2,7 @@
  * WhatsApp Auth Management
  *
  * Handles Baileys authentication state storage and QR code login.
- * Credentials stored in ~/.pcp/credentials/whatsapp/<accountId>/
+ * Credentials stored in ~/.ink/credentials/whatsapp/<accountId>/
  */
 
 import fs from 'fs/promises';
@@ -15,8 +15,8 @@ import { logger } from '../utils/logger';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AuthenticationState = any;
 
-const PCP_DIR = path.join(os.homedir(), '.pcp');
-const CREDENTIALS_DIR = path.join(PCP_DIR, 'credentials', 'whatsapp');
+const INK_DIR = path.join(os.homedir(), '.ink');
+const CREDENTIALS_DIR = path.join(INK_DIR, 'credentials', 'whatsapp');
 
 export interface WhatsAppAuthConfig {
   /** Account identifier (default: 'default') */

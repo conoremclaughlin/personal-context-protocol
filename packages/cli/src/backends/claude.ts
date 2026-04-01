@@ -89,8 +89,8 @@ export class ClaudeAdapter implements BackendAdapter {
       args,
       env: {
         AGENT_ID: config.agentId,
-        ...(config.pcpSessionId ? { PCP_SESSION_ID: config.pcpSessionId } : {}),
-        ...(config.studioId ? { PCP_STUDIO_ID: config.studioId } : {}),
+        ...(config.pcpSessionId ? { INK_SESSION_ID: config.pcpSessionId } : {}),
+        ...(config.studioId ? { INK_STUDIO_ID: config.studioId } : {}),
       },
       cleanup: mcpCleanup,
     };

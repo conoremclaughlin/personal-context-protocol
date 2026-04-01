@@ -38,7 +38,7 @@ import {
 // ============================================================================
 
 function getPcpServerUrl(): string {
-  return process.env.PCP_SERVER_URL || 'http://localhost:3001';
+  return process.env.INK_SERVER_URL || 'http://localhost:3001';
 }
 
 function openBrowser(url: string): void {

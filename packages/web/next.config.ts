@@ -1,6 +1,6 @@
 import type { NextConfig } from 'next';
 
-const pcpPortBase = Number(process.env.PCP_PORT_BASE || 3001);
+const pcpPortBase = Number(process.env.INK_PORT_BASE || 3001);
 const apiUrl = process.env.API_URL || `http://localhost:${pcpPortBase}`;
 
 const nextConfig: NextConfig = {

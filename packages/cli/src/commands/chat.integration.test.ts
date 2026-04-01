@@ -80,8 +80,8 @@ function stripAnsi(value: string): string {
 
 describe('runChat integration', () => {
   const originalCwd = process.cwd();
-  const originalPolicyPath = process.env.PCP_TOOL_POLICY_PATH;
-  const originalDelegationSecret = process.env.PCP_DELEGATION_SECRET;
+  const originalPolicyPath = process.env.INK_TOOL_POLICY_PATH;
+  const originalDelegationSecret = process.env.INK_DELEGATION_SECRET;
   let testCwd: string;
   let logSpy: ReturnType<typeof vi.spyOn>;
 
@@ -129,18 +129,18 @@ describe('runChat integration', () => {
 
     testCwd = mkdtempSync(join(tmpdir(), 'pcp-chat-int-'));
     process.chdir(testCwd);
-    process.env.PCP_TOOL_POLICY_PATH = join(testCwd, '.pcp', 'security', 'tool-policy.json');
-    process.env.PCP_DELEGATION_SECRET = 'pcp-delegation-test-secret';
+    process.env.INK_TOOL_POLICY_PATH = join(testCwd, '.ink', 'security', 'tool-policy.json');
+    process.env.INK_DELEGATION_SECRET = 'pcp-delegation-test-secret';
     logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
   afterEach(() => {
     vi.useRealTimers();
     logSpy.mockRestore();
-    if (originalPolicyPath === undefined) delete process.env.PCP_TOOL_POLICY_PATH;
-    else process.env.PCP_TOOL_POLICY_PATH = originalPolicyPath;
-    if (originalDelegationSecret === undefined) delete process.env.PCP_DELEGATION_SECRET;
-    else process.env.PCP_DELEGATION_SECRET = originalDelegationSecret;
+    if (originalPolicyPath === undefined) delete process.env.INK_TOOL_POLICY_PATH;
+    else process.env.INK_TOOL_POLICY_PATH = originalPolicyPath;
+    if (originalDelegationSecret === undefined) delete process.env.INK_DELEGATION_SECRET;
+    else process.env.INK_DELEGATION_SECRET = originalDelegationSecret;
     process.chdir(originalCwd);
     rmSync(testCwd, { recursive: true, force: true });
   });
@@ -166,7 +166,7 @@ describe('runChat integration', () => {
       studioId: 'studio-test',
     });
 
-    const replDir = join(testCwd, '.pcp', 'runtime', 'repl');
+    const replDir = join(testCwd, '.ink', 'runtime', 'repl');
     const transcriptFiles = readdirSync(replDir).filter((entry) => entry.endsWith('.jsonl'));
     expect(transcriptFiles.length).toBeGreaterThan(0);
     const transcript = readFileSync(join(replDir, transcriptFiles[0]!), 'utf-8');
@@ -209,7 +209,7 @@ describe('runChat integration', () => {
     // Attached mode should not end the existing session.
     expect(testState.pcpCalls.some((call) => call.tool === 'end_session')).toBe(false);
 
-    const transcriptDir = join(testCwd, '.pcp', 'runtime', 'repl');
+    const transcriptDir = join(testCwd, '.ink', 'runtime', 'repl');
     const transcriptFiles = readdirSync(transcriptDir).filter((entry) =>
       entry.includes('sess-attach-1')
     );
@@ -220,7 +220,7 @@ describe('runChat integration', () => {
 
   it('hydrates ledger context from existing transcript when attaching', async () => {
     const sessionId = 'sess-history-1';
-    const replDir = join(testCwd, '.pcp', 'runtime', 'repl');
+    const replDir = join(testCwd, '.ink', 'runtime', 'repl');
     mkdirSync(replDir, { recursive: true });
     const transcriptPath = join(replDir, `${sessionId}-1700000000000.jsonl`);
     writeFileSync(
@@ -389,7 +389,7 @@ describe('runChat integration', () => {
       }
     });
 
-    const replDir = join(testCwd, '.pcp', 'runtime', 'repl');
+    const replDir = join(testCwd, '.ink', 'runtime', 'repl');
     mkdirSync(replDir, { recursive: true });
     writeFileSync(
       join(replDir, 'sess-a111-1111111111111.jsonl'),
@@ -639,8 +639,8 @@ describe('runChat integration', () => {
       }
     });
 
-    const policyPath = process.env.PCP_TOOL_POLICY_PATH!;
-    mkdirSync(join(testCwd, '.pcp', 'security'), { recursive: true });
+    const policyPath = process.env.INK_TOOL_POLICY_PATH!;
+    mkdirSync(join(testCwd, '.ink', 'security'), { recursive: true });
     const matrix = [
       { visibility: 'agent', expectedSession: 'sess-lumen-mid', expectsAutoAttach: true },
       { visibility: 'all', expectedSession: 'sess-wren-new', expectsAutoAttach: true },
@@ -850,9 +850,9 @@ describe('runChat integration', () => {
   });
 
   it('does not re-render inbox messages already present in attached transcript history', async () => {
-    mkdirSync(join(testCwd, '.pcp', 'runtime', 'repl'), { recursive: true });
+    mkdirSync(join(testCwd, '.ink', 'runtime', 'repl'), { recursive: true });
     writeFileSync(
-      join(testCwd, '.pcp', 'runtime', 'repl', 'sess-existing-1700000000000.jsonl'),
+      join(testCwd, '.ink', 'runtime', 'repl', 'sess-existing-1700000000000.jsonl'),
       [
         JSON.stringify({
           ts: '2026-02-26T04:15:00.000Z',
@@ -1148,8 +1148,8 @@ describe('runChat integration', () => {
     expect(logText).toContain('routing=local');
     expect(logText).toContain('Tool routing set to backend. (auto-saved)');
 
-    // Verify preferences were auto-persisted to .pcp/identity.json
-    const identityPath = join(testCwd, '.pcp', 'identity.json');
+    // Verify preferences were auto-persisted to .ink/identity.json
+    const identityPath = join(testCwd, '.ink', 'identity.json');
     const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
     expect(identity.runtime?.toolRouting).toBe('backend'); // last value set
   });
@@ -1248,11 +1248,11 @@ describe('runChat integration', () => {
     expect(logText).toContain('Granted once.');
   });
 
-  it('executes local pcp-tool blocks when tool routing is local', async () => {
+  it('executes local ink-tool blocks when tool routing is local', async () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
       stdout:
-        'Running local tool.\n```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":1}}\n```\nDone.',
+        'Running local tool.\n```ink-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":1}}\n```\nDone.',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -1297,11 +1297,11 @@ describe('runChat integration', () => {
     expect(localToolCall).toBeTruthy();
   });
 
-  it('executes local pcp-tool blocks with gemini backend via sb runtime', async () => {
+  it('executes local ink-tool blocks with gemini backend via sb runtime', async () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
       stdout:
-        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":2}}\n```',
+        '```ink-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":2}}\n```',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -1343,11 +1343,11 @@ describe('runChat integration', () => {
     expect(localToolCall).toBeTruthy();
   });
 
-  it('executes local pcp-tool blocks with codex backend via sb runtime', async () => {
+  it('executes local ink-tool blocks with codex backend via sb runtime', async () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
       stdout:
-        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":3}}\n```',
+        '```ink-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":3}}\n```',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -1449,11 +1449,11 @@ describe('runChat integration', () => {
     testState.runBackendImpl.mockImplementation(async () => {
       callCount++;
       if (callCount === 1) {
-        // First call: backend emits a pcp-tool block
+        // First call: backend emits a ink-tool block
         return {
           success: true,
           stdout:
-            '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":2}}\n```',
+            '```ink-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":2}}\n```',
           stderr: '',
           exitCode: 0,
           durationMs: 5,
@@ -1519,7 +1519,7 @@ describe('runChat integration', () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
       stdout:
-        '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":1}}\n```',
+        '```ink-tool\n{"tool":"get_inbox","args":{"agentId":"wren","status":"unread","limit":1}}\n```',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -1564,7 +1564,7 @@ describe('runChat integration', () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
       stdout:
-        '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"wren","content":"ping"}}\n```',
+        '```ink-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"wren","content":"ping"}}\n```',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -1595,11 +1595,11 @@ describe('runChat integration', () => {
     testState.runBackendImpl.mockImplementation(async () => {
       backendCallCount++;
       if (backendCallCount === 1) {
-        // First backend call (user message turn) — emit pcp-tool block
+        // First backend call (user message turn) — emit ink-tool block
         return {
           success: true,
           stdout:
-            '```pcp-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":1}}\n```',
+            '```ink-tool\n{"tool":"get_inbox","args":{"agentId":"lumen","status":"unread","limit":1}}\n```',
           stderr: '',
           exitCode: 0,
           durationMs: 5,
@@ -1657,7 +1657,7 @@ describe('runChat integration', () => {
     testState.runBackendImpl.mockResolvedValue({
       success: true,
       stdout:
-        '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hello"}}\n```',
+        '```ink-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hello"}}\n```',
       stderr: '',
       exitCode: 0,
       durationMs: 5,
@@ -1689,7 +1689,7 @@ describe('runChat integration', () => {
         return {
           success: true,
           stdout:
-            '```pcp-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hi"}}\n```',
+            '```ink-tool\n{"tool":"send_to_inbox","args":{"recipientAgentId":"myra","content":"hi"}}\n```',
           stderr: '',
           exitCode: 0,
           durationMs: 5,
@@ -1855,7 +1855,7 @@ describe('runChat integration', () => {
     expect(logText).toContain('About to eject');
     expect(logText).toContain('Ejection cancelled.');
 
-    const replDir = join(testCwd, '.pcp', 'runtime', 'repl');
+    const replDir = join(testCwd, '.ink', 'runtime', 'repl');
     const transcriptFiles = readdirSync(replDir).filter((entry) => entry.endsWith('.jsonl'));
     const transcript = readFileSync(join(replDir, transcriptFiles[0]!), 'utf-8');
     expect(transcript).not.toContain('"type":"context_eject"');
@@ -1881,7 +1881,7 @@ describe('runChat integration', () => {
     const token = metadata?.delegationToken;
     expect(typeof token).toBe('string');
 
-    const verified = verifyDelegationToken(String(token), process.env.PCP_DELEGATION_SECRET || '', {
+    const verified = verifyDelegationToken(String(token), process.env.INK_DELEGATION_SECRET || '', {
       expectedIssuerAgentId: 'lumen',
       expectedDelegateeAgentId: 'wren',
       expectedThreadKey: 'pr:123',
@@ -1898,7 +1898,7 @@ describe('runChat integration', () => {
         scopes: ['send_to_inbox'],
         threadKey: 'pr:50',
       },
-      process.env.PCP_DELEGATION_SECRET || ''
+      process.env.INK_DELEGATION_SECRET || ''
     );
 
     let inboxPolls = 0;

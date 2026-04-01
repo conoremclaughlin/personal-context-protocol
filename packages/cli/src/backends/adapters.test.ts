@@ -201,12 +201,12 @@ describe('backend adapters session resume wiring', () => {
     }
   });
 
-  // ── PCP_SESSION_ID env propagation ──
+  // ── INK_SESSION_ID env propagation ──
   // These tests verify the most fragile link in the session identity chain:
-  // the CLI backends must inject PCP_SESSION_ID into the spawned process's
+  // the CLI backends must inject INK_SESSION_ID into the spawned process's
   // environment so hooks + buildMergedMcpConfig can propagate it to the server.
 
-  it('injects PCP_SESSION_ID into claude env when pcpSessionId is provided', () => {
+  it('injects INK_SESSION_ID into claude env when pcpSessionId is provided', () => {
     const adapter = new ClaudeAdapter();
     const prepared = adapter.prepare({
       agentId: 'wren',
@@ -217,10 +217,10 @@ describe('backend adapters session resume wiring', () => {
     });
 
     expect(prepared.env).toBeDefined();
-    expect(prepared.env!.PCP_SESSION_ID).toBe('pcp-sess-abc-123');
+    expect(prepared.env!.INK_SESSION_ID).toBe('pcp-sess-abc-123');
   });
 
-  it('does not inject PCP_SESSION_ID into claude env when pcpSessionId is absent', () => {
+  it('does not inject INK_SESSION_ID into claude env when pcpSessionId is absent', () => {
     const adapter = new ClaudeAdapter();
     const prepared = adapter.prepare({
       agentId: 'wren',
@@ -229,10 +229,10 @@ describe('backend adapters session resume wiring', () => {
       passthroughArgs: [],
     });
 
-    expect(prepared.env?.PCP_SESSION_ID).toBeUndefined();
+    expect(prepared.env?.INK_SESSION_ID).toBeUndefined();
   });
 
-  it('injects PCP_SESSION_ID into codex env when pcpSessionId is provided', () => {
+  it('injects INK_SESSION_ID into codex env when pcpSessionId is provided', () => {
     const adapter = new CodexAdapter();
     const prepared = adapter.prepare({
       agentId: 'lumen',
@@ -244,13 +244,13 @@ describe('backend adapters session resume wiring', () => {
 
     try {
       expect(prepared.env).toBeDefined();
-      expect(prepared.env!.PCP_SESSION_ID).toBe('pcp-sess-def-456');
+      expect(prepared.env!.INK_SESSION_ID).toBe('pcp-sess-def-456');
     } finally {
       prepared.cleanup();
     }
   });
 
-  it('does not inject PCP_SESSION_ID into codex env when pcpSessionId is absent', () => {
+  it('does not inject INK_SESSION_ID into codex env when pcpSessionId is absent', () => {
     const adapter = new CodexAdapter();
     const prepared = adapter.prepare({
       agentId: 'lumen',
@@ -260,13 +260,13 @@ describe('backend adapters session resume wiring', () => {
     });
 
     try {
-      expect(prepared.env?.PCP_SESSION_ID).toBeUndefined();
+      expect(prepared.env?.INK_SESSION_ID).toBeUndefined();
     } finally {
       prepared.cleanup();
     }
   });
 
-  it('injects PCP_SESSION_ID into gemini env when pcpSessionId is provided', () => {
+  it('injects INK_SESSION_ID into gemini env when pcpSessionId is provided', () => {
     const adapter = new GeminiAdapter();
     const prepared = adapter.prepare({
       agentId: 'aster',
@@ -278,13 +278,13 @@ describe('backend adapters session resume wiring', () => {
 
     try {
       expect(prepared.env).toBeDefined();
-      expect(prepared.env!.PCP_SESSION_ID).toBe('pcp-sess-ghi-789');
+      expect(prepared.env!.INK_SESSION_ID).toBe('pcp-sess-ghi-789');
     } finally {
       prepared.cleanup();
     }
   });
 
-  it('does not inject PCP_SESSION_ID into gemini env when pcpSessionId is absent', () => {
+  it('does not inject INK_SESSION_ID into gemini env when pcpSessionId is absent', () => {
     const adapter = new GeminiAdapter();
     const prepared = adapter.prepare({
       agentId: 'aster',
@@ -294,13 +294,13 @@ describe('backend adapters session resume wiring', () => {
     });
 
     try {
-      expect(prepared.env?.PCP_SESSION_ID).toBeUndefined();
+      expect(prepared.env?.INK_SESSION_ID).toBeUndefined();
     } finally {
       prepared.cleanup();
     }
   });
 
-  it('injects both AGENT_ID and PCP_SESSION_ID into all backend envs', () => {
+  it('injects both AGENT_ID and INK_SESSION_ID into all backend envs', () => {
     const configs = [
       { adapter: new ClaudeAdapter(), agentId: 'wren', cleanup: false },
       { adapter: new CodexAdapter(), agentId: 'lumen', cleanup: true },
@@ -319,7 +319,7 @@ describe('backend adapters session resume wiring', () => {
       try {
         expect(prepared.env).toBeDefined();
         expect(prepared.env!.AGENT_ID).toBe(agentId);
-        expect(prepared.env!.PCP_SESSION_ID).toBe('pcp-sess-shared');
+        expect(prepared.env!.INK_SESSION_ID).toBe('pcp-sess-shared');
       } finally {
         if (cleanup) prepared.cleanup();
       }
@@ -345,13 +345,13 @@ describe('backend adapters session resume wiring', () => {
     }
   });
 
-  // ── PCP_CONTEXT_TOKEN + auth header regression ──
-  // Codex and Gemini adapters must produce PCP_CONTEXT_TOKEN in env and
+  // ── INK_CONTEXT_TOKEN + auth header regression ──
+  // Codex and Gemini adapters must produce INK_CONTEXT_TOKEN in env and
   // wire x-pcp-context + Authorization via env_http_headers. Without these,
   // MCP tool calls go to PCP unauthenticated and without session context,
   // causing "Session context missing — triggers suppressed."
 
-  it('codex adapter produces PCP_CONTEXT_TOKEN with session/studio/agent', () => {
+  it('codex adapter produces INK_CONTEXT_TOKEN with session/studio/agent', () => {
     const adapter = new CodexAdapter();
     const prepared = adapter.prepare({
       agentId: 'lumen',
@@ -363,8 +363,8 @@ describe('backend adapters session resume wiring', () => {
     });
 
     try {
-      expect(prepared.env.PCP_CONTEXT_TOKEN).toBeDefined();
-      const token = decodeContextToken(prepared.env.PCP_CONTEXT_TOKEN);
+      expect(prepared.env.INK_CONTEXT_TOKEN).toBeDefined();
+      const token = decodeContextToken(prepared.env.INK_CONTEXT_TOKEN);
       expect(token).not.toBeNull();
       expect(token!.sessionId).toBe('sess-codex-123');
       expect(token!.studioId).toBe('studio-lumen-456');
@@ -389,11 +389,11 @@ describe('backend adapters session resume wiring', () => {
     try {
       const contextArg = prepared.args.find((a) => a.includes('x-pcp-context'));
       expect(contextArg).toBeDefined();
-      expect(contextArg).toContain('PCP_CONTEXT_TOKEN');
+      expect(contextArg).toContain('INK_CONTEXT_TOKEN');
 
       const authArg = prepared.args.find((a) => a.includes('Authorization'));
       expect(authArg).toBeDefined();
-      expect(authArg).toContain('PCP_AUTH_BEARER');
+      expect(authArg).toContain('INK_AUTH_BEARER');
     } finally {
       prepared.cleanup();
     }

@@ -11,11 +11,11 @@
  * Steps 1-4 are fully automated. Step 5 requires SEND_TELEGRAM=true env var.
  *
  * Run with:
- *   PCP_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
+ *   INK_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
  *     packages/cli/src/repl/myra-runtime-simulation.integration.test.ts
  *
  * To also send a Telegram message:
- *   SEND_TELEGRAM=true PCP_SERVER_URL=http://localhost:3001 npx vitest run ...
+ *   SEND_TELEGRAM=true INK_SERVER_URL=http://localhost:3001 npx vitest run ...
  */
 
 import { describe, expect, it } from 'vitest';
@@ -28,7 +28,7 @@ import { handleClientLocalTool, isClientLocalTool } from './context-tools.js';
 
 // ─── Config ─────────────────────────────────────────────────────
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 const SEND_TELEGRAM = process.env.SEND_TELEGRAM === 'true';
 const AGENT_ID = 'myra';
 
@@ -44,7 +44,7 @@ try {
 
 async function createPcpClient() {
   const { PcpClient } = await import('../lib/pcp-client.js');
-  const authPath = join(process.env.HOME || '', '.pcp', 'auth.json');
+  const authPath = join(process.env.HOME || '', '.ink', 'auth.json');
   return new PcpClient(PCP_URL, authPath);
 }
 

@@ -8,7 +8,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: ${NODE_ENV:-production}
-      PCP_PORT_BASE: ${PCP_PORT_BASE:-3001}
+      INK_PORT_BASE: ${INK_PORT_BASE:-3001}
       WEB_PORT: ${WEB_PORT:-3002}
       MYRA_HTTP_PORT: ${MYRA_HTTP_PORT:-3003}
       API_URL: ${API_URL:-http://localhost:3001}
@@ -29,11 +29,11 @@ services:
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
       OAUTH_REDIRECT_BASE_URL: ${OAUTH_REDIRECT_BASE_URL:-http://localhost:3001}
     ports:
-      - '${PCP_PORT_BASE:-3001}:${PCP_PORT_BASE:-3001}'
+      - '${INK_PORT_BASE:-3001}:${INK_PORT_BASE:-3001}'
       - '${WEB_PORT:-3002}:${WEB_PORT:-3002}'
       - '${MYRA_HTTP_PORT:-3003}:${MYRA_HTTP_PORT:-3003}'
     healthcheck:
-      test: ['CMD-SHELL', 'curl -fsS "http://localhost:${PCP_PORT_BASE:-3001}/health" || exit 1']
+      test: ['CMD-SHELL', 'curl -fsS "http://localhost:${INK_PORT_BASE:-3001}/health" || exit 1']
       interval: 30s
       timeout: 5s
       retries: 3

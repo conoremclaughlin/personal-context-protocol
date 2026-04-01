@@ -1070,7 +1070,7 @@ async function adminAuthMiddleware(req: Request, res: Response, next: NextFuncti
     // --- Workspace resolution (all tiers, 1 DB query) ---
     const dataComposer = await getDataComposer();
     const workspaceRepo = dataComposer.repositories.workspaces;
-    const requestedWorkspaceId = req.header('x-pcp-workspace-id')?.trim();
+    const requestedWorkspaceId = req.header('x-ink-workspace-id')?.trim();
 
     // For trusted-user resolution we need telegram/whatsapp IDs.
     // Tier 1/2 don't have them in JWT claims, so fetch when needed.

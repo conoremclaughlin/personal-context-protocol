@@ -94,10 +94,10 @@ export class GeminiRunner implements IRunner {
         url: pcpConfig.url || 'http://localhost:3001/mcp',
         headers: {
           ...existingHeaders,
-          Authorization: 'Bearer ${PCP_ACCESS_TOKEN}',
-          'x-pcp-context': '${PCP_CONTEXT_TOKEN}',
-          'x-pcp-session-id': '${PCP_SESSION_ID}',
-          'x-pcp-studio-id': '${PCP_STUDIO_ID}',
+          Authorization: 'Bearer ${INK_ACCESS_TOKEN}',
+          'x-ink-context': '${INK_CONTEXT_TOKEN}',
+          'x-ink-session-id': '${INK_SESSION_ID}',
+          'x-ink-studio-id': '${INK_STUDIO_ID}',
         },
       };
 

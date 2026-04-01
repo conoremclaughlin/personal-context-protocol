@@ -112,7 +112,7 @@ const optionalNumber = z
 const envSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  PCP_PORT_BASE: z.string().transform(Number).optional(),
+  INK_PORT_BASE: z.string().transform(Number).optional(),
   PORT: z.string().transform(Number).optional(),
 
   // Database - Supabase (supports both old and new naming conventions)
@@ -199,11 +199,11 @@ const parseEnv = () => {
     }
 
     // Create normalized keys (prefer new naming)
-    const hasBaseOverride = parsed.PCP_PORT_BASE !== undefined;
+    const hasBaseOverride = parsed.INK_PORT_BASE !== undefined;
     // Base is MCP-first: MCP=base, WEB=base+1, MYRA=base+2
-    const portBase = parsed.PCP_PORT_BASE ?? 3001;
+    const portBase = parsed.INK_PORT_BASE ?? 3001;
 
-    // If PCP_PORT_BASE is provided and legacy defaults are still present,
+    // If INK_PORT_BASE is provided and legacy defaults are still present,
     // treat those defaults as unset so the base can drive derived ports.
     const port =
       parsed.PORT === undefined || (hasBaseOverride && parsed.PORT === 3000)
@@ -223,7 +223,7 @@ const parseEnv = () => {
 
     return {
       ...parsed,
-      PCP_PORT_BASE: portBase,
+      INK_PORT_BASE: portBase,
       PORT: port,
       MCP_HTTP_PORT: mcpHttpPort,
       MYRA_HTTP_PORT: myraHttpPort,
@@ -234,7 +234,7 @@ const parseEnv = () => {
       MEMORY_EMBEDDING_QUERY_THRESHOLD: memoryEmbeddingQueryThreshold,
       MEMORY_EMBEDDING_MATCH_COUNT_MULTIPLIER: memoryEmbeddingMatchCountMultiplier,
     } as typeof parsed & {
-      PCP_PORT_BASE: number;
+      INK_PORT_BASE: number;
       PORT: number;
       MCP_HTTP_PORT: number;
       MYRA_HTTP_PORT: number;

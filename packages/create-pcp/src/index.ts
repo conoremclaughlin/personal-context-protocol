@@ -433,7 +433,7 @@ async function authenticate(state: ProgressState): Promise<boolean> {
   stepHeader(6, 'Authenticate');
 
   const home = process.env.HOME || process.env.USERPROFILE || '~';
-  const authFile = join(home, '.pcp', 'auth.json');
+  const authFile = join(home, '.ink', 'auth.json');
 
   if (existsSync(authFile)) {
     try {

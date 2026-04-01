@@ -17,15 +17,15 @@ import type { BackendAdapter, BackendConfig, PreparedBackend } from './types.js'
  * Codex resolves env var → value at runtime, so multiple sessions in
  * the same studio each get their own scoped headers.
  *
- * x-pcp-context is the consolidated token (preferred). Individual headers
+ * x-ink-context is the consolidated token (preferred). Individual headers
  * are kept for backward compat during migration.
  */
 const PCP_ENV_HEADERS: Array<{ header: string; envVar: string }> = [
-  { header: 'x-pcp-context', envVar: 'PCP_CONTEXT_TOKEN' },
-  { header: 'Authorization', envVar: 'PCP_AUTH_BEARER' },
-  { header: 'x-pcp-agent-id', envVar: 'AGENT_ID' },
-  { header: 'x-pcp-session-id', envVar: 'PCP_SESSION_ID' },
-  { header: 'x-pcp-studio-id', envVar: 'PCP_STUDIO_ID' },
+  { header: 'x-ink-context', envVar: 'INK_CONTEXT_TOKEN' },
+  { header: 'Authorization', envVar: 'INK_AUTH_BEARER' },
+  { header: 'x-ink-agent-id', envVar: 'AGENT_ID' },
+  { header: 'x-ink-session-id', envVar: 'INK_SESSION_ID' },
+  { header: 'x-ink-studio-id', envVar: 'INK_STUDIO_ID' },
 ];
 
 export class CodexAdapter implements BackendAdapter {
@@ -101,7 +101,7 @@ export class CodexAdapter implements BackendAdapter {
       runtime: 'codex',
     });
 
-    // PCP_AUTH_BEARER is constructed at the spawn site from PCP_ACCESS_TOKEN
+    // INK_AUTH_BEARER is constructed at the spawn site from INK_ACCESS_TOKEN
     // (set via authEnv). The adapter declares the header mapping; the spawn
     // site provides the env var value.
 
@@ -110,9 +110,9 @@ export class CodexAdapter implements BackendAdapter {
       args,
       env: {
         AGENT_ID: config.agentId,
-        PCP_CONTEXT_TOKEN: contextToken,
-        ...(config.pcpSessionId ? { PCP_SESSION_ID: config.pcpSessionId } : {}),
-        ...(config.studioId ? { PCP_STUDIO_ID: config.studioId } : {}),
+        INK_CONTEXT_TOKEN: contextToken,
+        ...(config.pcpSessionId ? { INK_SESSION_ID: config.pcpSessionId } : {}),
+        ...(config.studioId ? { INK_STUDIO_ID: config.studioId } : {}),
       },
       cleanup,
     };

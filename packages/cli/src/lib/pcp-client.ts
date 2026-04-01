@@ -36,11 +36,11 @@ export class PcpClient {
   private config: PcpAuthConfig;
 
   constructor(baseUrl?: string, configPath?: string) {
-    this.baseUrl = (baseUrl || process.env.PCP_SERVER_URL || 'http://localhost:3001').replace(
+    this.baseUrl = (baseUrl || process.env.INK_SERVER_URL || 'http://localhost:3001').replace(
       /\/+$/,
       ''
     );
-    this.configPath = configPath || join(homedir(), '.pcp', 'config.json');
+    this.configPath = configPath || join(homedir(), '.ink', 'config.json');
     this.config = this.loadConfig();
   }
 
@@ -72,7 +72,7 @@ export class PcpClient {
       if (message.includes('Cannot POST /api/mcp/call') || message.includes('legacy tool call failed (404)')) {
         throw new Error(
           `PCP server at ${this.baseUrl} does not expose legacy /api/mcp/call.\n` +
-            `Run 'sb auth login' and ensure PCP_SERVER_URL points to the same server.\n` +
+            `Run 'sb auth login' and ensure INK_SERVER_URL points to the same server.\n` +
             `Original error: ${message}`
         );
       }
@@ -114,7 +114,7 @@ export class PcpClient {
   }
 
   private async ensureAccessToken(): Promise<string | null> {
-    // Primary source: ~/.pcp/auth.json from sb auth login.
+    // Primary source: ~/.ink/auth.json from sb auth login.
     const authToken = await getValidAccessToken(this.baseUrl);
     if (authToken) {
       return authToken;
@@ -296,7 +296,7 @@ export class PcpClient {
       if (response.status === 401 || response.status === 403) {
         throw new Error(
           `PCP MCP auth failed (${response.status}) at ${this.baseUrl}/mcp.\n` +
-            `Run: PCP_SERVER_URL=${this.baseUrl} sb auth login\n` +
+            `Run: INK_SERVER_URL=${this.baseUrl} sb auth login\n` +
             (bodySnippet ? `Server response: ${bodySnippet}` : '')
         );
       }

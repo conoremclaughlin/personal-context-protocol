@@ -11,7 +11,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { installHooks, callPcpTool, buildIdentityBlock } from './hooks.js';
 
-const TEST_DIR = join(tmpdir(), 'pcp-hooks-test-' + Date.now());
+const TEST_DIR = join(tmpdir(), 'ink-hooks-test-' + Date.now());
 
 beforeEach(() => {
   mkdirSync(TEST_DIR, { recursive: true });
@@ -491,54 +491,54 @@ describe('callPcpTool: auth header', () => {
     expect(body.params.arguments).toEqual({ agentId: 'wren', status: 'unread' });
   });
 
-  // ── PCP_SESSION_ID propagation through callPcpTool ──
-  // This is the most fragile link: hooks must forward PCP_SESSION_ID as
-  // x-pcp-session-id header so the MCP server can resolve studio scope.
+  // ── INK_SESSION_ID propagation through callPcpTool ──
+  // This is the most fragile link: hooks must forward INK_SESSION_ID as
+  // x-ink-session-id header so the MCP server can resolve studio scope.
 
-  it('should send x-pcp-session-id header when PCP_SESSION_ID env is set', async () => {
+  it('should send x-ink-session-id header when INK_SESSION_ID env is set', async () => {
     mockedGetValidAccessToken.mockResolvedValue('token');
-    process.env.PCP_SESSION_ID = 'session-xyz-789';
+    process.env.INK_SESSION_ID = 'session-xyz-789';
 
     await callPcpTool('get_session', { sessionId: 'session-xyz-789' });
 
     const [, options] = fetchSpy.mock.calls[0];
-    expect(options.headers).toHaveProperty('x-pcp-session-id', 'session-xyz-789');
+    expect(options.headers).toHaveProperty('x-ink-session-id', 'session-xyz-789');
 
-    delete process.env.PCP_SESSION_ID;
+    delete process.env.INK_SESSION_ID;
   });
 
-  it('should NOT send x-pcp-session-id header when PCP_SESSION_ID env is absent', async () => {
+  it('should NOT send x-ink-session-id header when INK_SESSION_ID env is absent', async () => {
     mockedGetValidAccessToken.mockResolvedValue('token');
-    delete process.env.PCP_SESSION_ID;
+    delete process.env.INK_SESSION_ID;
 
     await callPcpTool('bootstrap', { agentId: 'wren' });
 
     const [, options] = fetchSpy.mock.calls[0];
-    expect(options.headers).not.toHaveProperty('x-pcp-session-id');
+    expect(options.headers).not.toHaveProperty('x-ink-session-id');
   });
 
-  it('should trim PCP_SESSION_ID whitespace before sending as header', async () => {
+  it('should trim INK_SESSION_ID whitespace before sending as header', async () => {
     mockedGetValidAccessToken.mockResolvedValue('token');
-    process.env.PCP_SESSION_ID = '  session-with-spaces  ';
+    process.env.INK_SESSION_ID = '  session-with-spaces  ';
 
     await callPcpTool('bootstrap', { agentId: 'wren' });
 
     const [, options] = fetchSpy.mock.calls[0];
-    expect(options.headers).toHaveProperty('x-pcp-session-id', 'session-with-spaces');
+    expect(options.headers).toHaveProperty('x-ink-session-id', 'session-with-spaces');
 
-    delete process.env.PCP_SESSION_ID;
+    delete process.env.INK_SESSION_ID;
   });
 
-  it('should NOT send x-pcp-session-id for empty/whitespace-only PCP_SESSION_ID', async () => {
+  it('should NOT send x-ink-session-id for empty/whitespace-only INK_SESSION_ID', async () => {
     mockedGetValidAccessToken.mockResolvedValue('token');
-    process.env.PCP_SESSION_ID = '   ';
+    process.env.INK_SESSION_ID = '   ';
 
     await callPcpTool('bootstrap', { agentId: 'wren' });
 
     const [, options] = fetchSpy.mock.calls[0];
-    expect(options.headers).not.toHaveProperty('x-pcp-session-id');
+    expect(options.headers).not.toHaveProperty('x-ink-session-id');
 
-    delete process.env.PCP_SESSION_ID;
+    delete process.env.INK_SESSION_ID;
   });
 
   it('should send spec-compliant Accept header (both JSON and SSE)', async () => {
@@ -568,7 +568,7 @@ describe('callPcpTool: Streamable HTTP response formats', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
-    delete process.env.PCP_ACCESS_TOKEN;
+    delete process.env.INK_ACCESS_TOKEN;
   });
 
   it('should parse application/json response (enableJsonResponse mode)', async () => {
@@ -710,7 +710,7 @@ describe('callPcpTool: Streamable HTTP response formats', () => {
   });
 
   it('retries with local auth fallback when injected env token is rejected (401)', async () => {
-    process.env.PCP_ACCESS_TOKEN = 'env-token';
+    process.env.INK_ACCESS_TOKEN = 'env-token';
     mockedGetValidAccessToken
       .mockResolvedValueOnce('env-token')
       .mockResolvedValueOnce('fallback-token');
@@ -747,7 +747,7 @@ describe('callPcpTool: Streamable HTTP response formats', () => {
   });
 
   it('retries with base token and skips delegated token after delegated 401', async () => {
-    process.env.PCP_ACCESS_TOKEN = 'env-token';
+    process.env.INK_ACCESS_TOKEN = 'env-token';
     mockedGetValidDelegatedAccessToken.mockReturnValue('delegated-token');
     mockedGetValidAccessToken.mockResolvedValueOnce('fallback-token');
 

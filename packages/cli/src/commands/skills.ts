@@ -78,7 +78,7 @@ interface McpJsonConfig {
 // ============================================================================
 
 /** Canonical skill directory — single source of truth */
-const PCP_SKILLS_DIR = join(homedir(), '.pcp', 'skills');
+const PCP_SKILLS_DIR = join(homedir(), '.ink', 'skills');
 
 /**
  * Backend skill directories that get symlinks pointing to PCP_SKILLS_DIR.
@@ -252,7 +252,7 @@ async function listCommand(): Promise<void> {
     console.log(chalk.dim('  No local skills found.'));
     console.log(
       chalk.dim(
-        '  Skills are discovered from .pcp/skills/, .claude/skills/, .codex/skills/, .gemini/skills/'
+        '  Skills are discovered from .ink/skills/, .claude/skills/, .codex/skills/, .gemini/skills/'
       )
     );
     console.log(chalk.dim('  Run `sb skills sync` to install skills from PCP server.\n'));
@@ -418,7 +418,7 @@ async function syncCommand(options: SyncOptions): Promise<void> {
   }
 
   if (result.written > 0) {
-    console.log(chalk.green(`  ${result.written} skill(s) written to ~/.pcp/skills/`));
+    console.log(chalk.green(`  ${result.written} skill(s) written to ~/.ink/skills/`));
   }
   if (result.linked > 0) {
     console.log(chalk.green(`  ${result.linked} symlink(s) created across backend dirs`));

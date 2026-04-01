@@ -644,7 +644,7 @@ export class DiscordListener extends EventEmitter {
 
   /**
    * Download an attachment from Discord and save locally
-   * Files are saved to ~/.pcp/files/discord/
+   * Files are saved to ~/.ink/files/discord/
    */
   private async downloadAttachment(url: string, filename: string | null): Promise<string | null> {
     try {
@@ -659,7 +659,7 @@ export class DiscordListener extends EventEmitter {
       const path = await import('path');
       const os = await import('os');
 
-      const pcpFilesDir = path.join(os.homedir(), '.pcp', 'files', 'discord');
+      const pcpFilesDir = path.join(os.homedir(), '.ink', 'files', 'discord');
       await fs.mkdir(pcpFilesDir, { recursive: true });
 
       const safeName = (filename || `attachment_${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '_');
