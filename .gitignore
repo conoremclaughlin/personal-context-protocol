@@ -165,3 +165,8 @@ packages/api/output/
 
 # create-pcp scaffolder state
 .create-pcp-progress.json
+
+# Runtime state (not committed)
+packages/cli/.pcp/
+packages/cli/.ink/
+*.png

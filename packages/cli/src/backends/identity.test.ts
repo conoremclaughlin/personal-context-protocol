@@ -49,16 +49,16 @@ describe('resolveAgentId', () => {
     expect(resolveAgentId(undefined, 'claude')).toBe('lumen');
   });
 
-  it('uses local .pcp/identity.json when env is not set', () => {
-    mkdirSync(join(workDir, '.pcp'), { recursive: true });
-    writeFileSync(join(workDir, '.pcp', 'identity.json'), JSON.stringify({ agentId: 'aster' }));
+  it('uses local .ink/identity.json when env is not set', () => {
+    mkdirSync(join(workDir, '.ink'), { recursive: true });
+    writeFileSync(join(workDir, '.ink', 'identity.json'), JSON.stringify({ agentId: 'aster' }));
     expect(resolveAgentId(undefined, 'gemini')).toBe('aster');
   });
 
   it('uses backend-specific agentMapping fallback', () => {
-    mkdirSync(join(rootDir, '.pcp'), { recursive: true });
+    mkdirSync(join(rootDir, '.ink'), { recursive: true });
     writeFileSync(
-      join(rootDir, '.pcp', 'config.json'),
+      join(rootDir, '.ink', 'config.json'),
       JSON.stringify({
         agentMapping: {
           'claude-code': 'wren',

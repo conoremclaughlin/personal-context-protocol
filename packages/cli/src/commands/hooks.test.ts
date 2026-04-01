@@ -455,7 +455,7 @@ describe('callPcpTool: auth header', () => {
     expect(options.headers).toHaveProperty('Authorization', 'Bearer test-jwt-token');
   });
 
-  it('should prefer delegated token and include x-pcp-agent-id header when available', async () => {
+  it('should prefer delegated token and include x-ink-agent-id header when available', async () => {
     mockedGetValidDelegatedAccessToken.mockReturnValue('delegated-jwt-token');
     mockedGetValidAccessToken.mockResolvedValue('fallback-token');
 
@@ -464,7 +464,7 @@ describe('callPcpTool: auth header', () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
     const [, options] = fetchSpy.mock.calls[0];
     expect(options.headers).toHaveProperty('Authorization', 'Bearer delegated-jwt-token');
-    expect(options.headers).toHaveProperty('x-pcp-agent-id', 'wren');
+    expect(options.headers).toHaveProperty('x-ink-agent-id', 'wren');
     expect(mockedGetValidAccessToken).not.toHaveBeenCalled();
   });
 

@@ -176,7 +176,7 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CLAUDE_SESSION_ID || '
       const startSessionCall = pcpToolCalls.find((call) => call.name === 'start_session');
       const seededPcpSessionId = String(startSessionCall?.args.sessionId || '');
       expect(seededPcpSessionId).not.toBe('');
-      expect(startSessionCall?.headers['x-pcp-caller-profile']).toBe('runtime');
+      expect(startSessionCall?.headers['x-ink-caller-profile']).toBe('runtime');
       expect(backendArgs).toContain('-p');
       const sessionIdFlagIndex = backendArgs.indexOf('--session-id');
       expect(sessionIdFlagIndex).toBeGreaterThanOrEqual(0);
@@ -513,7 +513,7 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_CODEX_SESSION_ID || 'c
 
       const backendArgs = JSON.parse(readFileSync(fakeCodexArgsPath, 'utf-8')) as string[];
       const startSessionCall = pcpToolCalls.find((call) => call.name === 'start_session');
-      expect(startSessionCall?.headers['x-pcp-caller-profile']).toBe('runtime');
+      expect(startSessionCall?.headers['x-ink-caller-profile']).toBe('runtime');
       expect(startSessionCall?.args.backend).toBe('codex');
       expect(backendArgs).not.toContain('resume');
 
@@ -663,7 +663,7 @@ console.log(JSON.stringify({ session_id: process.env.FAKE_GEMINI_SESSION_ID || '
 
       const backendArgs = JSON.parse(readFileSync(fakeGeminiArgsPath, 'utf-8')) as string[];
       const startSessionCall = pcpToolCalls.find((call) => call.name === 'start_session');
-      expect(startSessionCall?.headers['x-pcp-caller-profile']).toBe('runtime');
+      expect(startSessionCall?.headers['x-ink-caller-profile']).toBe('runtime');
       expect(startSessionCall?.args.backend).toBe('gemini');
       expect(backendArgs).toContain('-p');
       expect(backendArgs).not.toContain('--resume');

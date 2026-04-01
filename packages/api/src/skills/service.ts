@@ -200,7 +200,7 @@ export class SkillsService {
 let serviceInstance: SkillsService | null = null;
 
 /**
- * Read skills config from ~/.pcp/config.json.
+ * Read skills config from ~/.ink/config.json.
  * Returns extraDirs if configured under `skills.extraDirs`.
  */
 function readSkillsConfig(): SkillLoadOptions {
@@ -218,7 +218,7 @@ function readSkillsConfig(): SkillLoadOptions {
 
 /**
  * Get the skills service singleton.
- * When no options are provided, reads ~/.pcp/config.json for extraDirs.
+ * When no options are provided, reads ~/.ink/config.json for extraDirs.
  */
 export function getSkillsService(options?: SkillLoadOptions): SkillsService {
   if (!serviceInstance) {

@@ -481,7 +481,7 @@ export function buildIdentityPrompt(
 
 When calling PCP tools (bootstrap, remember, recall, start_session, etc.), use \`agentId: "${agentId}"\`.
 
-Do NOT read \`.pcp/identity.json\` — your identity is set by this system prompt.
+Do NOT read \`.ink/identity.json\` — your identity is set by this system prompt.
 Do NOT run \`echo $AGENT_ID\` — you are running headlessly without shell access.`;
 
   // Session identity — always in context for debugging and routing verification

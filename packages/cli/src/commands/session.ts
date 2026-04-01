@@ -331,7 +331,7 @@ async function fetchAdminJson<T>(options: {
     Authorization: `Bearer ${token}`,
   };
   if (options.workspaceId?.trim()) {
-    headers['x-pcp-workspace-id'] = options.workspaceId.trim();
+    headers['x-ink-workspace-id'] = options.workspaceId.trim();
   }
   if (options.body) {
     headers['Content-Type'] = 'application/json';

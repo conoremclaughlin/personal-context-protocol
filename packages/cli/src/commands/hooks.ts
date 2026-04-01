@@ -145,7 +145,7 @@ interface PcpConfig {
 // ============================================================================
 
 function detectBackend(cwd: string): HookCapabilities {
-  // 1. Check .pcp/identity.json for explicit backend
+  // 1. Check .ink/identity.json for explicit backend
   const identity = readIdentityJson(cwd);
   if (identity?.backend) {
     const fromIdentity = getBackendByName(identity.backend);

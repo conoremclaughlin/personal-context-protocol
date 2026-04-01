@@ -1837,7 +1837,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         ? 120_000
         : undefined;
 
-  // Persisted runtime preferences from .pcp/identity.json — CLI flags override these
+  // Persisted runtime preferences from .ink/identity.json — CLI flags override these
   const persisted = identity?.runtime;
 
   const runtime: ChatRuntime = {
@@ -3649,7 +3649,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/autorun [on|off]          Toggle inbox auto-run execution',
               '/away [on|off]             Toggle remote approval mode (approvals via inbox)',
               '/tool-routing [backend|local]  Toggle backend tools vs local ink-tool routing',
-              '/save-config                  Save current runtime preferences to .pcp/identity.json',
+              '/save-config                  Save current runtime preferences to .ink/identity.json',
               '/ui [scroll|live]          Set status rendering mode',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
@@ -3861,7 +3861,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           };
           const saved = saveRuntimePreferences(process.cwd(), prefs);
           if (saved) {
-            console.log(chalk.green('All runtime preferences saved to .pcp/identity.json:'));
+            console.log(chalk.green('All runtime preferences saved to .ink/identity.json:'));
             console.log(chalk.dim(`  toolRouting: ${prefs.toolRouting}`));
             console.log(chalk.dim(`  strictTools: ${prefs.strictTools}`));
             if (prefs.approvalMode) {

@@ -347,7 +347,7 @@ describe('backend adapters session resume wiring', () => {
 
   // ── INK_CONTEXT_TOKEN + auth header regression ──
   // Codex and Gemini adapters must produce INK_CONTEXT_TOKEN in env and
-  // wire x-pcp-context + Authorization via env_http_headers. Without these,
+  // wire x-ink-context + Authorization via env_http_headers. Without these,
   // MCP tool calls go to PCP unauthenticated and without session context,
   // causing "Session context missing — triggers suppressed."
 
@@ -376,7 +376,7 @@ describe('backend adapters session resume wiring', () => {
     }
   });
 
-  it('codex adapter injects x-pcp-context and Authorization env_http_headers', () => {
+  it('codex adapter injects x-ink-context and Authorization env_http_headers', () => {
     const adapter = new CodexAdapter();
     const prepared = adapter.prepare({
       agentId: 'lumen',
@@ -387,7 +387,7 @@ describe('backend adapters session resume wiring', () => {
     });
 
     try {
-      const contextArg = prepared.args.find((a) => a.includes('x-pcp-context'));
+      const contextArg = prepared.args.find((a) => a.includes('x-ink-context'));
       expect(contextArg).toBeDefined();
       expect(contextArg).toContain('INK_CONTEXT_TOKEN');
 

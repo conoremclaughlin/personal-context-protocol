@@ -92,7 +92,7 @@ export class CodexAdapter implements BackendAdapter {
       }
     }
 
-    // Build consolidated context token for x-pcp-context header
+    // Build consolidated context token for x-ink-context header
     const contextToken = encodeContextToken({
       sessionId: config.pcpSessionId || '',
       studioId: config.studioId || '',

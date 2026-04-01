@@ -18,9 +18,9 @@ sb
 yarn workspace @personal-context/cli dev   # tsc --watch in another terminal
 ```
 
-`install:cli` links `sb` to `~/.pcp/bin/sb` and also creates a compatibility symlink at
+`install:cli` links `sb` to `~/.ink/bin/sb` and also creates a compatibility symlink at
 `~/.local/bin/sb`.
-If neither `~/.pcp/bin` nor `~/.local/bin` is in your `PATH`, the installer prints a warning.
+If neither `~/.ink/bin` nor `~/.local/bin` is in your `PATH`, the installer prints a warning.
 
 To remove: `yarn workspace @personal-context/cli uninstall:cli`
 
@@ -56,7 +56,7 @@ yarn dev
 sb auth login
 ```
 
-This opens your browser to the PCP web portal where you can log in or create an account. After authenticating, the CLI stores your tokens locally in `~/.pcp/auth.json` and extracts your email into `~/.pcp/config.json`.
+This opens your browser to the PCP web portal where you can log in or create an account. After authenticating, the CLI stores your tokens locally in `~/.ink/auth.json` and extracts your email into `~/.ink/config.json`.
 
 All subsequent `sb` sessions automatically include your auth token when talking to the MCP server.
 
@@ -75,7 +75,7 @@ sb init
 
 This does everything for a single worktree:
 
-- Creates `.pcp/` directory
+- Creates `.ink/` directory
 - Creates `.mcp.json` with PCP server entry (including auth header)
 - Installs lifecycle hooks for the detected backend (Claude Code, Codex, or Gemini)
 - Syncs backend configs (`.codex/config.toml`, `.gemini/settings.json`) from `.mcp.json`
@@ -88,7 +88,7 @@ If you use multiple git worktrees (studios), install hooks in all of them at onc
 sb hooks install --all
 ```
 
-This can be run from **any** worktree — it discovers all siblings via `git worktree list`. Each worktree gets hooks configured for its backend (read from `.pcp/identity.json` or auto-detected from the filesystem).
+This can be run from **any** worktree — it discovers all siblings via `git worktree list`. Each worktree gets hooks configured for its backend (read from `.ink/identity.json` or auto-detected from the filesystem).
 
 **Important**: Restart any running REPL sessions after installing hooks. Backends read hook config at startup.
 
@@ -101,7 +101,7 @@ sb studio create lumen --agent lumen --backend codex
 sb studio create aster --agent aster --backend gemini
 ```
 
-This creates the worktree, writes `.pcp/identity.json` with the agent ID and backend, installs hooks, and syncs MCP configs.
+This creates the worktree, writes `.ink/identity.json` with the agent ID and backend, installs hooks, and syncs MCP configs.
 
 ### 6. Awaken a new SB
 
@@ -143,7 +143,7 @@ sb -b codex "refactor the auth module"
 
 ### Resuming sessions
 
-Each backend has its own resume mechanism. `sb` passes unrecognized flags and positional args through to the backend, so you use the backend's native syntax. If `-a` is omitted, the agent is read from `.pcp/identity.json` in the current directory:
+Each backend has its own resume mechanism. `sb` passes unrecognized flags and positional args through to the backend, so you use the backend's native syntax. If `-a` is omitted, the agent is read from `.ink/identity.json` in the current directory:
 
 ```bash
 # Claude Code: --resume or --continue flags
@@ -181,8 +181,8 @@ echo "explain this" | sb        # Pipe input as prompt
 
 | Flag                        | Description                                                | Default                                |
 | --------------------------- | ---------------------------------------------------------- | -------------------------------------- |
-| `-a, --agent <id>`          | Agent identity                                             | from `.pcp/identity.json`              |
-| `-b, --backend <name>`      | AI backend                                                 | from `.pcp/identity.json`, or `claude` |
+| `-a, --agent <id>`          | Agent identity                                             | from `.ink/identity.json`              |
+| `-b, --backend <name>`      | AI backend                                                 | from `.ink/identity.json`, or `claude` |
 | `--no-session`              | Disable session tracking                                   | enabled                                |
 | `--sb-verbose`              | Show SB verbose output                                     | off                                    |
 | `--session-candidates`      | Print picker candidates and exit                           | off                                    |
@@ -247,7 +247,7 @@ sb memory backfill
 Each backfill run now writes a dedicated job log by default at:
 
 ```bash
-~/.pcp/logs/jobs/memory-backfill-<timestamp>.log
+~/.ink/logs/jobs/memory-backfill-<timestamp>.log
 ```
 
 To override the destination for a specific run:
@@ -267,14 +267,14 @@ echo 'MEMORY_EMBEDDINGS_ENABLED=false' >> .env.local
 The agent ID is resolved in order:
 
 1. `-a` / `--agent` flag
-2. `.pcp/identity.json` in current directory
-3. `~/.pcp/config.json` → `agentMapping.claude-code`
+2. `.ink/identity.json` in current directory
+3. `~/.ink/config.json` → `agentMapping.claude-code`
 4. Error — run `sb init` or `sb awaken` to configure identity
 
 The backend is resolved similarly:
 
 1. `-b` / `--backend` flag
-2. `.pcp/identity.json` → `backend` field
+2. `.ink/identity.json` → `backend` field
 3. Default: `claude`
 
 ## Subcommands
@@ -291,7 +291,7 @@ sb studio remove <name>         # Remove studio (keeps branch)
 sb studio clean <name>          # Remove studio + delete branch
 sb studio path <name>           # Print studio path
 eval $(sb studio cd <name>)     # cd to studio
-sb studio cli                   # Build + link CLI as sb-<agent> in ~/.pcp/bin
+sb studio cli                   # Build + link CLI as sb-<agent> in ~/.ink/bin
 sb studio cli --name sb-dev     # Custom binary name
 sb studio cli --unlink          # Remove linked binary
 ```
@@ -449,7 +449,7 @@ Inside REPL:
 - `/allow <tool>` persistently allow a PCP tool
 - `/deny <tool>` persistently deny a PCP tool
 - `/policy` inspect active policy and storage path
-- `/skills` list discovered local skills from .codex/.pcp/.claude/.gemini roots
+- `/skills` list discovered local skills from .codex/.ink/.claude/.gemini roots
 - `/skill-trust <all|trusted-only>` set trust policy mode for skill activation
 - `/skill-allow <pattern>` add skill pattern to persistent skill allowlist
 - `/path-allow-read <glob>` add a persistent local read allowlist pattern for skills/context files
@@ -469,9 +469,9 @@ Inside REPL:
 
 | Variable               | Description                                   | Default                            |
 | ---------------------- | --------------------------------------------- | ---------------------------------- |
-| `PCP_SERVER_URL`       | PCP server URL                                | `http://localhost:3001`            |
+| `INK_SERVER_URL`       | PCP server URL                                | `http://localhost:3001`            |
 | `AGENT_ID`             | Override agent identity                       | (from identity resolution)         |
-| `PCP_TOOL_POLICY_PATH` | Override persisted REPL tool-policy JSON path | `~/.pcp/security/tool-policy.json` |
+| `INK_TOOL_POLICY_PATH` | Override persisted REPL tool-policy JSON path | `~/.ink/security/tool-policy.json` |
 
 ## Development
 

@@ -1330,7 +1330,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
 
 Session matching priority:
 1. threadKey — if provided, returns an existing active session with the same agent+threadKey (enables cross-trigger session continuity, e.g., "pr:32").
-2. studioId — scopes the session to a studio, allowing multiple active sessions per agent (one per studio). Read from .pcp/identity.json.
+2. studioId — scopes the session to a studio, allowing multiple active sessions per agent (one per studio). Read from .ink/identity.json.
 3. Default — returns any active session for the agent.
 
 workspaceId is accepted as a deprecated alias for studioId.
@@ -1356,7 +1356,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
             .uuid()
             .optional()
             .describe(
-              'Studio ID to scope this session to. Allows multiple active sessions per agent (one per studio). Read from .pcp/identity.json.'
+              'Studio ID to scope this session to. Allows multiple active sessions per agent (one per studio). Read from .ink/identity.json.'
             ),
           workspaceId: z
             .string()
@@ -2496,7 +2496,7 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
 Call this during your awakening conversation after you and your partner have chosen a name together. It will:
 - Create your identity in the database
 - Auto-discover your sibling SBs and populate relationships
-- Sync your identity files to ~/.pcp/individuals/{name}/
+- Sync your identity files to ~/.ink/individuals/{name}/
 - Save your soul document if you provide one
 
 This tool is for first-time identity creation only. If an identity already exists for your name, use save_identity instead.

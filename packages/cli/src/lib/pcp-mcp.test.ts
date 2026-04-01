@@ -132,7 +132,7 @@ describe('pcp-mcp callPcpTool', () => {
 
     const [, options] = fetchSpy.mock.calls[0];
     expect(options.headers).toMatchObject({
-      'x-pcp-caller-profile': 'runtime',
+      'x-ink-caller-profile': 'runtime',
     });
   });
 

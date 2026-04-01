@@ -7,8 +7,8 @@
  *
  * Config:
  *   serverUrl     - PCP server URL (default: http://localhost:3001)
- *   accessToken   - PCP access token (or reads from ~/.pcp/auth.json)
- *   agentId       - Agent identity (or reads from ~/.pcp/config.json)
+ *   accessToken   - PCP access token (or reads from ~/.ink/auth.json)
+ *   agentId       - Agent identity (or reads from ~/.ink/config.json)
  *   autoBootstrap - Inject identity context before each turn (default: true)
  *   autoSessionEnd - End PCP session on agent_end (default: true)
  */
@@ -74,7 +74,7 @@ function readJsonFile<T>(path: string): T | null {
 function resolveAgentId(pluginAgentId?: string): string | null {
   if (pluginAgentId) return pluginAgentId;
 
-  // Check ~/.pcp/config.json agentMapping
+  // Check ~/.ink/config.json agentMapping
   const config = readJsonFile<PcpUserConfig>(join(homedir(), '.ink', 'config.json'));
   if (config?.agentMapping?.openclaw) return config.agentMapping.openclaw;
 
@@ -93,7 +93,7 @@ function resolveAccessToken(pluginToken?: string): string | null {
   // Check INK_ACCESS_TOKEN env var
   if (process.env.INK_ACCESS_TOKEN) return process.env.INK_ACCESS_TOKEN;
 
-  // Check ~/.pcp/auth.json
+  // Check ~/.ink/auth.json
   const auth = readJsonFile<PcpAuthConfig>(join(homedir(), '.ink', 'auth.json'));
   return auth?.accessToken ?? null;
 }
@@ -236,7 +236,7 @@ export default function pcpPlugin(api: OpenClawPluginApi) {
   if (!agentId) {
     api.logger.warn(
       'pcp: no agent ID resolved. Set plugins.entries.pcp.config.agentId ' +
-        'or add an openclaw entry to ~/.pcp/config.json agentMapping. PCP hooks disabled.'
+        'or add an openclaw entry to ~/.ink/config.json agentMapping. PCP hooks disabled.'
     );
     return;
   }

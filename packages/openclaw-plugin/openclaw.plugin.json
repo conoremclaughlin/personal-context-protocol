@@ -11,12 +11,12 @@
       "label": "Access Token",
       "sensitive": true,
       "placeholder": "eyJhbGciOi...",
-      "help": "PCP access token (from ~/.pcp/auth.json or 'sb login')"
+      "help": "PCP access token (from ~/.ink/auth.json or 'sb login')"
     },
     "agentId": {
       "label": "Agent ID",
       "placeholder": "wren",
-      "help": "Your PCP agent identity. If omitted, reads from ~/.pcp/config.json agentMapping."
+      "help": "Your PCP agent identity. If omitted, reads from ~/.ink/config.json agentMapping."
     },
     "autoBootstrap": {
       "label": "Auto-Bootstrap",

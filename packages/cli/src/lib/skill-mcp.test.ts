@@ -4,10 +4,10 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { parseSkillMcpConfig, discoverSkillMcpServers, buildMergedMcpConfig } from './skill-mcp.js';
 
-// Mock discoverSkills so tests don't pick up user-installed skills from ~/.pcp/skills/
+// Mock discoverSkills so tests don't pick up user-installed skills from ~/.ink/skills/
 vi.mock('../repl/skills.js', () => ({
   discoverSkills: (cwd: string) => {
-    // Only scan cwd/.pcp/skills/ (workspace tier) — skip managed/bundled/extra tiers
+    // Only scan cwd/.ink/skills/ (workspace tier) — skip managed/bundled/extra tiers
     const { existsSync, readdirSync } = require('fs');
     const { join } = require('path');
     const skillsDir = join(cwd, '.pcp', 'skills');
@@ -135,7 +135,7 @@ describe('buildMergedMcpConfig', () => {
   });
 
   it('merges skill MCP servers into project config', () => {
-    // Create a skill with MCP config in .pcp/skills/
+    // Create a skill with MCP config in .ink/skills/
     const skillDir = join(tmpDir, '.pcp', 'skills', 'playwright-mcp');
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(
@@ -279,7 +279,7 @@ mcp:
             url: 'http://localhost:3001/mcp',
             headers: {
               'x-ink-session-id': 'user-configured-value',
-              'x-pcp-context': 'already-set',
+              'x-ink-context': 'already-set',
             },
           },
         },
@@ -341,7 +341,7 @@ mcp:
       expect(mcpConfigPath).not.toBe(join(tmpDir, '.mcp.json'));
       const merged = JSON.parse(readFileSync(mcpConfigPath!, 'utf-8'));
       expect(merged.mcpServers.pcp.headers['x-ink-session-id']).toBe('${INK_SESSION_ID}');
-      expect(merged.mcpServers.pcp.headers['x-pcp-studio-id']).toBe('${INK_STUDIO_ID}');
+      expect(merged.mcpServers.pcp.headers['x-ink-studio-id']).toBe('${INK_STUDIO_ID}');
     } finally {
       cleanup();
     }

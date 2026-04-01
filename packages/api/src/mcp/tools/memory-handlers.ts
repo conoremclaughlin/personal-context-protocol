@@ -31,7 +31,7 @@ async function safeReadFile(filePath: string): Promise<string | null> {
   }
 }
 
-// Bundled conventions template (fallback when ~/.pcp/shared/CONVENTIONS.md doesn't exist)
+// Bundled conventions template (fallback when ~/.ink/shared/CONVENTIONS.md doesn't exist)
 const BUNDLED_CONVENTIONS_PATH = path.resolve(
   __dirname,
   '..',
@@ -1766,8 +1766,8 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
 
   if (agentId) {
     // Load constitution from local filesystem (fallback for DB)
-    // Agent-specific: ~/.pcp/individuals/{agentId}/ (identity, heartbeat, soul)
-    // Shared: ~/.pcp/shared/ (values, user, process)
+    // Agent-specific: ~/.ink/individuals/{agentId}/ (identity, heartbeat, soul)
+    // Shared: ~/.ink/shared/ (values, user, process)
     const [valuesContent, userContent, processContent, selfContent, heartbeatContent, soulContent] =
       await Promise.all([
         safeReadFile(path.join(basePath, 'shared', 'VALUES.md')),
@@ -2102,7 +2102,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
             },
 
             // Recent active sessions (most recent 10) — use studioId to pick yours
-            // Match against .pcp/identity.json studioId in your local environment
+            // Match against .ink/identity.json studioId in your local environment
             activeSessions: activeSessions.map((s) => ({
               id: s.id,
               agentId: s.agentId,
@@ -2139,7 +2139,7 @@ export async function handleBootstrap(args: unknown, dataComposer: DataComposer)
             reflectionStatus,
 
             // PCP conventions — messaging best practices, loaded from
-            // ~/.pcp/shared/CONVENTIONS.md or bundled template fallback
+            // ~/.ink/shared/CONVENTIONS.md or bundled template fallback
             conventions: conventionsContent || null,
 
             // User's installed skills (local + cloud merged)

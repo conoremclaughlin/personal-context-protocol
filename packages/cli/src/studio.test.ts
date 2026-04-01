@@ -211,7 +211,7 @@ describe('Studio PCP Identity Integration', () => {
     cleanupTestRepo();
   });
 
-  it('should create .pcp/identity.json in worktree', () => {
+  it('should create .ink/identity.json in worktree', () => {
     const worktreePath = join(TEST_DIR, 'test-repo--feature5');
 
     // Create worktree

@@ -7,7 +7,7 @@
  * - guide: Markdown guides for specific situations
  *
  * Skills can be loaded from:
- * - Local filesystem (~/.pcp/skills/, builtin)
+ * - Local filesystem (~/.ink/skills/, builtin)
  * - Cloud registry (Supabase database)
  */
 

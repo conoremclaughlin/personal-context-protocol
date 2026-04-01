@@ -227,7 +227,7 @@ export class ContextLedger {
   }
 
   /**
-   * Evict all entries from a given source (e.g., "pcp-inbox", "bootstrap", "local-tool").
+   * Evict all entries from a given source (e.g., "ink-inbox", "bootstrap", "local-tool").
    * Useful for bulk cleanup of a category of context.
    */
   public evictBySource(source: string): LedgerEvictResult {
