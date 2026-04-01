@@ -678,7 +678,7 @@ describe('adminAuthMiddleware', () => {
       });
     });
 
-    it('should use personal workspace when no x-pcp-workspace-id header', async () => {
+    it('should use personal workspace when no x-ink-workspace-id header', async () => {
       mockEnsurePersonalWorkspace.mockResolvedValue({ id: 'personal-ws' });
 
       const req = createMockReq();
@@ -697,7 +697,7 @@ describe('adminAuthMiddleware', () => {
 
       const req = createMockReq({
         header: vi.fn((name: string) => {
-          if (name === 'x-pcp-workspace-id') return 'requested-ws';
+          if (name === 'x-ink-workspace-id') return 'requested-ws';
           return undefined;
         }),
       });
@@ -710,12 +710,12 @@ describe('adminAuthMiddleware', () => {
       expect((req as any).pcpWorkspaceRole).toBe('member');
     });
 
-    it('should set request context workspaceSource=header when x-pcp-workspace-id is used', async () => {
+    it('should set request context workspaceSource=header when x-ink-workspace-id is used', async () => {
       mockFindById.mockResolvedValue({ id: 'requested-ws' });
 
       const req = createMockReq({
         header: vi.fn((name: string) => {
-          if (name === 'x-pcp-workspace-id') return 'requested-ws';
+          if (name === 'x-ink-workspace-id') return 'requested-ws';
           return undefined;
         }),
       });
@@ -738,7 +738,7 @@ describe('adminAuthMiddleware', () => {
 
       const req = createMockReq({
         header: vi.fn((name: string) => {
-          if (name === 'x-pcp-workspace-id') return 'nonexistent-ws';
+          if (name === 'x-ink-workspace-id') return 'nonexistent-ws';
           return undefined;
         }),
       });

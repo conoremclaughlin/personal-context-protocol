@@ -1,3 +1,3 @@
-<pcp-inbox count="{{COUNT}}">
+<inkmail count="{{COUNT}}">
 {{MESSAGES}}
-</pcp-inbox>
+</inkmail>

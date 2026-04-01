@@ -42,7 +42,7 @@ describe('renderSessionsByAgent', () => {
     expect(output).toContain('lumen (1 session, 1 active)');
     expect(output).toContain('wren (1 session, 0 active)');
     expect(output).toContain(
-      'Attach:  sb chat -a lumen --attach aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
+      'Attach:  ink chat -a lumen --attach aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee'
     );
     expect(output).toContain('Thread:  pr:61');
     expect(output).toContain(
@@ -68,7 +68,7 @@ describe('renderSessionsByAgent', () => {
       ).join('\n')
     );
     expect(flatOutput).toContain(
-      'Attach:  sb chat -a aster --attach 11111111-2222-3333-4444-555555555555'
+      'Attach:  ink chat -a aster --attach 11111111-2222-3333-4444-555555555555'
     );
     expect(flatOutput).not.toContain('(1 session,');
   });

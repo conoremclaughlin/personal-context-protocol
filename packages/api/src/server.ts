@@ -1,6 +1,6 @@
 #!/usr/bin/env npx tsx
 /**
- * PCP Server - Personal Context Protocol
+ * Inkstand Server
  *
  * Main entry point that orchestrates:
  * - MCP Server with integrated ChannelGateway (Telegram/WhatsApp)
@@ -44,7 +44,7 @@ import { getAgentGateway, type AgentTriggerPayload } from './channels/agent-gate
 import { resolveRouteAgentId } from './services/routing/resolve-route';
 import { resolveAgentFromMention } from './services/routing/resolve-mention';
 import { getHeartbeatProcessingConfig } from './config/heartbeat-flags';
-import { classifyError } from '@personal-context/shared';
+import { classifyError } from '@inkstand/shared';
 import { logger } from './utils/logger';
 import { getUserFromContext } from './utils/request-context';
 import { env } from './config/env';
@@ -101,7 +101,7 @@ async function routeResponses(responses: ChannelResponse[]): Promise<void> {
  * Start the PCP server
  */
 async function startServer(config: ServerConfig = {}): Promise<void> {
-  logger.info('Starting PCP Server...');
+  logger.info('Starting Inkstand Server...');
 
   // Resolve configuration
   const workingDirectory = config.workingDirectory || path.resolve(__dirname, '../../..');
@@ -1031,7 +1031,7 @@ When you complete a task_request, mark it as completed using update_inbox_messag
   // Ready
   logger.info('');
   logger.info('='.repeat(60));
-  logger.info('PCP Server is running (SessionService architecture)');
+  logger.info('Inkstand Server is running (SessionService architecture)');
   logger.info('='.repeat(60));
   logger.info('');
 
@@ -1166,7 +1166,7 @@ async function shutdown(): Promise<void> {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  logger.info('\nShutting down PCP Server...');
+  logger.info('\nShutting down Inkstand Server...');
 
   // Force-kill safety net: if graceful shutdown hangs, exit anyway.
   const forceKillTimer = setTimeout(() => {
@@ -1216,7 +1216,7 @@ process.on('unhandledRejection', (reason) => {
 
 // Start the server
 startServer({
-  workingDirectory: process.env.PCP_WORKING_DIR || path.resolve(__dirname, '../../..'),
+  workingDirectory: process.env.INK_WORKING_DIR || path.resolve(__dirname, '../../..'),
   mcpConfigPath: process.env.MCP_CONFIG_PATH,
 }).catch((error) => {
   logger.error('Failed to start server:', error);

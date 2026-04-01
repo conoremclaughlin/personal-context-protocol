@@ -1,7 +1,7 @@
 /**
- * sb chat Runtime E2E Integration Tests
+ * ink chat Runtime E2E Integration Tests
  *
- * Tests the full sb chat pipeline against a live PCP server:
+ * Tests the full ink chat pipeline against a live PCP server:
  * 1. Bootstrap verification — identity loads, memories returned
  * 2. Hook lifecycle — hooks fire in correct order with correct context
  * 3. Passive recall in REPL context — recall fires, injects, respects budget
@@ -9,10 +9,10 @@
  * 5. Full session cycle — bootstrap → turn → recall → evict → verify
  *
  * Uses wren as the test agent (real identity + memories in the DB).
- * Requires PCP server on localhost:3001 (or PCP_SERVER_URL).
+ * Requires PCP server on localhost:3001 (or INK_SERVER_URL).
  *
  * Run with:
- *   PCP_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
+ *   INK_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
  *     packages/cli/src/repl/sb-chat-e2e.integration.test.ts
  */
 
@@ -26,7 +26,7 @@ import { isClientLocalTool, handleClientLocalTool } from './context-tools.js';
 
 // ─── Server check ───────────────────────────────────────────────
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 let serverAvailable = false;
 try {
   const result = execSync(`curl -sf -m 2 ${PCP_URL}/health`, { encoding: 'utf-8' });
@@ -38,7 +38,7 @@ try {
 // ─── PCP Client helpers ─────────────────────────────────────────
 
 function getAccessToken(): string {
-  const authPath = `${process.env.HOME}/.pcp/auth.json`;
+  const authPath = `${process.env.HOME}/.ink/auth.json`;
   const auth = JSON.parse(readFileSync(authPath, 'utf-8'));
   return auth.accessToken || auth.access_token;
 }

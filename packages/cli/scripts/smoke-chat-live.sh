@@ -16,25 +16,25 @@ set -euo pipefail
 #   SB_SMOKE_BIN="node dist/cli.js"
 #   SB_SMOKE_TIMEOUT_SECONDS=20
 #   SB_SMOKE_DEBUG_FILE=/tmp/sb-chat-smoke-debug.log
-#   PCP_SERVER_URL=http://localhost:3101
+#   INK_SERVER_URL=http://localhost:3101
 
 AGENT="${SB_SMOKE_AGENT:-lumen}"
 BACKENDS="${SB_SMOKE_BACKENDS:-claude codex gemini}"
 SB_BIN="${SB_SMOKE_BIN:-node dist/cli.js}"
 TIMEOUT_SECONDS="${SB_SMOKE_TIMEOUT_SECONDS:-20}"
 DEBUG_FILE="${SB_SMOKE_DEBUG_FILE:-/tmp/sb-chat-smoke-debug.log}"
-PCP_URL="${PCP_SERVER_URL:-http://localhost:3101}"
+PCP_URL="${INK_SERVER_URL:-http://localhost:3101}"
 
 if [[ ! -f "dist/cli.js" ]]; then
-  echo "dist/cli.js not found. Run: yarn workspace @personal-context/cli build"
+  echo "dist/cli.js not found. Run: yarn workspace @inkstand/cli build"
   exit 1
 fi
 
 prompt_for_backend() {
   local agent="$1"
   cat <<EOF
-Emit exactly one fenced pcp-tool block and nothing else:
-\`\`\`pcp-tool
+Emit exactly one fenced ink-tool block and nothing else:
+\`\`\`ink-tool
 {"tool":"get_inbox","args":{"agentId":"${agent}","status":"unread","limit":1}}
 \`\`\`
 EOF
@@ -61,7 +61,7 @@ for backend in ${BACKENDS}; do
 
   set +e
   output="$(
-    PCP_SERVER_URL="${PCP_URL}" \
+    INK_SERVER_URL="${PCP_URL}" \
       SB_DEBUG_FILE="${DEBUG_FILE}" \
       ${SB_BIN} chat \
       -a "${AGENT}" \
@@ -94,7 +94,7 @@ for backend in ${BACKENDS}; do
   fi
 
   if grep -q "Local tool error (get_inbox)" <<<"${output}"; then
-    echo "WARN ${backend}: local tool call was routed but PCP call failed (check PCP_SERVER_URL/auth)"
+    echo "WARN ${backend}: local tool call was routed but PCP call failed (check INK_SERVER_URL/auth)"
   fi
 
   echo "PASS ${backend}"

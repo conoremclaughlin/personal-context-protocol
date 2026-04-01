@@ -307,7 +307,7 @@ describe('MCP StreamableHTTP Transport (stateless)', () => {
     const priorCalls = registerAllToolsMock.mock.calls.length;
 
     const res = await mcpPost(baseUrl, makeToolsListRequest(22), {
-      'x-pcp-caller-profile': 'runtime',
+      'x-ink-caller-profile': 'runtime',
     });
     expect(res.status).toBe(200);
 

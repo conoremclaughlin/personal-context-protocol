@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { homedir } from 'os';
 import { dirname, join } from 'path';
-import * as sharedToolPolicyCore from '@personal-context/shared';
+import * as sharedToolPolicyCore from '@inkstand/shared';
 
 export type ToolGroupMap = Record<string, string[]>;
 
@@ -9,8 +9,8 @@ function requireSharedToolPolicyExport<T>(name: string): T {
   const value = (sharedToolPolicyCore as Record<string, unknown>)[name];
   if (typeof value !== 'function') {
     throw new Error(
-      `@personal-context/shared is missing required export "${name}". ` +
-        'Rebuild shared + cli: yarn workspace @personal-context/cli build'
+      `@inkstand/shared is missing required export "${name}". ` +
+        'Rebuild shared + cli: yarn workspace @inkstand/cli build'
     );
   }
   return value as T;
@@ -146,7 +146,7 @@ interface ToolPolicyRulesState {
   allowedSkills: Set<string>;
 }
 
-const DEFAULT_POLICY_PATH = join(homedir(), '.pcp', 'security', 'tool-policy.json');
+const DEFAULT_POLICY_PATH = join(homedir(), '.ink', 'security', 'tool-policy.json');
 
 export const DEFAULT_SAFE_PCP_TOOLS = new Set<string>([
   'bootstrap',
@@ -170,10 +170,10 @@ export const DEFAULT_SAFE_PCP_TOOLS = new Set<string>([
 ]);
 
 export const TOOL_GROUPS: ToolGroupMap = {
-  'group:pcp-safe': Array.from(DEFAULT_SAFE_PCP_TOOLS),
-  'group:pcp-comms': ['send_to_inbox', 'trigger_agent', 'send_response'],
-  'group:pcp-memory': ['remember', 'recall', 'forget', 'update_memory', 'restore_memory'],
-  'group:pcp-session': [
+  'group:ink-safe': Array.from(DEFAULT_SAFE_PCP_TOOLS),
+  'group:ink-comms': ['send_to_inbox', 'trigger_agent', 'send_response'],
+  'group:ink-memory': ['remember', 'recall', 'forget', 'update_memory', 'restore_memory'],
+  'group:ink-session': [
     'start_session',
     'update_session_phase',
     'get_session',

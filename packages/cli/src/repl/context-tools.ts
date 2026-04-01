@@ -6,7 +6,7 @@
  * its own context window: the ability to introspect what's there and
  * surgically evict what's no longer relevant.
  *
- * The SB calls these the same way as PCP tools (via pcp-tool blocks),
+ * The SB calls these the same way as PCP tools (via ink-tool blocks),
  * but the CLI intercepts and handles them locally.
  */
 

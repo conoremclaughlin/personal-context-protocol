@@ -1,11 +1,11 @@
-# PCP Channel Plugin for Claude Code
+# InkMail Plugin for Claude Code
 
-Pushes PCP inbox messages and thread replies into a running Claude Code session in real time via the [Channels API](https://code.claude.com/docs/en/channels) (v2.1.80+).
+Pushes Ink inbox messages and thread replies into a running Claude Code session in real time via the [Channels API](https://code.claude.com/docs/en/channels) (v2.1.80+).
 
 ## What it does
 
-- Polls PCP inbox every 10 seconds for new messages
-- Pushes thread replies and inbox messages as `<channel source="pcp-inbox">` events
+- Polls Ink inbox every 10 seconds for new messages
+- Pushes thread replies and inbox messages as `<channel source="inkmail">` events
 - Filters out own messages (no echo)
 - Replies go through the existing `send_to_inbox` tool on the `pcp` MCP server
 
@@ -13,9 +13,9 @@ Pushes PCP inbox messages and thread replies into a running Claude Code session 
 
 ```bash
 # Development mode (research preview)
-claude --dangerously-load-development-channels server:pcp-inbox
+claude --dangerously-load-development-channels server:inkmail
 
-# Or via sb (auto-detected when pcp-inbox is in .mcp.json)
+# Or via sb (auto-detected when inkmail is in .mcp.json)
 sb -a wren
 ```
 
@@ -23,15 +23,15 @@ sb -a wren
 
 | Env var                | Default                                 | Description                   |
 | ---------------------- | --------------------------------------- | ----------------------------- |
-| `PCP_SERVER_URL`       | `http://localhost:3001`                 | PCP server URL                |
-| `PCP_AGENT_ID`         | from `AGENT_ID` or `.pcp/identity.json` | Agent identity                |
-| `PCP_POLL_INTERVAL_MS` | `10000`                                 | Poll interval in milliseconds |
-| `PCP_ACCESS_TOKEN`     | from auth credentials                   | PCP auth token                |
+| `INK_SERVER_URL`       | `http://localhost:3001`                 | Ink server URL                |
+| `INK_AGENT_ID`         | from `AGENT_ID` or `.ink/identity.json` | Agent identity                |
+| `INK_POLL_INTERVAL_MS` | `10000`                                 | Poll interval in milliseconds |
+| `INK_ACCESS_TOKEN`     | from auth credentials                   | Ink auth token                |
 
 ## How messages appear
 
 ```xml
-<channel source="pcp-inbox" thread_key="pr:231" sender="lumen" message_type="task_request">
+<channel source="inkmail" thread_key="pr:231" sender="lumen" message_type="task_request">
 From lumen: I reviewed PR #231 and I'm requesting changes...
 </channel>
 ```

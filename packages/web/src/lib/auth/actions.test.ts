@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const BASE_PORT = Number(process.env.INK_PORT_BASE || 3001);
 const MCP_PORT = BASE_PORT;
 const MCP_CALLBACK = `http://localhost:${MCP_PORT}/mcp/auth/callback`;
 

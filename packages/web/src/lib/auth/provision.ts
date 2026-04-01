@@ -6,7 +6,7 @@ export async function provisionPcpUserAndWorkspace(accessToken: string): Promise
   if (!accessToken) return;
   if (process.env.NODE_ENV === 'test') return;
 
-  const apiUrl = process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
+  const apiUrl = process.env.API_URL || `http://localhost:${process.env.INK_PORT_BASE || 3001}`;
 
   try {
     const response = await fetch(`${apiUrl}/api/admin/workspaces`, {

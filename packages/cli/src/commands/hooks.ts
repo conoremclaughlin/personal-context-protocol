@@ -39,9 +39,9 @@ const __dirname = dirname(__filename);
 
 // ─── Hook Logger ─────────────────────────────────────────────────────
 // Always-on structured logging for hook lifecycle events.
-// Writes to ~/.pcp/logs/hooks.log — not gated by SB_DEBUG.
+// Writes to ~/.ink/logs/hooks.log — not gated by SB_DEBUG.
 // Hooks run as short-lived subprocesses, so we append synchronously.
-const HOOK_LOG_DIR = join(homedir(), '.pcp', 'logs');
+const HOOK_LOG_DIR = join(homedir(), '.ink', 'logs');
 const HOOK_LOG_FILE = join(HOOK_LOG_DIR, 'hooks.log');
 let hookLogDirCreated = false;
 
@@ -145,7 +145,7 @@ interface PcpConfig {
 // ============================================================================
 
 function detectBackend(cwd: string): HookCapabilities {
-  // 1. Check .pcp/identity.json for explicit backend
+  // 1. Check .ink/identity.json for explicit backend
   const identity = readIdentityJson(cwd);
   if (identity?.backend) {
     const fromIdentity = getBackendByName(identity.backend);
@@ -237,7 +237,7 @@ async function readStdin(): Promise<Record<string, unknown>> {
 // ============================================================================
 
 function getPcpConfig(): PcpConfig | null {
-  const configPath = join(homedir(), '.pcp', 'config.json');
+  const configPath = join(homedir(), '.ink', 'config.json');
   if (existsSync(configPath)) {
     try {
       return JSON.parse(readFileSync(configPath, 'utf-8'));
@@ -249,7 +249,7 @@ function getPcpConfig(): PcpConfig | null {
 }
 
 function getPcpServerUrl(): string {
-  return process.env.PCP_SERVER_URL || 'http://localhost:3001';
+  return process.env.INK_SERVER_URL || 'http://localhost:3001';
 }
 
 let jsonRpcId = 1;
@@ -260,7 +260,7 @@ export async function callPcpTool(
 ): Promise<Record<string, unknown>> {
   const serverUrl = getPcpServerUrl();
   const url = `${serverUrl}/mcp`;
-  const hasInjectedEnvToken = Boolean(process.env.PCP_ACCESS_TOKEN?.trim());
+  const hasInjectedEnvToken = Boolean(process.env.INK_ACCESS_TOKEN?.trim());
   const delegatedAgentId =
     typeof args.agentId === 'string' && args.agentId.trim().length > 0
       ? args.agentId.trim().toLowerCase()
@@ -268,18 +268,18 @@ export async function callPcpTool(
 
   // Propagate PCP session/studio IDs so the server can resolve studio scope and
   // attribute tool calls to the correct session context.
-  const pcpSessionId = process.env.PCP_SESSION_ID?.trim() || undefined;
-  const pcpStudioId = process.env.PCP_STUDIO_ID?.trim() || undefined;
+  const pcpSessionId = process.env.INK_SESSION_ID?.trim() || undefined;
+  const pcpStudioId = process.env.INK_STUDIO_ID?.trim() || undefined;
 
   const baseHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
-    'x-pcp-caller-profile': 'runtime',
+    'x-ink-caller-profile': 'runtime',
     // Forward-looking runtime identity signal for stricter server-side enforcement.
     // Today, effective agent identity is still sourced from JWT claims.
-    ...(delegatedAgentId ? { 'x-pcp-agent-id': delegatedAgentId } : {}),
-    ...(pcpSessionId ? { 'x-pcp-session-id': pcpSessionId } : {}),
-    ...(pcpStudioId ? { 'x-pcp-studio-id': pcpStudioId } : {}),
+    ...(delegatedAgentId ? { 'x-ink-agent-id': delegatedAgentId } : {}),
+    ...(pcpSessionId ? { 'x-ink-session-id': pcpSessionId } : {}),
+    ...(pcpStudioId ? { 'x-ink-studio-id': pcpStudioId } : {}),
   };
 
   const callOnce = async (token: string | null): Promise<Response> => {
@@ -340,7 +340,7 @@ export async function callPcpTool(
     if (hasInjectedEnvToken) {
       console.error(
         chalk.yellow(
-          '⚠ PCP hook auth token was rejected; retrying with local ~/.pcp/auth.json token fallback.'
+          '⚠ PCP hook auth token was rejected; retrying with local ~/.ink/auth.json token fallback.'
         )
       );
     }
@@ -429,7 +429,7 @@ export async function callPcpTool(
 // ============================================================================
 
 function getRuntimeDir(cwd: string): string {
-  return join(cwd, '.pcp', 'runtime');
+  return join(cwd, '.ink', 'runtime');
 }
 
 function ensureRuntimeDir(cwd: string): string {
@@ -463,8 +463,8 @@ function normalizeSessionBackend(backendName: string): string {
 }
 
 function resolveActivePcpSessionId(cwd: string): string | undefined {
-  // 1. PCP_SESSION_ID env var — canonical, set by all CLI backends at spawn
-  const envSessionId = process.env.PCP_SESSION_ID?.trim();
+  // 1. INK_SESSION_ID env var — canonical, set by all CLI backends at spawn
+  const envSessionId = process.env.INK_SESSION_ID?.trim();
   if (envSessionId) return envSessionId;
 
   const detectedBackend = detectBackend(cwd);
@@ -472,8 +472,8 @@ function resolveActivePcpSessionId(cwd: string): string | undefined {
   const { studioId } = getIdentitySessionContext(cwd);
   const agentId = resolveAgentId() || 'unknown';
 
-  // 2. PCP_RUNTIME_LINK_ID → sessions.json lookup (server-spawned sessions)
-  const runtimeLinkId = process.env.PCP_RUNTIME_LINK_ID;
+  // 2. INK_RUNTIME_LINK_ID → sessions.json lookup (server-spawned sessions)
+  const runtimeLinkId = process.env.INK_RUNTIME_LINK_ID;
   if (runtimeLinkId) {
     const linked = findRuntimeSessionByLinkId(cwd, runtimeLinkId, {
       backend: sessionBackend,
@@ -496,7 +496,7 @@ function getIdentitySessionContext(cwd: string): {
   studioName?: string;
   role?: string;
 } {
-  const identityPath = join(cwd, '.pcp', 'identity.json');
+  const identityPath = join(cwd, '.ink', 'identity.json');
   if (!existsSync(identityPath)) return {};
 
   try {
@@ -518,7 +518,7 @@ function getIdentitySessionContext(cwd: string): {
 }
 
 function getRuntimeLinkId(): string | undefined {
-  const candidate = process.env.PCP_RUNTIME_LINK_ID;
+  const candidate = process.env.INK_RUNTIME_LINK_ID;
   if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
   return undefined;
 }
@@ -888,7 +888,7 @@ function hasActiveChannelPlugin(cwd: string): boolean {
     const mcpJsonPath = join(cwd, '.mcp.json');
     if (!existsSync(mcpJsonPath)) return false;
     const mcpConfig = JSON.parse(readFileSync(mcpJsonPath, 'utf-8'));
-    return Boolean(mcpConfig?.mcpServers?.['pcp-inbox']);
+    return Boolean(mcpConfig?.mcpServers?.['inkmail']);
   } catch {
     return false;
   }
@@ -896,11 +896,11 @@ function hasActiveChannelPlugin(cwd: string): boolean {
 
 function buildInboxTag(messages: Array<Record<string, unknown>> | undefined): string {
   if (!messages || messages.length === 0) return '';
-  const lines = [`<pcp-inbox count="${messages.length}">`];
+  const lines = [`<inkmail count="${messages.length}">`];
   for (const msg of messages) {
     lines.push(`- **${msg.from || 'unknown'}**: ${msg.content || msg.subject || '(no content)'}`);
   }
-  lines.push('</pcp-inbox>');
+  lines.push('</inkmail>');
   return lines.join('\n');
 }
 
@@ -963,14 +963,14 @@ function buildSkillsBlock(skills: Array<Record<string, unknown>> | undefined): s
 // Install / Uninstall / Status
 // ============================================================================
 
-/** Marker used to identify PCP-managed hook entries (JSON backends) */
-const PCP_MARKER = 'pcp-managed';
-/** Marker used to identify PCP-managed Codex hook block (TOML) */
-const CODEX_HOOKS_START_MARKER = '# pcp-managed:hooks:start';
-const CODEX_HOOKS_END_MARKER = '# pcp-managed:hooks:end';
+/** Marker used to identify Ink-managed hook entries (JSON backends) */
+const PCP_MARKER = 'ink-managed';
+/** Marker used to identify Ink-managed Codex hook block (TOML) */
+const CODEX_HOOKS_START_MARKER = '# ink-managed:hooks:start';
+const CODEX_HOOKS_END_MARKER = '# ink-managed:hooks:end';
 // Back-compat with earlier Codex hook marker format.
-const CODEX_LEGACY_HOOKS_START_MARKER = '# pcp-managed';
-const CODEX_LEGACY_HOOKS_END_MARKER = '# end pcp-managed';
+const CODEX_LEGACY_HOOKS_START_MARKER = '# ink-managed';
+const CODEX_LEGACY_HOOKS_END_MARKER = '# end ink-managed';
 const PCP_HOOK_SIGNATURES = [
   'hooks on-session-start',
   'hooks on-stop',
@@ -990,9 +990,9 @@ function looksLikeSbEntrypoint(path: string): boolean {
   return (
     normalized.endsWith('/packages/cli/dist/cli.js') ||
     normalized.endsWith('/packages/cli/src/cli.ts') ||
-    normalized.endsWith('/node_modules/.bin/sb') ||
-    normalized.endsWith('/sb') ||
-    /^sb(?:[-_.][a-z0-9_-]+)?$/i.test(baseName)
+    normalized.endsWith('/node_modules/.bin/ink') ||
+    normalized.endsWith('/ink') ||
+    /^ink(?:[-_.][a-z0-9_-]+)?$/i.test(baseName)
   );
 }
 
@@ -1004,8 +1004,8 @@ function buildSbCommandPrefix(path: string): string {
 }
 
 /**
- * Resolve absolute path to the `sb` CLI binary from the main worktree's
- * node_modules/.bin/sb. This ensures hooks work from PM2 and other
+ * Resolve absolute path to the `ink` CLI binary from the main worktree's
+ * node_modules/.bin/ink. This ensures hooks work from PM2 and other
  * environments where ~/.local/bin may not be in PATH.
  */
 function resolveSbBinaryPath(cwd: string): string {
@@ -1016,17 +1016,17 @@ function resolveSbBinaryPath(cwd: string): string {
 
   const worktrees = listWorktreePaths(cwd);
   const mainWorktree = worktrees[0] || cwd;
-  const binPath = join(mainWorktree, 'node_modules', '.bin', 'sb');
+  const binPath = join(mainWorktree, 'node_modules', '.bin', 'ink');
   if (existsSync(binPath)) return buildSbCommandPrefix(binPath);
-  // Fallback: bare `sb` (relies on PATH)
-  return 'sb';
+  // Fallback: bare `ink` (relies on PATH)
+  return 'ink';
 }
 
-/** Check if a hook command is PCP-managed (handles both bare `sb` and absolute paths) */
+/** Check if a hook command is PCP-managed (handles both bare `ink` and absolute paths) */
 function isPcpHookCommand(cmd: string | undefined): boolean {
   if (!cmd) return false;
   return (
-    /\bsb hooks\b/.test(cmd) || PCP_HOOK_SIGNATURES.some((signature) => cmd.includes(signature))
+    /\bink hooks\b/.test(cmd) || PCP_HOOK_SIGNATURES.some((signature) => cmd.includes(signature))
   );
 }
 
@@ -1046,7 +1046,7 @@ function buildManagedHookCommand(sbPath: string, hookName: string, backendName: 
 }
 
 function formatHookHint(backendName: string, hookName: string): string {
-  return `sb hooks ${hookName} --backend ${backendName}`;
+  return `ink hooks ${hookName} --backend ${backendName}`;
 }
 
 function buildClaudeCodeHooks(sbPath: string): Record<string, unknown> {
@@ -1337,7 +1337,7 @@ function removePcpTomlSection(content: string): string {
 
 /**
  * Programmatic hooks installer. Returns the result without printing.
- * Used by `sb hooks install`, `sb studio create`, and `sb init`.
+ * Used by `ink hooks install`, `ink studio create`, and `ink init`.
  */
 export function installHooks(
   cwd: string,
@@ -1575,7 +1575,7 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
 
     if (!existsSync(configPath)) {
       console.log(chalk.yellow('\n  No config file found. Hooks not installed.'));
-      console.log(chalk.dim(`  Run: sb hooks install -b ${backend.name}`));
+      console.log(chalk.dim(`  Run: ink hooks install -b ${backend.name}`));
       console.log('');
       continue;
     }
@@ -1637,7 +1637,7 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
 
     if (!hasHooks) {
       console.log(chalk.yellow('\n  No hooks installed.'));
-      console.log(chalk.dim(`  Run: sb hooks install -b ${backend.name}`));
+      console.log(chalk.dim(`  Run: ink hooks install -b ${backend.name}`));
     }
 
     // Show capabilities
@@ -1746,8 +1746,8 @@ async function postCompactHandler(): Promise<void> {
 
 function resolveLifecycleBackend(cwd: string, backendOverride?: string): HookCapabilities {
   if (backendOverride?.trim()) return getBackendByName(backendOverride.trim());
-  if (process.env.PCP_HOOK_BACKEND?.trim())
-    return getBackendByName(process.env.PCP_HOOK_BACKEND.trim());
+  if (process.env.INK_HOOK_BACKEND?.trim())
+    return getBackendByName(process.env.INK_HOOK_BACKEND.trim());
   return detectBackend(cwd);
 }
 
@@ -1761,13 +1761,13 @@ async function onSessionStartHandler(options?: { backend?: string }): Promise<vo
   hookLog('on_session_start', {
     agentId,
     backend: resolvedBackend.name,
-    hasPcpContextToken: !!process.env.PCP_CONTEXT_TOKEN,
-    hasPcpSessionId: !!process.env.PCP_SESSION_ID,
-    hasPcpStudioId: !!process.env.PCP_STUDIO_ID,
+    hasInkContextToken: !!process.env.INK_CONTEXT_TOKEN,
+    hasInkSessionId: !!process.env.INK_SESSION_ID,
+    hasInkStudioId: !!process.env.INK_STUDIO_ID,
   });
   sbDebugLog('hooks', 'on_session_start_begin', {
     stdinKeys: Object.keys(stdin),
-    hookBackendOverride: options?.backend || process.env.PCP_HOOK_BACKEND || null,
+    hookBackendOverride: options?.backend || process.env.INK_HOOK_BACKEND || null,
   });
 
   let { studioId, studioName, role } = getIdentitySessionContext(cwd);
@@ -1832,7 +1832,7 @@ async function onSessionStartHandler(options?: { backend?: string }): Promise<vo
       if (ws && typeof ws.id === 'string') {
         studioId = ws.id;
         // Persist studioId back to identity.json for future sessions
-        const identityPath = join(cwd, '.pcp', 'identity.json');
+        const identityPath = join(cwd, '.ink', 'identity.json');
         if (existsSync(identityPath)) {
           try {
             const identityData = JSON.parse(readFileSync(identityPath, 'utf-8'));
@@ -1877,8 +1877,8 @@ async function onSessionStartHandler(options?: { backend?: string }): Promise<vo
   let pcpSessionId: string | undefined;
   let pcpThreadKey: string | undefined;
   // If provided by sb launcher, prefer that explicit session id.
-  if (process.env.PCP_SESSION_ID) {
-    pcpSessionId = process.env.PCP_SESSION_ID;
+  if (process.env.INK_SESSION_ID) {
+    pcpSessionId = process.env.INK_SESSION_ID;
   }
 
   try {

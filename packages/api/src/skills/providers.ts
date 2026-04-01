@@ -4,7 +4,7 @@
  * Phase 1 provider abstraction for loading user skills from deterministic sources.
  * Current providers:
  * - cloud: PCP skills registry installations
- * - local: ~/.pcp/skills filesystem directory
+ * - local: ~/.ink/skills filesystem directory
  */
 
 import { SkillsRepository } from './repository';
@@ -51,7 +51,7 @@ export function cloudInstalledSkillToLoaded(cloud: UserInstalledSkill): LoadedSk
 }
 
 /**
- * Local filesystem provider (~/.pcp/skills + builtin)
+ * Local filesystem provider (~/.ink/skills + builtin)
  */
 export class LocalSkillSourceProvider implements SkillSourceProvider {
   readonly id: SkillSourceId = 'local';

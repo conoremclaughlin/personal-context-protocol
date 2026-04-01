@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextRequest } from 'next/server';
 
-const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const BASE_PORT = Number(process.env.INK_PORT_BASE || 3001);
 const WEB_PORT = BASE_PORT + 1;
 const MCP_PORT = BASE_PORT;
 const WEB_ORIGIN = `http://localhost:${WEB_PORT}`;

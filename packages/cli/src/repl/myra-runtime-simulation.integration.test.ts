@@ -11,11 +11,11 @@
  * Steps 1-4 are fully automated. Step 5 requires SEND_TELEGRAM=true env var.
  *
  * Run with:
- *   PCP_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
+ *   INK_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
  *     packages/cli/src/repl/myra-runtime-simulation.integration.test.ts
  *
  * To also send a Telegram message:
- *   SEND_TELEGRAM=true PCP_SERVER_URL=http://localhost:3001 npx vitest run ...
+ *   SEND_TELEGRAM=true INK_SERVER_URL=http://localhost:3001 npx vitest run ...
  */
 
 import { describe, expect, it } from 'vitest';
@@ -28,7 +28,7 @@ import { handleClientLocalTool, isClientLocalTool } from './context-tools.js';
 
 // ─── Config ─────────────────────────────────────────────────────
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 const SEND_TELEGRAM = process.env.SEND_TELEGRAM === 'true';
 const AGENT_ID = 'myra';
 
@@ -44,7 +44,7 @@ try {
 
 async function createPcpClient() {
   const { PcpClient } = await import('../lib/pcp-client.js');
-  const authPath = join(process.env.HOME || '', '.pcp', 'auth.json');
+  const authPath = join(process.env.HOME || '', '.ink', 'auth.json');
   return new PcpClient(PCP_URL, authPath);
 }
 
@@ -240,8 +240,8 @@ describe('Myra simulation: Phase 4 — Context Management', () => {
     ];
 
     // Add some tool results to simulate real heartbeat
-    ledger.addEntry('system', 'get_inbox result: 3 messages from wren, lumen, conor', 'pcp-tool');
-    ledger.addEntry('system', 'list_emails result: 2 unread deployment emails', 'pcp-tool');
+    ledger.addEntry('system', 'get_inbox result: 3 messages from wren, lumen, conor', 'ink-tool');
+    ledger.addEntry('system', 'list_emails result: 2 unread deployment emails', 'ink-tool');
 
     for (let i = 0; i < turns.length; i++) {
       ledger.addEntry('user', turns[i].user);
@@ -270,7 +270,7 @@ describe('Myra simulation: Phase 4 — Context Management', () => {
     console.log(`  Sources: ${JSON.stringify(listParsed.bySource)}`);
 
     // Step 4: Evict stale tool results (simulating Myra cleaning up after heartbeat)
-    const evictResult = handleClientLocalTool('evict_context', { source: 'pcp-tool' }, ledger);
+    const evictResult = handleClientLocalTool('evict_context', { source: 'ink-tool' }, ledger);
     const evictParsed = JSON.parse((evictResult!.content as Array<{ text: string }>)[0].text);
 
     console.log(
@@ -279,7 +279,7 @@ describe('Myra simulation: Phase 4 — Context Management', () => {
 
     // Step 5: Verify clean state
     const afterEvict = ledger.listEntries();
-    expect(afterEvict.every((e) => e.source !== 'pcp-tool')).toBe(true);
+    expect(afterEvict.every((e) => e.source !== 'ink-tool')).toBe(true);
 
     // Step 6: Evict passive recall entries too
     const recallEvict = handleClientLocalTool(
@@ -396,7 +396,7 @@ describe('Myra simulation: Phase 6 — Full Heartbeat Cycle', () => {
     if (messages.length > 0) {
       for (const msg of messages.slice(0, 3)) {
         const content = `From ${msg.senderAgentId || 'unknown'}: ${((msg.content as string) || '').slice(0, 200)}`;
-        ledger.addEntry('inbox', content, 'pcp-inbox');
+        ledger.addEntry('inbox', content, 'inkmail');
       }
     }
 
@@ -415,7 +415,7 @@ describe('Myra simulation: Phase 6 — Full Heartbeat Cycle', () => {
     console.log(`  4. Passive recall: +${turnResult.injected} memories`);
 
     // 8. Evict processed inbox
-    const evictResult = handleClientLocalTool('evict_context', { source: 'pcp-inbox' }, ledger);
+    const evictResult = handleClientLocalTool('evict_context', { source: 'inkmail' }, ledger);
     const evictParsed = JSON.parse((evictResult!.content as Array<{ text: string }>)[0].text);
     console.log(`  5. Evicted ${evictParsed.evicted} inbox entries`);
 
@@ -429,7 +429,7 @@ describe('Myra simulation: Phase 6 — Full Heartbeat Cycle', () => {
     console.log(`     Sources: ${[...new Set(finalEntries.map((e) => e.source))].join(', ')}`);
 
     // Verify: inbox is gone, user/assistant preserved
-    expect(finalEntries.every((e) => e.source !== 'pcp-inbox')).toBe(true);
+    expect(finalEntries.every((e) => e.source !== 'inkmail')).toBe(true);
     expect(finalEntries.some((e) => e.role === 'user')).toBe(true);
     expect(finalEntries.some((e) => e.role === 'assistant')).toBe(true);
 

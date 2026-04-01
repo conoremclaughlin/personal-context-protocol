@@ -11,7 +11,7 @@ import { createServerClient } from '@supabase/ssr';
 import { NextRequest } from 'next/server';
 import { updateSession } from '@/lib/supabase/middleware';
 
-const BASE_PORT = Number(process.env.PCP_PORT_BASE || 3001);
+const BASE_PORT = Number(process.env.INK_PORT_BASE || 3001);
 const WEB_PORT = BASE_PORT + 1;
 const WEB_ORIGIN = `http://localhost:${WEB_PORT}`;
 

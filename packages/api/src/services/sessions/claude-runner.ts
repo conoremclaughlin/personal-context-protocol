@@ -23,7 +23,7 @@ import {
   injectSessionHeaders,
   buildSessionEnv,
   writeRuntimeSessionHint,
-} from '@personal-context/shared';
+} from '@inkstand/shared';
 
 /** Maximum time (ms) to wait for a Claude Code subprocess before killing it.
  *  Override with CLAUDE_PROCESS_TIMEOUT_MS env var. */
@@ -220,11 +220,11 @@ export class ClaudeRunner implements IRunner {
           PATH: buildSpawnPath(claudeBin),
           // Agent identity — hooks resolve identity from $AGENT_ID.
           // Without this, hooks in cross-agent studios (e.g., Myra triggered
-          // in Wren's worktree) fall back to .pcp/identity.json and get the
+          // in Wren's worktree) fall back to .ink/identity.json and get the
           // wrong agent ID.
           ...(config.agentId ? { AGENT_ID: config.agentId } : {}),
-          // Session env vars: PCP_SESSION_ID for ${VAR} interpolation in
-          // .mcp.json headers, PCP_RUNTIME_LINK_ID for hook hint matching.
+          // Session env vars: INK_SESSION_ID for ${VAR} interpolation in
+          // .mcp.json headers, INK_RUNTIME_LINK_ID for hook hint matching.
           ...buildSessionEnv({
             pcpSessionId: config.pcpSessionId,
             runtimeLinkId: config.pcpSessionId ? runtimeLinkId : undefined,
@@ -439,7 +439,7 @@ export class ClaudeRunner implements IRunner {
       const toolName = event.name as string;
       const input = event.input as Record<string, unknown>;
 
-      if (toolName === 'mcp__pcp__send_response') {
+      if (toolName === 'mcp__inkstand__send_response') {
         const channel = (input.channel as ChannelType) || 'telegram';
         const response: ChannelResponse = {
           channel,
@@ -481,7 +481,7 @@ export function buildIdentityPrompt(
 
 When calling PCP tools (bootstrap, remember, recall, start_session, etc.), use \`agentId: "${agentId}"\`.
 
-Do NOT read \`.pcp/identity.json\` — your identity is set by this system prompt.
+Do NOT read \`.ink/identity.json\` — your identity is set by this system prompt.
 Do NOT run \`echo $AGENT_ID\` — you are running headlessly without shell access.`;
 
   // Session identity — always in context for debugging and routing verification

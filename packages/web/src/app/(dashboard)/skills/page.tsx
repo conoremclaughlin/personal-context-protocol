@@ -340,7 +340,7 @@ export default function SkillsPage() {
             <p className="text-gray-500 font-medium">No skills found</p>
             <p className="text-sm text-gray-400 mt-1 mb-4">
               Get started by adding skills to{' '}
-              <code className="bg-gray-100 px-1 rounded">~/.pcp/skills/</code>
+              <code className="bg-gray-100 px-1 rounded">~/.ink/skills/</code>
             </p>
             <div className="flex justify-center gap-3">
               <Button variant="outline" size="sm" onClick={() => setShowAddSkills(true)}>
@@ -511,7 +511,7 @@ export default function SkillsPage() {
                 <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg">
                   <Folder className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
                   <div>
-                    <code className="text-sm font-mono text-gray-800">~/.pcp/skills/</code>
+                    <code className="text-sm font-mono text-gray-800">~/.ink/skills/</code>
                     <p className="text-xs text-gray-500 mt-1">Your custom and downloaded skills</p>
                   </div>
                 </div>
@@ -538,7 +538,7 @@ export default function SkillsPage() {
                     <span className="font-medium">From GitHub</span>
                   </div>
                   <p className="text-sm text-gray-600 mb-3">Clone a skill repository directly:</p>
-                  <CodeBlock>{`cd ~/.pcp/skills
+                  <CodeBlock>{`cd ~/.ink/skills
 git clone https://github.com/user/skill-name`}</CodeBlock>
                 </div>
 
@@ -549,7 +549,7 @@ git clone https://github.com/user/skill-name`}</CodeBlock>
                     <span className="font-medium">Single File</span>
                   </div>
                   <p className="text-sm text-gray-600 mb-3">Download a SKILL.md file directly:</p>
-                  <CodeBlock>{`curl -o ~/.pcp/skills/my-skill.md \\
+                  <CodeBlock>{`curl -o ~/.ink/skills/my-skill.md \\
   https://example.com/SKILL.md`}</CodeBlock>
                 </div>
               </div>
@@ -561,7 +561,7 @@ git clone https://github.com/user/skill-name`}</CodeBlock>
               <p className="text-sm text-gray-600 mb-3">
                 Skills are markdown files with YAML frontmatter. Here's a minimal example:
               </p>
-              <CodeBlock>{`# ~/.pcp/skills/my-skill.md
+              <CodeBlock>{`# ~/.ink/skills/my-skill.md
 ---
 name: my-skill
 version: "1.0.0"

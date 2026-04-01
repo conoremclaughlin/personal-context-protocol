@@ -3,7 +3,7 @@
  *
  * Manage product-level workspaces (personal/team scope) — the top-level
  * container for artifacts, team SBs, reminders, and more.
- * Distinct from local git worktree studios (`sb studio ...`).
+ * Distinct from local git worktree studios (`ink studio ...`).
  */
 
 import { Command } from 'commander';
@@ -55,7 +55,7 @@ interface GetWorkspaceResult {
 }
 
 function getConfigPath(): string {
-  return join(homedir(), '.pcp', 'config.json');
+  return join(homedir(), '.ink', 'config.json');
 }
 
 function getPcpConfig(): PcpConfig | null {
@@ -71,7 +71,7 @@ function getPcpConfig(): PcpConfig | null {
 
 function savePcpConfig(config: PcpConfig): void {
   const configPath = getConfigPath();
-  const configDir = join(homedir(), '.pcp');
+  const configDir = join(homedir(), '.ink');
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true });
   }
@@ -85,7 +85,7 @@ async function listWorkspaces(options: {
 }): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -132,7 +132,7 @@ async function listWorkspaces(options: {
 async function useWorkspace(workspaceRef: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -182,7 +182,7 @@ async function createWorkspace(
 ): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -221,7 +221,7 @@ async function inviteWorkspaceMember(
 ): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -261,14 +261,14 @@ async function inviteWorkspaceMember(
 async function listWorkspaceMembers(workspaceRef?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
   const targetRef = workspaceRef || config.workspaceId;
   if (!targetRef) {
     console.error(
-      chalk.red('No workspace selected. Pass <id-or-slug> or run `sb workspace use` first.')
+      chalk.red('No workspace selected. Pass <id-or-slug> or run `ink workspace use` first.')
     );
     process.exit(1);
   }
@@ -312,13 +312,13 @@ async function listWorkspaceMembers(workspaceRef?: string): Promise<void> {
 function currentWorkspace(): void {
   const config = getPcpConfig();
   if (!config) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
   if (!config.workspaceId) {
     console.log(chalk.yellow('No workspace selected.'));
-    console.log(chalk.dim('Use `sb workspace use <id-or-slug>` to select one.'));
+    console.log(chalk.dim('Use `ink workspace use <id-or-slug>` to select one.'));
     return;
   }
 

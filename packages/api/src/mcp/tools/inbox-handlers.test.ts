@@ -796,7 +796,7 @@ describe('Reply Routing — sender session fallback behavior', () => {
     });
     const mockDc = createThreadMockDataComposer(mockSb);
 
-    // No request context (simulates missing x-pcp-session-id header)
+    // No request context (simulates missing x-ink-session-id header)
     const { getRequestContext, getSessionContext } = await import('../../utils/request-context');
     vi.mocked(getRequestContext).mockReturnValue(undefined as never);
     vi.mocked(getSessionContext).mockReturnValue(undefined as never);
@@ -920,7 +920,7 @@ describe('Reply Routing — sender session fallback behavior', () => {
     });
     const mockDc = createThreadMockDataComposer(mockSb);
 
-    // Request context provides sessionId (from x-pcp-session-id header)
+    // Request context provides sessionId (from x-ink-session-id header)
     const { getRequestContext } = await import('../../utils/request-context');
     vi.mocked(getRequestContext).mockReturnValue({
       sessionId: 'header-session-xyz',

@@ -7,9 +7,9 @@
  * with the chosen backend.
  *
  * Usage:
- *   sb awaken                     Awaken on default backend (claude)
- *   sb awaken --backend gemini    Awaken on Gemini
- *   sb awaken -b codex            Awaken on Codex
+ *   ink awaken                     Awaken on default backend (claude)
+ *   ink awaken --backend gemini    Awaken on Gemini
+ *   ink awaken -b codex            Awaken on Codex
  */
 
 import { Command } from 'commander';
@@ -212,7 +212,7 @@ function buildAwakeningPrompt(
 async function awakenCommand(options: { backend: string; verbose: boolean }): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -345,11 +345,11 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
     )
   );
 
-  // 5. Resolve PCP auth token (same as sb chat) so MCP tools work
+  // 5. Resolve PCP auth token (same as ink chat) so MCP tools work
   const authEnv: Record<string, string> = {};
   try {
-    const token = await getValidAccessToken(process.env.PCP_SERVER_URL || 'http://localhost:3001');
-    if (token) authEnv.PCP_ACCESS_TOKEN = token;
+    const token = await getValidAccessToken(process.env.INK_SERVER_URL || 'http://localhost:3001');
+    if (token) authEnv.INK_ACCESS_TOKEN = token;
   } catch {
     // Auth is best-effort — the backend can fall back to MCP OAuth
   }
@@ -373,10 +373,10 @@ async function awakenCommand(options: { backend: string; verbose: boolean }): Pr
     console.log(
       chalk.dim("If they didn't call choose_name() during the session, you can save manually:")
     );
-    console.log(chalk.dim(`  sb identity save --agent <chosen-name> --backend ${backendName}\n`));
+    console.log(chalk.dim(`  ink identity save --agent <chosen-name> --backend ${backendName}\n`));
 
     console.log(chalk.cyan('Set up role-based studios for your new SB:'));
-    console.log(chalk.dim('  sb studio setup <agent-name>'));
+    console.log(chalk.dim('  ink studio setup <agent-name>'));
     console.log(
       chalk.dim('  Creates review, build, and product studios with pre-configured ROLE.md files.\n')
     );

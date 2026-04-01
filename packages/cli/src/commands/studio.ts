@@ -11,7 +11,7 @@
  *   studio clean <name>    Remove studio and delete branch
  *   studio status          Show status of all studios
  *   studio path <name>     Output studio path (for cd)
- *   studio cd <name>       Print cd command (use with: eval $(sb studio cd foo))
+ *   studio cd <name>       Print cd command (use with: eval $(ink studio cd foo))
  */
 
 import { Command } from 'commander';
@@ -153,7 +153,7 @@ function branchExists(branch: string, cwd?: string): boolean {
 }
 
 function getCurrentUser(): string | undefined {
-  const pcpConfigPath = join(homedir(), '.pcp', 'config.json');
+  const pcpConfigPath = join(homedir(), '.ink', 'config.json');
   if (existsSync(pcpConfigPath)) {
     try {
       const config = JSON.parse(readFileSync(pcpConfigPath, 'utf-8'));
@@ -188,7 +188,7 @@ function listStudios(gitRoot: string): StudioInfo[] {
         if (!branch) continue;
 
         let identity: StudioIdentity | undefined;
-        const identityPath = join(wsPath, '.pcp', 'identity.json');
+        const identityPath = join(wsPath, '.ink', 'identity.json');
         if (existsSync(identityPath)) {
           try {
             identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
@@ -372,7 +372,7 @@ async function runInteractiveFlow(agentId: string, gitRoot: string): Promise<Int
  *
  * - .claude/ is always copied as-is (hand-authored permissions)
  * - .codex/, .gemini/ — if .mcp.json exists in the target, regenerate via syncMcpConfig instead
- * - .pcp/identity.json is always freshly written (never copied)
+ * - .ink/identity.json is always freshly written (never copied)
  */
 function copyConfigDirs(sourceRoot: string, wsPath: string, dirs: string[]): void {
   for (const dir of dirs) {
@@ -477,7 +477,7 @@ function isValidTemplateName(name: string): boolean {
 
 /**
  * Resolve a role template ROLE.md by name.
- * Checks: built-in templates → ~/.pcp/studio-templates/<name>/ROLE.md
+ * Checks: built-in templates → ~/.ink/studio-templates/<name>/ROLE.md
  * Returns the ROLE.md content, or null if not found.
  *
  * Built-in templates are sourced from packages/templates/studio-roles/ and
@@ -504,7 +504,7 @@ function resolveRoleTemplate(templateName: string): string | null {
   if (existsSync(srcPath)) return readFileSync(srcPath, 'utf-8');
 
   // User-defined templates
-  const userPath = join(homedir(), '.pcp', 'studio-templates', templateName, 'ROLE.md');
+  const userPath = join(homedir(), '.ink', 'studio-templates', templateName, 'ROLE.md');
   if (existsSync(userPath)) return readFileSync(userPath, 'utf-8');
 
   return null;
@@ -516,7 +516,7 @@ function resolveRoleTemplate(templateName: string): string | null {
 function listRoleTemplates(): string[] {
   const templates = new Set<string>(BUILTIN_ROLE_TEMPLATES);
 
-  const userTemplatesDir = join(homedir(), '.pcp', 'studio-templates');
+  const userTemplatesDir = join(homedir(), '.ink', 'studio-templates');
   if (existsSync(userTemplatesDir)) {
     for (const entry of readdirSync(userTemplatesDir, { withFileTypes: true })) {
       if (entry.isDirectory() && existsSync(join(userTemplatesDir, entry.name, 'ROLE.md'))) {
@@ -579,7 +579,7 @@ function updateIdentityForStudioRename(
   to: string,
   branchRename?: StudioBranchRenamePlan
 ): boolean {
-  const identityPath = join(wsPath, '.pcp', 'identity.json');
+  const identityPath = join(wsPath, '.ink', 'identity.json');
   if (!existsSync(identityPath)) return false;
 
   try {
@@ -670,8 +670,8 @@ async function initStudio(
 ): Promise<void> {
   if (!parentName) {
     console.error(chalk.red('Error: Parent directory name is required.'));
-    console.error(chalk.dim('Usage: sb studio init <parent-name>'));
-    console.error(chalk.dim('Example: sb studio init pcp'));
+    console.error(chalk.dim('Usage: ink studio init <parent-name>'));
+    console.error(chalk.dim('Example: ink studio init pcp'));
     process.exit(1);
   }
 
@@ -799,7 +799,7 @@ async function createStudio(
     console.log(chalk.dim('  Branch: ') + branch);
     console.log(chalk.dim('  Agent:  ') + agentId);
     if (options.template) {
-      console.log(chalk.dim('  Role:   ') + options.template + chalk.dim(' (.pcp/ROLE.md)'));
+      console.log(chalk.dim('  Role:   ') + options.template + chalk.dim(' (.ink/ROLE.md)'));
     }
     if (configDirsList.length > 0) {
       console.log(chalk.dim('  Config: ') + configDirsList.join(', '));
@@ -815,17 +815,17 @@ async function createStudio(
     }
     console.log('');
     console.log(chalk.cyan('To start working:'));
-    console.log(chalk.dim(`  cd ${wsPath} && sb`));
+    console.log(chalk.dim(`  cd ${wsPath} && ink`));
     console.log('');
     console.log(chalk.cyan('Or use:'));
-    console.log(chalk.dim(`  eval $(sb studio cd ${name})`));
+    console.log(chalk.dim(`  eval $(ink studio cd ${name})`));
   } catch (error) {
     spinner.fail(`Failed to create studio: ${error}`);
     process.exit(1);
   }
 }
 
-/** Default studio set for `sb studio setup`. */
+/** Default studio set for `ink studio setup`. */
 const DEFAULT_STUDIO_SET: Array<{ suffix: string; template: string; purpose: string }> = [
   { suffix: 'review', template: 'reviewer', purpose: 'Code review and quality assurance' },
   { suffix: 'build', template: 'builder', purpose: 'Feature development and bug fixes' },
@@ -964,7 +964,7 @@ async function createStudioInner(
   }
 
   // PCP identity
-  const pcpDir = join(wsPath, '.pcp');
+  const pcpDir = join(wsPath, '.ink');
   mkdirSync(pcpDir, { recursive: true });
 
   let identityId: string | undefined;
@@ -1032,7 +1032,7 @@ async function renameStudio(from: string, to: string): Promise<void> {
     let studioId: string | undefined;
     let branchRenamePlan: StudioBranchRenamePlan | null = null;
     try {
-      const identityPath = join(fromPath, '.pcp', 'identity.json');
+      const identityPath = join(fromPath, '.ink', 'identity.json');
       if (existsSync(identityPath)) {
         const identity = JSON.parse(readFileSync(identityPath, 'utf-8')) as RenameIdentity;
         studioId = identity.studioId;
@@ -1096,7 +1096,7 @@ async function renameStudio(from: string, to: string): Promise<void> {
         (branchRenamed ? chalk.dim(' (renamed default home branch)') : chalk.dim(' (unchanged)'))
     );
     if (updatedIdentity) {
-      console.log(chalk.dim('  Identity updated: ') + chalk.green('.pcp/identity.json'));
+      console.log(chalk.dim('  Identity updated: ') + chalk.green('.ink/identity.json'));
     }
   } catch (error) {
     spinner.fail(
@@ -1112,7 +1112,7 @@ function listCommand(): void {
 
   if (studios.length === 0) {
     console.log(chalk.yellow('No studios found.'));
-    console.log(chalk.dim('Create one with: sb studio create <name>'));
+    console.log(chalk.dim('Create one with: ink studio create <name>'));
     return;
   }
 
@@ -1150,7 +1150,7 @@ async function removeStudio(name: string): Promise<void> {
     if (removedKind === 'folder') {
       console.log(chalk.dim('  Removed stale folder (not registered as a git worktree).'));
     }
-    console.log(chalk.dim('  Branch kept for PR. Use "sb studio clean" to also delete branch.'));
+    console.log(chalk.dim('  Branch kept for PR. Use "ink studio clean" to also delete branch.'));
   } catch (error) {
     spinner.fail(`Failed to remove studio: ${error}`);
     process.exit(1);
@@ -1166,7 +1166,7 @@ async function cleanStudio(name: string): Promise<void> {
 
     // Read branch from identity.json if available, fall back to git worktree list
     let branch: string | undefined;
-    const identityPath = join(wsPath, '.pcp', 'identity.json');
+    const identityPath = join(wsPath, '.ink', 'identity.json');
     if (existsSync(identityPath)) {
       try {
         const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
@@ -1279,7 +1279,7 @@ function resolveCliRoot(): string {
       if (existsSync(pkgPath)) {
         try {
           const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
-          if (pkg.name === '@personal-context/cli') return candidate;
+          if (pkg.name === '@inkstand/cli') return candidate;
         } catch {
           // continue
         }
@@ -1288,16 +1288,16 @@ function resolveCliRoot(): string {
     if (dir === root) break;
     dir = dirname(dir);
   }
-  throw new Error('Could not find @personal-context/cli package. Run from within the repo.');
+  throw new Error('Could not find @inkstand/cli package. Run from within the repo.');
 }
 
 function resolveDefaultCliName(): string {
   const cwd = process.cwd();
-  const identityPath = join(cwd, '.pcp', 'identity.json');
+  const identityPath = join(cwd, '.ink', 'identity.json');
   if (existsSync(identityPath)) {
     try {
       const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
-      if (identity.agentId) return `sb-${identity.agentId}`;
+      if (identity.agentId) return `ink-${identity.agentId}`;
     } catch {
       // fall through
     }
@@ -1305,8 +1305,8 @@ function resolveDefaultCliName(): string {
   // Fall back to directory-based name
   const dirName = basename(cwd);
   const match = dirName.match(/--(.+)$/);
-  if (match) return `sb-${match[1]}`;
-  return 'sb-dev';
+  if (match) return `ink-${match[1]}`;
+  return 'ink-dev';
 }
 
 type CliLinkTargets = {
@@ -1317,7 +1317,7 @@ type CliLinkTargets = {
 };
 
 function getCliLinkTargets(homeDir: string, name: string): CliLinkTargets {
-  const primaryBinDir = join(homeDir, '.pcp', 'bin');
+  const primaryBinDir = join(homeDir, '.ink', 'bin');
   const compatBinDir = join(homeDir, '.local', 'bin');
   return {
     primaryBinDir,
@@ -1428,7 +1428,7 @@ async function cliLinkCommand(options: { name?: string; unlink?: boolean }): Pro
     console.log('');
     console.log(chalk.dim(`  Test it: ${name} --help`));
     console.log(
-      chalk.dim(`  Remove:  sb studio cli --unlink${options.name ? ` --name ${name}` : ''}`)
+      chalk.dim(`  Remove:  ink studio cli --unlink${options.name ? ` --name ${name}` : ''}`)
     );
   } catch (error) {
     spinner.fail(`Failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -1561,7 +1561,7 @@ export function registerStudioCommands(program: Command): void {
 
   studio
     .command('cd <name>')
-    .description('Output cd command (use with: eval $(sb studio cd <name>))')
+    .description('Output cd command (use with: eval $(ink studio cd <name>))')
     .action(cdCommand);
 
   studio
@@ -1580,8 +1580,8 @@ export function registerStudioCommands(program: Command): void {
 
   studio
     .command('cli')
-    .description('Build CLI and link as a named binary in ~/.pcp/bin (default: sb-<agent>)')
-    .option('-n, --name <name>', 'Binary name (default: sb-<agent> from .pcp/identity.json)')
+    .description('Build CLI and link as a named binary in ~/.ink/bin (default: ink-<agent>)')
+    .option('-n, --name <name>', 'Binary name (default: ink-<agent> from .ink/identity.json)')
     .option('--unlink', 'Remove the linked binary instead of creating it')
     .action(cliLinkCommand);
 

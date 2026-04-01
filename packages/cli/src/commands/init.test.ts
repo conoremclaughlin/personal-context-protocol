@@ -1,7 +1,7 @@
 /**
  * Init Command Tests
  *
- * Tests for sb init: .pcp/ creation, .mcp.json setup,
+ * Tests for ink init: .ink/ creation, .mcp.json setup,
  * hooks installation, and idempotency.
  */
 
@@ -27,19 +27,19 @@ afterEach(() => {
 });
 
 // ============================================================================
-// .pcp/ directory
+// .ink/ directory
 // ============================================================================
 
-describe('init: .pcp/ directory', () => {
-  it('should create .pcp/ if it does not exist', () => {
-    const pcpDir = join(TEST_DIR, '.pcp');
+describe('init: .ink/ directory', () => {
+  it('should create .ink/ if it does not exist', () => {
+    const pcpDir = join(TEST_DIR, '.ink');
     expect(existsSync(pcpDir)).toBe(false);
     mkdirSync(pcpDir, { recursive: true });
     expect(existsSync(pcpDir)).toBe(true);
   });
 
-  it('should be idempotent if .pcp/ already exists', () => {
-    const pcpDir = join(TEST_DIR, '.pcp');
+  it('should be idempotent if .ink/ already exists', () => {
+    const pcpDir = join(TEST_DIR, '.ink');
     mkdirSync(pcpDir, { recursive: true });
     writeFileSync(join(pcpDir, 'identity.json'), JSON.stringify({ agentId: 'wren' }));
 
@@ -56,24 +56,24 @@ describe('init: .pcp/ directory', () => {
 // ============================================================================
 
 describe('init: .mcp.json', () => {
-  it('should create .mcp.json with pcp server when none exists', () => {
+  it('should create .mcp.json with inkstand server when none exists', () => {
     const mcpPath = join(TEST_DIR, '.mcp.json');
     expect(existsSync(mcpPath)).toBe(false);
 
     // Simulate init logic
     const defaultMcp = {
       mcpServers: {
-        pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+        inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
       },
     };
     writeFileSync(mcpPath, JSON.stringify(defaultMcp, null, 2) + '\n');
 
     expect(existsSync(mcpPath)).toBe(true);
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    expect(config.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+    expect(config.mcpServers.inkstand.url).toBe('http://localhost:3001/mcp');
   });
 
-  it('should add pcp server to existing .mcp.json without it', () => {
+  it('should add inkstand server to existing .mcp.json without it', () => {
     const mcpPath = join(TEST_DIR, '.mcp.json');
     writeFileSync(
       mcpPath,
@@ -84,34 +84,34 @@ describe('init: .mcp.json', () => {
       })
     );
 
-    // Simulate init logic: add pcp server
+    // Simulate init logic: add inkstand server
     const existing = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    if (!existing.mcpServers.pcp) {
-      existing.mcpServers.pcp = { type: 'http', url: 'http://localhost:3001/mcp' };
+    if (!existing.mcpServers.inkstand) {
+      existing.mcpServers.inkstand = { type: 'http', url: 'http://localhost:3001/mcp' };
       writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
     }
 
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
     expect(config.mcpServers.supabase.url).toBe('https://supabase.example.com/mcp');
-    expect(config.mcpServers.pcp.url).toBe('http://localhost:3001/mcp');
+    expect(config.mcpServers.inkstand.url).toBe('http://localhost:3001/mcp');
   });
 
-  it('should not modify .mcp.json if pcp server already exists', () => {
+  it('should not modify .mcp.json if inkstand server already exists', () => {
     const mcpPath = join(TEST_DIR, '.mcp.json');
     const original = {
       mcpServers: {
-        pcp: { type: 'http', url: 'http://custom-server:4000/mcp' },
+        inkstand: { type: 'http', url: 'http://custom-server:4000/mcp' },
       },
     };
     writeFileSync(mcpPath, JSON.stringify(original, null, 2) + '\n');
 
-    // Simulate init logic: skip if pcp exists
+    // Simulate init logic: skip if inkstand exists
     const existing = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    expect(existing.mcpServers.pcp).toBeDefined();
+    expect(existing.mcpServers.inkstand).toBeDefined();
 
     // Verify it wasn't changed
     const config = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-    expect(config.mcpServers.pcp.url).toBe('http://custom-server:4000/mcp');
+    expect(config.mcpServers.inkstand.url).toBe('http://custom-server:4000/mcp');
   });
 });
 
@@ -161,7 +161,7 @@ describe('init: backend config sync', () => {
     writeFileSync(
       join(TEST_DIR, '.mcp.json'),
       JSON.stringify({
-        mcpServers: { pcp: { type: 'http', url: 'http://localhost:3001/mcp' } },
+        mcpServers: { inkstand: { type: 'http', url: 'http://localhost:3001/mcp' } },
       })
     );
 
@@ -191,8 +191,8 @@ describe('init: full flow idempotency', () => {
     hooks: string;
     sync: boolean;
   } {
-    // Step 1: .pcp/
-    const pcpDir = join(cwd, '.pcp');
+    // Step 1: .ink/
+    const pcpDir = join(cwd, '.ink');
     const pcpResult = existsSync(pcpDir) ? 'exists' as const : 'created' as const;
     mkdirSync(pcpDir, { recursive: true });
 
@@ -203,16 +203,16 @@ describe('init: full flow idempotency', () => {
       writeFileSync(
         mcpPath,
         JSON.stringify({
-          mcpServers: { pcp: { type: 'http', url: 'http://localhost:3001/mcp' } },
+          mcpServers: { inkstand: { type: 'http', url: 'http://localhost:3001/mcp' } },
         }, null, 2) + '\n'
       );
       mcpResult = 'created';
     } else {
       const existing = JSON.parse(readFileSync(mcpPath, 'utf-8'));
-      if (existing.mcpServers?.pcp) {
+      if (existing.mcpServers?.inkstand) {
         mcpResult = 'exists';
       } else {
-        existing.mcpServers = { ...(existing.mcpServers || {}), pcp: { type: 'http', url: 'http://localhost:3001/mcp' } };
+        existing.mcpServers = { ...(existing.mcpServers || {}), inkstand: { type: 'http', url: 'http://localhost:3001/mcp' } };
         writeFileSync(mcpPath, JSON.stringify(existing, null, 2) + '\n');
         mcpResult = 'updated';
       }
@@ -264,6 +264,6 @@ describe('init: full flow idempotency', () => {
 
     const config = JSON.parse(readFileSync(join(TEST_DIR, '.mcp.json'), 'utf-8'));
     expect(config.mcpServers.supabase).toBeDefined();
-    expect(config.mcpServers.pcp).toBeDefined();
+    expect(config.mcpServers.inkstand).toBeDefined();
   });
 });

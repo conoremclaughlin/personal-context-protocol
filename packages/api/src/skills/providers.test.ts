@@ -21,7 +21,7 @@ describe('skill providers', () => {
   describe('mergeSkillsByPriority', () => {
     it('applies deterministic source precedence (later source overrides earlier)', () => {
       const cloudSkill = makeLoadedSkill('shared-skill', 'cloud://abc');
-      const localSkill = makeLoadedSkill('shared-skill', '/Users/test/.pcp/skills/shared-skill.md');
+      const localSkill = makeLoadedSkill('shared-skill', '/Users/test/.ink/skills/shared-skill.md');
 
       const merged = mergeSkillsByPriority(
         [
@@ -32,7 +32,7 @@ describe('skill providers', () => {
       );
 
       expect(merged).toHaveLength(1);
-      expect(merged[0].sourcePath).toBe('/Users/test/.pcp/skills/shared-skill.md');
+      expect(merged[0].sourcePath).toBe('/Users/test/.ink/skills/shared-skill.md');
     });
 
     it('returns deterministic alphabetical ordering of final skills', () => {

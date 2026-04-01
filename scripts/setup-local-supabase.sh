@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${PCP_ENV_FILE:-${ROOT_DIR}/.env.local}"
+ENV_FILE="${INK_ENV_FILE:-${ROOT_DIR}/.env.local}"
 
 require_cmd() {
   local cmd="$1"

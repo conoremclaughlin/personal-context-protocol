@@ -138,7 +138,7 @@ function sanitizeSlug(value: string): string {
 function buildContainerName(context: StudioSandboxContext): string {
   const label = sanitizeSlug(context.studioName || basename(context.studioPath) || 'studio');
   const digest = createHash('sha256').update(context.studioPath).digest('hex').slice(0, 10);
-  return `pcp-studio-sandbox-${label}-${digest}`;
+  return `ink-studio-sandbox-${label}-${digest}`;
 }
 
 function rewriteLoopbackUrl(rawUrl: string): string {
@@ -160,7 +160,7 @@ function rewriteLoopbackUrl(rawUrl: string): string {
 }
 
 function resolveSandboxServerUrl(): string {
-  return rewriteLoopbackUrl(process.env.PCP_SERVER_URL || 'http://localhost:3001').replace(
+  return rewriteLoopbackUrl(process.env.INK_SERVER_URL || 'http://localhost:3001').replace(
     /\/+$/,
     ''
   );
@@ -190,7 +190,7 @@ function ensurePatchedMcpConfig(studioPath: string): string | undefined {
 
     if (!modified) return undefined;
 
-    const runtimeDir = join(studioPath, '.pcp', 'runtime', 'studio-sandbox');
+    const runtimeDir = join(studioPath, '.ink', 'runtime', 'studio-sandbox');
     mkdirSync(runtimeDir, { recursive: true });
     const targetPath = join(runtimeDir, 'mcp.docker.json');
     writeFileSync(targetPath, JSON.stringify(parsed, null, 2) + '\n', 'utf-8');
@@ -387,12 +387,12 @@ export function buildStudioSandboxPlan(
     mounts,
     env: {
       HOME: CONTAINER_HOME,
-      PCP_SERVER_URL: resolveSandboxServerUrl(),
+      INK_SERVER_URL: resolveSandboxServerUrl(),
       ...(context.agentId ? { AGENT_ID: context.agentId } : {}),
-      ...(context.studioId ? { PCP_STUDIO_ID: context.studioId } : {}),
-      PCP_SANDBOX: 'docker',
-      PCP_STUDIO_PATH: '/studio',
-      PCP_STUDIOS_PATH: '/studios',
+      ...(context.studioId ? { INK_STUDIO_ID: context.studioId } : {}),
+      INK_SANDBOX: 'docker',
+      INK_STUDIO_PATH: '/studio',
+      INK_STUDIOS_PATH: '/studios',
     },
     ...(patchedMcpConfigPath ? { patchedMcpConfigPath } : {}),
   };
@@ -585,7 +585,7 @@ function shellCommand(options: Record<string, unknown>): void {
 function execCommand(command: string[], options: Record<string, unknown>): void {
   const plan = buildPlanFromCommand(process.cwd(), options);
   if (!inspectContainerName(plan.containerName)) {
-    throw new Error(`Sandbox is not running: ${plan.containerName}. Start it with sb studio sandbox up`);
+    throw new Error(`Sandbox is not running: ${plan.containerName}. Start it with ink studio sandbox up`);
   }
   if (command.length === 0) {
     throw new Error('No command provided for sandbox exec');

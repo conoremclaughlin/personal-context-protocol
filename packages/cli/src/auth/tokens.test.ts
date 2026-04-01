@@ -158,7 +158,7 @@ describe('loadAuth / saveAuth / clearAuth', () => {
 
   beforeEach(() => {
     origHome = process.env.HOME;
-    tempHome = join(tmpdir(), `pcp-auth-test-${Date.now()}`);
+    tempHome = join(tmpdir(), `ink-auth-test-${Date.now()}`);
     mkdirSync(tempHome, { recursive: true });
     // Override homedir() by setting HOME env var
     process.env.HOME = tempHome;
@@ -192,7 +192,7 @@ describe('loadAuth / saveAuth / clearAuth', () => {
 
   it('sets file permissions to 600', () => {
     saveAuth(testAuth);
-    const authPath = join(tempHome, '.pcp', 'auth.json');
+    const authPath = join(tempHome, '.ink', 'auth.json');
     const stats = statSync(authPath);
     // 0o600 = owner read/write, no group/other
     expect(stats.mode & 0o777).toBe(0o600);
@@ -282,33 +282,33 @@ describe('getValidAccessToken', () => {
 
   beforeEach(() => {
     origHome = process.env.HOME;
-    origEnvToken = process.env.PCP_ACCESS_TOKEN;
-    tempHome = join(tmpdir(), `pcp-token-test-${Date.now()}`);
+    origEnvToken = process.env.INK_ACCESS_TOKEN;
+    tempHome = join(tmpdir(), `ink-token-test-${Date.now()}`);
     mkdirSync(tempHome, { recursive: true });
     process.env.HOME = tempHome;
   });
 
   afterEach(() => {
     process.env.HOME = origHome;
-    if (origEnvToken === undefined) delete process.env.PCP_ACCESS_TOKEN;
-    else process.env.PCP_ACCESS_TOKEN = origEnvToken;
+    if (origEnvToken === undefined) delete process.env.INK_ACCESS_TOKEN;
+    else process.env.INK_ACCESS_TOKEN = origEnvToken;
     rmSync(tempHome, { recursive: true, force: true });
   });
 
-  it('prefers PCP_ACCESS_TOKEN from environment when present', async () => {
-    process.env.PCP_ACCESS_TOKEN = 'env-token';
+  it('prefers INK_ACCESS_TOKEN from environment when present', async () => {
+    process.env.INK_ACCESS_TOKEN = 'env-token';
     const token = await getValidAccessToken('http://localhost:3001');
     expect(token).toBe('env-token');
   });
 
   it('returns env token even when auth.json is absent', async () => {
-    process.env.PCP_ACCESS_TOKEN = 'env-only-token';
+    process.env.INK_ACCESS_TOKEN = 'env-only-token';
     const token = await getValidAccessToken('http://localhost:3001');
     expect(token).toBe('env-only-token');
   });
 
   it('can skip env token lookup when allowEnvToken=false', async () => {
-    process.env.PCP_ACCESS_TOKEN = 'env-only-token';
+    process.env.INK_ACCESS_TOKEN = 'env-only-token';
     const token = await getValidAccessToken('http://localhost:3001', { allowEnvToken: false });
     expect(token).toBeNull();
   });
@@ -324,7 +324,7 @@ describe('updateConfigEmail', () => {
 
   beforeEach(() => {
     origHome = process.env.HOME;
-    tempHome = join(tmpdir(), `pcp-config-test-${Date.now()}`);
+    tempHome = join(tmpdir(), `ink-config-test-${Date.now()}`);
     mkdirSync(tempHome, { recursive: true });
     process.env.HOME = tempHome;
   });
@@ -336,7 +336,7 @@ describe('updateConfigEmail', () => {
 
   it('creates config.json with email', () => {
     updateConfigEmail('test@example.com', 'user-123');
-    const configPath = join(tempHome, '.pcp', 'config.json');
+    const configPath = join(tempHome, '.ink', 'config.json');
     expect(existsSync(configPath)).toBe(true);
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
     expect(config.email).toBe('test@example.com');
@@ -344,7 +344,7 @@ describe('updateConfigEmail', () => {
   });
 
   it('preserves existing config fields', () => {
-    const configDir = join(tempHome, '.pcp');
+    const configDir = join(tempHome, '.ink');
     mkdirSync(configDir, { recursive: true });
     writeFileSync(
       join(configDir, 'config.json'),

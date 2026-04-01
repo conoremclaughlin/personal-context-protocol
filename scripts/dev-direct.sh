@@ -44,7 +44,7 @@ else
 fi
 
 # Run API + web directly (no PM2), useful for parallel worktrees.
-BASE_PORT="${PCP_PORT_BASE:-3001}"
+BASE_PORT="${INK_PORT_BASE:-3001}"
 WEB_PORT="${WEB_PORT:-$((BASE_PORT + 1))}"
 MYRA_PORT="${MYRA_HTTP_PORT:-$((BASE_PORT + 2))}"
 # Default: unset → server.ts auto-enables if TELEGRAM_BOT_TOKEN is present.
@@ -53,7 +53,7 @@ ENABLE_TELEGRAM="${ENABLE_TELEGRAM:-}"
 API_URL="${API_URL:-http://localhost:${BASE_PORT}}"
 
 echo "Starting direct dev mode"
-echo "  PCP_PORT_BASE=${BASE_PORT}"
+echo "  INK_PORT_BASE=${BASE_PORT}"
 echo "  WEB_PORT=${WEB_PORT}"
 echo "  MYRA_HTTP_PORT=${MYRA_PORT}"
 echo "  ENABLE_TELEGRAM=${ENABLE_TELEGRAM:-<auto>}"
@@ -62,13 +62,13 @@ echo "  ENABLE_REMINDERS=${ENABLE_REMINDERS:-<unset>}"
 echo "  API_URL=${API_URL}"
 
 (
-  PCP_PORT_BASE="${BASE_PORT}" \
+  INK_PORT_BASE="${BASE_PORT}" \
   MYRA_HTTP_PORT="${MYRA_PORT}" \
   API_URL="${API_URL}" \
   ENABLE_TELEGRAM="${ENABLE_TELEGRAM}" \
   ENABLE_WHATSAPP="${ENABLE_WHATSAPP:-false}" \
   ENABLE_DISCORD="${ENABLE_DISCORD:-false}" \
-  yarn --cwd "${ROOT_DIR}" workspace @personal-context/api server:dev
+  yarn --cwd "${ROOT_DIR}" workspace @inkstand/api server:dev
 ) &
 API_PID=$!
 
@@ -100,7 +100,7 @@ wait_for_api
 
 (
   API_URL="${API_URL}" \
-  yarn --cwd "${ROOT_DIR}" workspace @personal-context/web exec next dev -p "${WEB_PORT}"
+  yarn --cwd "${ROOT_DIR}" workspace @inkstand/web exec next dev -p "${WEB_PORT}"
 ) &
 WEB_PID=$!
 

@@ -77,7 +77,7 @@ import {
   mintDelegationToken,
   verifyDelegationToken,
   type DelegationTokenPayload,
-} from '@personal-context/shared';
+} from '@inkstand/shared';
 
 type ChatOptions = {
   agent?: string;
@@ -309,7 +309,7 @@ function buildBackendToolPassthrough(
           '--config',
           'features.apps=false',
           '--config',
-          'mcp_servers.pcp.enabled=false',
+          'mcp_servers.inkstand.enabled=false',
           '--config',
           'mcp_servers.next-devtools.enabled=false',
           '--config',
@@ -328,7 +328,7 @@ function buildBackendToolPassthrough(
         passthroughArgs: [],
         warning:
           toolRouting === 'local'
-            ? 'Codex CLI has no allowlist passthrough flag; relying on sb local-tool routing prompt guard.'
+            ? 'Codex CLI has no allowlist passthrough flag; relying on ink local-tool routing prompt guard.'
             : 'Codex CLI has no allowlist passthrough flag; backend tool gating is not enforced by CLI flags.',
       };
     }
@@ -399,7 +399,7 @@ function formatTokenCount(value: number): string {
 }
 
 function getDelegationSecret(): string | undefined {
-  const fromEnv = process.env.PCP_DELEGATION_SECRET?.trim();
+  const fromEnv = process.env.INK_DELEGATION_SECRET?.trim();
   if (fromEnv) return fromEnv;
   const jwtSecret = process.env.JWT_SECRET?.trim();
   if (jwtSecret) return jwtSecret;
@@ -418,14 +418,14 @@ function parseToolScopes(raw: string): string[] {
 }
 
 function ensureRuntimeTranscriptPath(sessionId?: string): string {
-  const dir = join(process.cwd(), '.pcp', 'runtime', 'repl');
+  const dir = join(process.cwd(), '.ink', 'runtime', 'repl');
   mkdirSync(dir, { recursive: true });
   const safeSession = sessionId || 'local';
   return join(dir, `${safeSession}-${Date.now()}.jsonl`);
 }
 
 function findLatestTranscriptForSession(sessionId: string): string | undefined {
-  const dir = join(process.cwd(), '.pcp', 'runtime', 'repl');
+  const dir = join(process.cwd(), '.ink', 'runtime', 'repl');
   if (!existsSync(dir)) return undefined;
   const sessionPrefix = `${sessionId}-`;
   const candidates = readdirSync(dir)
@@ -605,7 +605,7 @@ function hydrateLedgerFromTranscript(
       continue;
     }
     if (type === 'inbox' && typeof event.rendered === 'string') {
-      ledger.addEntry('inbox', compactForLedger(event.rendered), 'pcp-inbox-history');
+      ledger.addEntry('inbox', compactForLedger(event.rendered), 'inkmail-history');
       loaded += 1;
       messageCount += 1;
       pushPreview('inbox', event.rendered, typeof event.ts === 'string' ? event.ts : undefined);
@@ -734,7 +734,7 @@ function compactForHistoryPreview(role: 'user' | 'assistant' | 'inbox', content:
 }
 
 function extractLocalToolCalls(responseText: string): LocalToolCall[] {
-  const matches = Array.from(responseText.matchAll(/```pcp-tool\s*([\s\S]*?)```/gi));
+  const matches = Array.from(responseText.matchAll(/```ink-tool\s*([\s\S]*?)```/gi));
   const calls: LocalToolCall[] = [];
   for (const match of matches) {
     const payload = (match[1] || '').trim();
@@ -756,7 +756,7 @@ function extractLocalToolCalls(responseText: string): LocalToolCall[] {
 }
 
 function stripLocalToolBlocks(responseText: string): string {
-  return responseText.replace(/```pcp-tool[\s\S]*?```/gi, '').trim();
+  return responseText.replace(/```ink-tool[\s\S]*?```/gi, '').trim();
 }
 
 function isAbortError(error: unknown): boolean {
@@ -1757,7 +1757,7 @@ function buildPromptEnvelope(
 
   const toolInstruction =
     runtime.toolRouting === 'local'
-      ? 'IMPORTANT: To call PCP tools (get_inbox, recall, remember, list_tasks, send_response, etc.), you MUST emit fenced code blocks in this exact format:\n\n```pcp-tool\n{"tool":"tool_name","args":{}}\n```\n\nDo NOT use ToolSearch, mcp__pcp__*, or native MCP tool calling for PCP tools — those will not work in this runtime. Only the fenced block format above will execute PCP tools. You can emit multiple pcp-tool blocks in one response.\n\nClient-local tools (also via pcp-tool blocks, no server round-trip):\n- list_context: Introspect your context window — see all entries with IDs, token counts, sources, and previews.\n- evict_context: Remove specific entries from your context to reclaim tokens. Args: entryIds (number[]), source (string), or role (string).\n- signal_status: Signal your session status. Args: status ("completed" | "blocked" | "continuing"), reason (string, optional). Use this at the end of your work to tell the runtime whether you are done, blocked on something, or need another turn.'
+      ? 'IMPORTANT: To call PCP tools (get_inbox, recall, remember, list_tasks, send_response, etc.), you MUST emit fenced code blocks in this exact format:\n\n```ink-tool\n{"tool":"tool_name","args":{}}\n```\n\nDo NOT use ToolSearch, mcp__inkstand__*, or native MCP tool calling for PCP tools — those will not work in this runtime. Only the fenced block format above will execute PCP tools. You can emit multiple ink-tool blocks in one response.\n\nClient-local tools (also via ink-tool blocks, no server round-trip):\n- list_context: Introspect your context window — see all entries with IDs, token counts, sources, and previews.\n- evict_context: Remove specific entries from your context to reclaim tokens. Args: entryIds (number[]), source (string), or role (string).\n- signal_status: Signal your session status. Args: status ("completed" | "blocked" | "continuing"), reason (string, optional). Use this at the end of your work to tell the runtime whether you are done, blocked on something, or need another turn.'
       : runtime.toolMode === 'off'
         ? 'Do not call backend-native tools. Provide reasoning and instructions only.'
         : runtime.toolMode === 'privileged'
@@ -1766,7 +1766,7 @@ function buildPromptEnvelope(
 
   return [
     `You are ${agentId}.`,
-    'You are running inside sb chat (first-class PCP REPL).',
+    'You are running inside ink chat (first-class PCP REPL).',
     'Answer in plain text. Be concise but complete.',
     `Current backend: ${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}.`,
     `Tool mode: ${runtime.toolMode}.`,
@@ -1813,7 +1813,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   const resolvedAgentId = resolveAgentId(options.agent);
   if (!resolvedAgentId) {
-    throw new Error('Could not resolve agent identity. Run `sb init` or pass `--agent <id>`.');
+    throw new Error('Could not resolve agent identity. Run `ink init` or pass `--agent <id>`.');
   }
   const agentId: string = resolvedAgentId;
   const pcp = new PcpClient();
@@ -1837,7 +1837,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         ? 120_000
         : undefined;
 
-  // Persisted runtime preferences from .pcp/identity.json — CLI flags override these
+  // Persisted runtime preferences from .ink/identity.json — CLI flags override these
   const persisted = identity?.runtime;
 
   const runtime: ChatRuntime = {
@@ -1951,7 +1951,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     runtime.approvalChannel = new AutoApprovalChannel('once');
   }
   // 'interactive' mode uses the existing TUI prompt (no channel needed)
-  const policyPathFromEnv = process.env.PCP_TOOL_POLICY_PATH?.trim();
+  const policyPathFromEnv = process.env.INK_TOOL_POLICY_PATH?.trim();
   const toolPolicy = new ToolPolicyState(
     runtime.toolMode,
     policyPathFromEnv ? { policyPath: policyPathFromEnv } : undefined
@@ -2486,7 +2486,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         const from = msg.from || 'unknown';
         const heading = msg.subject ? `${from} — ${msg.subject}` : from;
         const rendered = `📥 ${heading}: ${msg.content}`.trim();
-        ledger.addEntry('inbox', compactForLedger(rendered), 'pcp-inbox');
+        ledger.addEntry('inbox', compactForLedger(rendered), 'inkmail');
         appendTranscript(runtime.transcriptPath, {
           type: 'inbox',
           messageId: msg.id,
@@ -2539,7 +2539,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         }
       }
       const rendered = `📥 ${heading}${delegationLabel}: ${msg.content}`.trim();
-      ledger.addEntry('inbox', compactForLedger(rendered), 'pcp-inbox');
+      ledger.addEntry('inbox', compactForLedger(rendered), 'inkmail');
       appendTranscript(runtime.transcriptPath, {
         type: 'inbox',
         messageId: msg.id,
@@ -2911,7 +2911,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     }
 
     // ── Multi-turn tool loop ──
-    // When local tool routing is active, the backend may emit pcp-tool blocks.
+    // When local tool routing is active, the backend may emit ink-tool blocks.
     // We execute them locally, then re-invoke the backend with the results so it
     // can reason about them and potentially emit more tool calls. This continues
     // until the backend produces no tool calls or we hit the iteration limit.
@@ -2936,7 +2936,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
       if (localToolCalls.length === 0) break;
 
-      // Execute tool calls through sb's policy pipeline
+      // Execute tool calls through ink's policy pipeline
       const iterationResults: typeof allToolResults = [];
       await executeToolCalls(localToolCalls, {
         policy: toolPolicy,
@@ -2946,9 +2946,9 @@ export async function runChat(options: ChatOptions): Promise<void> {
             const result = handleClientLocalTool(tool, args, ledger);
             if (result) return Promise.resolve(result);
           }
-          // Strip MCP namespace prefix — the SB may emit mcp__pcp__tool_name
+          // Strip MCP namespace prefix — the SB may emit mcp__inkstand__tool_name
           // but PcpClient expects bare tool names (get_inbox, recall, etc.)
-          const bareTool = tool.replace(/^mcp__pcp__/, '');
+          const bareTool = tool.replace(/^mcp__inkstand__/, '');
           return pcp.callTool(bareTool, args);
         },
         sessionId: runtime.sessionId,
@@ -3149,7 +3149,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
         agentId,
         runtime,
         ledger,
-        `[Tool results from previous turn]\n${toolResultsSummary}\n\nContinue your response based on these tool results. If you need more tools, emit pcp-tool blocks. Otherwise, provide your final answer.`
+        `[Tool results from previous turn]\n${toolResultsSummary}\n\nContinue your response based on these tool results. If you need more tools, emit ink-tool blocks. Otherwise, provide your final answer.`
       );
 
       // Show continuation indicator
@@ -3439,7 +3439,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     } else {
       console.log(chalk.dim(`\nSession paused (${maxTurns} turn(s) completed).`));
     }
-    console.log(chalk.cyan(`  Resume with: sb chat --attach-latest ${agentId}\n`));
+    console.log(chalk.cyan(`  Resume with: ink chat --attach-latest ${agentId}\n`));
     return;
   }
 
@@ -3648,8 +3648,8 @@ export async function runChat(options: ChatOptions): Promise<void> {
               '/session                   Show active session info',
               '/autorun [on|off]          Toggle inbox auto-run execution',
               '/away [on|off]             Toggle remote approval mode (approvals via inbox)',
-              '/tool-routing [backend|local]  Toggle backend tools vs local pcp-tool routing',
-              '/save-config                  Save current runtime preferences to .pcp/identity.json',
+              '/tool-routing [backend|local]  Toggle backend tools vs local ink-tool routing',
+              '/save-config                  Save current runtime preferences to .ink/identity.json',
               '/ui [scroll|live]          Set status rendering mode',
               '/backend <name>            Switch backend (claude|codex|gemini)',
               '/model <id>                Set/clear model override',
@@ -3846,7 +3846,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           if (runtime.toolRouting === 'local') {
             console.log(
               chalk.dim(
-                'Local routing active: backend-native tools disabled; use pcp-tool blocks for local execution.'
+                'Local routing active: backend-native tools disabled; use ink-tool blocks for local execution.'
               )
             );
           }
@@ -3861,7 +3861,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           };
           const saved = saveRuntimePreferences(process.cwd(), prefs);
           if (saved) {
-            console.log(chalk.green('All runtime preferences saved to .pcp/identity.json:'));
+            console.log(chalk.green('All runtime preferences saved to .ink/identity.json:'));
             console.log(chalk.dim(`  toolRouting: ${prefs.toolRouting}`));
             console.log(chalk.dim(`  strictTools: ${prefs.strictTools}`));
             if (prefs.approvalMode) {
@@ -4510,7 +4510,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           const secret = getDelegationSecret();
           if (!secret) {
             console.log(
-              chalk.yellow('Delegation secret missing. Set PCP_DELEGATION_SECRET (or JWT_SECRET).')
+              chalk.yellow('Delegation secret missing. Set INK_DELEGATION_SECRET (or JWT_SECRET).')
             );
             break;
           }
@@ -4572,7 +4572,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           const secret = getDelegationSecret();
           if (!secret) {
             console.log(
-              chalk.yellow('Delegation secret missing. Set PCP_DELEGATION_SECRET (or JWT_SECRET).')
+              chalk.yellow('Delegation secret missing. Set INK_DELEGATION_SECRET (or JWT_SECRET).')
             );
             break;
           }
@@ -4598,7 +4598,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
           const secret = getDelegationSecret();
           if (!secret) {
             console.log(
-              chalk.yellow('Delegation secret missing. Set PCP_DELEGATION_SECRET (or JWT_SECRET).')
+              chalk.yellow('Delegation secret missing. Set INK_DELEGATION_SECRET (or JWT_SECRET).')
             );
             break;
           }
@@ -4866,7 +4866,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   });
 
   if (runtime.sessionId) {
-    console.log(chalk.dim(`Reattach: sb chat -a ${agentId} --attach ${runtime.sessionId}`));
+    console.log(chalk.dim(`Reattach: ink chat -a ${agentId} --attach ${runtime.sessionId}`));
   }
   console.log(chalk.dim('\nChat ended.\n'));
 }
@@ -4881,7 +4881,7 @@ export function registerChatCommand(program: Command): void {
       .option('-m, --model <model>', 'Model override for backend')
       .option(
         '--tool-routing <mode>',
-        'Tool routing mode: local (pcp-tool blocks handled by sb) or backend (native backend tools)',
+        'Tool routing mode: local (ink-tool blocks handled by ink) or backend (native backend tools)',
         'local'
       )
       .option('--ui <mode>', 'UI mode: live (default) or scroll status rendering', 'live')
@@ -4913,7 +4913,7 @@ export function registerChatCommand(program: Command): void {
         '--backend-timeout-seconds <n>',
         'Backend turn timeout in seconds (default: 120 for --non-interactive, otherwise 1200)'
       )
-      .option('--sb-debug', 'Enable sb debug logging for chat runtime')
+      .option('--sb-debug', 'Enable ink debug logging for chat runtime')
       .option(
         '--sb-strict-tools',
         'Harden backend-native tooling (Codex: disable MCP servers + force read-only sandbox in local routing)'
@@ -4932,5 +4932,5 @@ export function registerChatCommand(program: Command): void {
       .action((options: ChatOptions) => runChat(options));
 
   register('chat', 'Start first-class PCP REPL (experimental)');
-  register('alpha', 'Alias for `sb chat` (experimental)');
+  register('alpha', 'Alias for `ink chat` (experimental)');
 }

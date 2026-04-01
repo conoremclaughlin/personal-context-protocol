@@ -90,7 +90,7 @@ describe('Branch naming convention: agentId/studio/name', () => {
 
     git(`worktree add -b "${branch}" "${wsPath}"`, realRepo);
 
-    const pcpDir = join(wsPath, '.pcp');
+    const pcpDir = join(wsPath, '.ink');
     mkdirSync(pcpDir, { recursive: true });
 
     const identity = {
@@ -118,7 +118,7 @@ describe('Branch naming convention: agentId/studio/name', () => {
 
     git(`worktree add -b "${branch}" "${wsPath}"`, realRepo);
 
-    const pcpDir = join(wsPath, '.pcp');
+    const pcpDir = join(wsPath, '.ink');
     mkdirSync(pcpDir, { recursive: true });
 
     // Old format with workspace field
@@ -160,7 +160,7 @@ describe('cleanStudio: branch from identity.json', () => {
     git(`worktree add -b "${branch}" "${wsPath}"`, realRepo);
 
     // Write identity.json with the branch
-    const pcpDir = join(wsPath, '.pcp');
+    const pcpDir = join(wsPath, '.ink');
     mkdirSync(pcpDir, { recursive: true });
     writeFileSync(join(pcpDir, 'identity.json'), JSON.stringify({ branch }));
 
@@ -213,7 +213,7 @@ describe('cleanStudio: branch from identity.json', () => {
 
     git(`worktree add -b "${legacyBranch}" "${wsPath}"`, realRepo);
 
-    const pcpDir = join(wsPath, '.pcp');
+    const pcpDir = join(wsPath, '.ink');
     mkdirSync(pcpDir, { recursive: true });
     writeFileSync(join(pcpDir, 'identity.json'), JSON.stringify({ branch: legacyBranch }));
 
@@ -264,9 +264,9 @@ describe('Config directory copying', () => {
     expect(settings.permissions).toBeDefined();
   });
 
-  it('should always write fresh .pcp/identity.json, never copy from source', () => {
-    // Create .pcp/ with an identity in the main repo
-    const srcPcp = join(realRepo, '.pcp');
+  it('should always write fresh .ink/identity.json, never copy from source', () => {
+    // Create .ink/ with an identity in the main repo
+    const srcPcp = join(realRepo, '.ink');
     mkdirSync(srcPcp, { recursive: true });
     writeFileSync(
       join(srcPcp, 'identity.json'),
@@ -282,7 +282,7 @@ describe('Config directory copying', () => {
     git(`worktree add -b "wren/studio/fresh-id" "${wsPath}"`, realRepo);
 
     // Write fresh identity (simulating createStudio behavior)
-    const wsPcp = join(wsPath, '.pcp');
+    const wsPcp = join(wsPath, '.ink');
     mkdirSync(wsPcp, { recursive: true });
     const freshIdentity = {
       agentId: 'wren',
@@ -351,7 +351,7 @@ describe('Config directory copying', () => {
     writeFileSync(
       join(wsPath, '.claude', 'settings.local.json'),
       JSON.stringify({
-        hooks: { Stop: [{ hooks: [{ type: 'command', command: 'sb hooks on-stop' }] }] },
+        hooks: { Stop: [{ hooks: [{ type: 'command', command: 'ink hooks on-stop' }] }] },
       })
     );
 

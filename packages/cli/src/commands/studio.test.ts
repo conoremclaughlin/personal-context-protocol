@@ -185,12 +185,12 @@ describe('Studio Commands', () => {
   });
 
   describe('Studio identity', () => {
-    it('should create identity.json in .pcp directory', () => {
+    it('should create identity.json in .ink directory', () => {
       const worktreePath = join(TEST_DIR, 'test-repo--test');
       git(`worktree add -b wren/studio/test "${worktreePath}"`, TEST_REPO);
 
-      // Create .pcp identity like the CLI would
-      const pcpDir = join(worktreePath, '.pcp');
+      // Create .ink identity like the CLI would
+      const pcpDir = join(worktreePath, '.ink');
       mkdirSync(pcpDir, { recursive: true });
 
       const identity = {
@@ -217,7 +217,7 @@ describe('Studio Commands', () => {
       const worktreePath = join(TEST_DIR, 'test-repo--myra');
       git(`worktree add -b myra/studio/myra "${worktreePath}"`, TEST_REPO);
 
-      const pcpDir = join(worktreePath, '.pcp');
+      const pcpDir = join(worktreePath, '.ink');
       mkdirSync(pcpDir, { recursive: true });
 
       const identity = {
@@ -239,7 +239,7 @@ describe('Studio Commands', () => {
       const worktreePath = join(TEST_DIR, 'test-repo--legacy');
       git(`worktree add -b wren/workspace/legacy "${worktreePath}"`, TEST_REPO);
 
-      const pcpDir = join(worktreePath, '.pcp');
+      const pcpDir = join(worktreePath, '.ink');
       mkdirSync(pcpDir, { recursive: true });
 
       // Old format with workspace field
@@ -297,30 +297,30 @@ describe('Studio default branch naming', () => {
 });
 
 describe('CLI link path helpers', () => {
-  it('should resolve ~/.pcp/bin as primary and ~/.local/bin as compatibility path', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
-    expect(targets.primaryBinDir).toBe('/tmp/home/.pcp/bin');
+  it('should resolve ~/.ink/bin as primary and ~/.local/bin as compatibility path', () => {
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
+    expect(targets.primaryBinDir).toBe('/tmp/home/.ink/bin');
     expect(targets.compatBinDir).toBe('/tmp/home/.local/bin');
-    expect(targets.primaryLinkPath).toBe('/tmp/home/.pcp/bin/sb-lumen');
-    expect(targets.compatLinkPath).toBe('/tmp/home/.local/bin/sb-lumen');
+    expect(targets.primaryLinkPath).toBe('/tmp/home/.ink/bin/ink-lumen');
+    expect(targets.compatLinkPath).toBe('/tmp/home/.local/bin/ink-lumen');
   });
 
   it('should not warn when PATH includes primary bin dir', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(
       shouldWarnMissingCliBinPath(['/usr/bin', targets.primaryBinDir].join(pathDelimiter), targets)
     ).toBe(false);
   });
 
   it('should not warn when PATH includes compatibility bin dir', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(
       shouldWarnMissingCliBinPath(['/usr/bin', targets.compatBinDir].join(pathDelimiter), targets)
     ).toBe(false);
   });
 
   it('should warn when PATH includes neither PCP nor compatibility bin dirs', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(shouldWarnMissingCliBinPath(['/usr/bin', '/bin'].join(pathDelimiter), targets)).toBe(
       true
     );
@@ -581,9 +581,9 @@ describe('updateIdentityForStudioRename', () => {
 
   it('updates studio/context/description in identity.json after rename', () => {
     const wsPath = join(TEST_REPO, '..', 'test-repo--old');
-    mkdirSync(join(wsPath, '.pcp'), { recursive: true });
+    mkdirSync(join(wsPath, '.ink'), { recursive: true });
     writeFileSync(
-      join(wsPath, '.pcp', 'identity.json'),
+      join(wsPath, '.ink', 'identity.json'),
       JSON.stringify(
         {
           agentId: 'lumen',
@@ -603,7 +603,7 @@ describe('updateIdentityForStudioRename', () => {
     });
     expect(changed).toBe(true);
 
-    const updated = JSON.parse(readFileSync(join(wsPath, '.pcp', 'identity.json'), 'utf-8'));
+    const updated = JSON.parse(readFileSync(join(wsPath, '.ink', 'identity.json'), 'utf-8'));
     expect(updated.studio).toBe('new');
     expect(updated.context).toBe('studio-new');
     expect(updated.description).toBe('Studio: new');

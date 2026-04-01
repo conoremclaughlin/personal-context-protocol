@@ -133,7 +133,7 @@ export class MCPServer {
     req: express.Request,
     userData: { userId: string; email: string; agentId?: string; identityId?: string }
   ): Promise<{ workspaceId?: string; workspaceSource?: 'header' | 'derived' }> {
-    const requestedWorkspaceId = req.header('x-pcp-workspace-id')?.trim();
+    const requestedWorkspaceId = req.header('x-ink-workspace-id')?.trim();
 
     const resolution = await resolveWorkspaceContextForRequest({
       requestedWorkspaceId,
@@ -282,25 +282,25 @@ export class MCPServer {
             identityId: userData.identityId,
           }
         : {};
-      const callerProfileHeader = req.header('x-pcp-caller-profile')?.trim().toLowerCase();
+      const callerProfileHeader = req.header('x-ink-caller-profile')?.trim().toLowerCase();
       // Trust boundary note:
-      // `x-pcp-caller-profile`, `x-pcp-session-id`, and `x-pcp-studio-id` are only consumed
+      // `x-ink-caller-profile`, `x-ink-session-id`, and `x-ink-studio-id` are only consumed
       // on the MCP transport entrypoint. Supported MCP clients in our stack do not expose
       // arbitrary header injection to model prompts, so these remain runtime/server-controlled
       // signals rather than LLM-controlled parameters.
       // Parse consolidated context token first (Phase 1 — preferred source).
       // Falls back to individual headers for backward compat.
-      const contextHeader = req.header('x-pcp-context')?.trim();
-      let contextToken: import('@personal-context/shared').PcpContextToken | null = null;
+      const contextHeader = req.header('x-ink-context')?.trim();
+      let contextToken: import('@inkstand/shared').PcpContextToken | null = null;
       if (contextHeader) {
-        const { decodeContextToken } = await import('@personal-context/shared');
+        const { decodeContextToken } = await import('@inkstand/shared');
         contextToken = decodeContextToken(contextHeader);
       }
 
       const callerProfile: 'agent' | 'runtime' =
         callerProfileHeader === 'runtime' ? 'runtime' : 'agent';
-      const sessionIdHeader = contextToken?.sessionId || req.header('x-pcp-session-id')?.trim();
-      const studioIdHeader = contextToken?.studioId || req.header('x-pcp-studio-id')?.trim();
+      const sessionIdHeader = contextToken?.sessionId || req.header('x-ink-session-id')?.trim();
+      const studioIdHeader = contextToken?.studioId || req.header('x-ink-studio-id')?.trim();
       Object.assign(ctx, {
         callerProfile,
         ...(sessionIdHeader ? { sessionId: sessionIdHeader } : {}),
@@ -309,8 +309,8 @@ export class MCPServer {
         ...(contextToken?.runtime ? { runtime: contextToken.runtime } : {}),
       });
 
-      // Resolve studioId from session when x-pcp-session-id is provided
-      // but x-pcp-studio-id is not. This avoids requiring a separate studio
+      // Resolve studioId from session when x-ink-session-id is provided
+      // but x-ink-studio-id is not. This avoids requiring a separate studio
       // header — the session record already stores its studio scope.
       let hasSessionDerivedWorkspace = false;
       if (sessionIdHeader && !studioIdHeader && userData) {

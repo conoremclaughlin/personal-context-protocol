@@ -2,8 +2,8 @@
  * Passive Recall Integration Tests
  *
  * Tests the passive recall hook against a LIVE PCP server with real
- * semantic search. Requires PCP_SERVER_URL (defaults to localhost:3001)
- * and valid auth credentials in ~/.pcp/auth.json.
+ * semantic search. Requires INK_SERVER_URL (defaults to localhost:3001)
+ * and valid auth credentials in ~/.ink/auth.json.
  *
  * These tests validate:
  * 1. Real recall() returns semantically relevant memories
@@ -13,7 +13,7 @@
  * 5. End-to-end: conversation → topic extraction → recall → injection → eviction cycle
  *
  * Run with: npx vitest run packages/cli/src/repl/passive-recall.integration.test.ts
- * Requires: PCP server running on localhost:3001 (or PCP_SERVER_URL env var)
+ * Requires: PCP server running on localhost:3001 (or INK_SERVER_URL env var)
  */
 
 import { describe, expect, it, beforeAll } from 'vitest';
@@ -43,8 +43,8 @@ async function pcpRecall(
   query: string,
   options?: { limit?: number; agentId?: string; recallMode?: string }
 ): Promise<RecallResponse> {
-  const serverUrl = process.env.PCP_SERVER_URL || 'http://localhost:3001';
-  const authPath = `${process.env.HOME}/.pcp/auth.json`;
+  const serverUrl = process.env.INK_SERVER_URL || 'http://localhost:3001';
+  const authPath = `${process.env.HOME}/.ink/auth.json`;
 
   let accessToken: string;
   try {
@@ -277,7 +277,7 @@ function createPassiveRecallHook(config?: {
 // We use a module-level check via a synchronous HTTP probe
 import { execSync } from 'child_process';
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 
 let serverAvailable = false;
 try {

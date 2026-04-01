@@ -861,7 +861,7 @@ export class TelegramListener extends EventEmitter {
    * Download a file from Telegram and save locally
    * Returns the local file path
    *
-   * Files are saved to ~/.pcp/files/telegram/ which is whitelisted in
+   * Files are saved to ~/.ink/files/telegram/ which is whitelisted in
    * Claude Code's additionalDirectories setting, allowing Myra to read them.
    */
   async downloadFile(fileId: string): Promise<string | null> {
@@ -876,12 +876,12 @@ export class TelegramListener extends EventEmitter {
 
       const buffer = await response.arrayBuffer();
 
-      // Save to ~/.pcp/files/telegram/ (whitelisted in Claude Code additionalDirectories)
+      // Save to ~/.ink/files/telegram/ (whitelisted in Claude Code additionalDirectories)
       const fs = await import('fs/promises');
       const path = await import('path');
       const os = await import('os');
 
-      const pcpFilesDir = path.join(os.homedir(), '.pcp', 'files', 'telegram');
+      const pcpFilesDir = path.join(os.homedir(), '.ink', 'files', 'telegram');
       await fs.mkdir(pcpFilesDir, { recursive: true });
 
       // Extract extension from URL or default to .jpg

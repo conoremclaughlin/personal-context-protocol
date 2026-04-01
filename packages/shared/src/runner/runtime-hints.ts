@@ -1,7 +1,7 @@
 /**
  * Runtime Session Hints
  *
- * Writes session state to .pcp/runtime/sessions.json so the on-session-start
+ * Writes session state to .ink/runtime/sessions.json so the on-session-start
  * hook can find the correct PCP session ID for server-spawned runs.
  *
  * Without these hints, the hook picks up the last sb-launched session (wrong)
@@ -35,7 +35,7 @@ export function writeRuntimeSessionHint(
   studioId?: string
 ): void {
   try {
-    const runtimeDir = join(workingDirectory, '.pcp', 'runtime');
+    const runtimeDir = join(workingDirectory, '.ink', 'runtime');
     mkdirSync(runtimeDir, { recursive: true });
 
     const sessionsPath = join(runtimeDir, 'sessions.json');

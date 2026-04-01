@@ -1,13 +1,13 @@
 /**
- * sb wait — Poll for new inbox/thread messages and exit when something arrives.
+ * ink wait — Poll for new inbox/thread messages and exit when something arrives.
  *
  * Designed to be run in the background so the SB wakes up when there's
  * new content to process. Works with Claude Code's run_in_background.
  *
  * Usage:
- *   sb wait                              # Wait for any new message
- *   sb wait --thread pr:231              # Wait for activity on a specific thread
- *   sb wait --timeout 300 --interval 15  # Custom timing
+ *   ink wait                              # Wait for any new message
+ *   ink wait --thread pr:231              # Wait for activity on a specific thread
+ *   ink wait --timeout 300 --interval 15  # Custom timing
  */
 
 import type { Command } from 'commander';
@@ -44,7 +44,7 @@ export function registerWaitCommand(program: Command): void {
       const config = pcp.getConfig();
 
       if (!config.email) {
-        console.error('[sb wait] PCP not configured. Run: sb init');
+        console.error('[ink wait] PCP not configured. Run: ink init');
         process.exit(2);
       }
 
@@ -52,7 +52,7 @@ export function registerWaitCommand(program: Command): void {
       const startedAt = new Date().toISOString();
 
       console.log(
-        `[sb wait] Watching ${threadKey ? `thread ${threadKey}` : 'inbox'} for ${agentId} (timeout: ${timeoutSec}s, interval: ${intervalSec}s)`
+        `[ink wait] Watching ${threadKey ? `thread ${threadKey}` : 'inbox'} for ${agentId} (timeout: ${timeoutSec}s, interval: ${intervalSec}s)`
       );
 
       // ── Baseline anchors ──
@@ -80,10 +80,10 @@ export function registerWaitCommand(program: Command): void {
             baselineLastMessageId = messages[messages.length - 1].id as string;
           }
           console.log(
-            `[sb wait] Baseline: ${messages.length} messages in thread${baselineLastMessageId ? ` (anchor: ${(baselineLastMessageId as string).slice(0, 8)})` : ''}`
+            `[ink wait] Baseline: ${messages.length} messages in thread${baselineLastMessageId ? ` (anchor: ${(baselineLastMessageId as string).slice(0, 8)})` : ''}`
           );
         } catch {
-          console.log('[sb wait] Baseline: thread not found (watching for creation)');
+          console.log('[ink wait] Baseline: thread not found (watching for creation)');
         }
       } else {
         try {
@@ -98,7 +98,7 @@ export function registerWaitCommand(program: Command): void {
         } catch {
           // Baseline is 0
         }
-        console.log(`[sb wait] Baseline: ${baselineInboxCount} unread`);
+        console.log(`[ink wait] Baseline: ${baselineInboxCount} unread`);
       }
 
       while (Date.now() < deadline) {
@@ -121,7 +121,7 @@ export function registerWaitCommand(program: Command): void {
               return !ts || ts >= startedAt;
             });
             if (newPending.length) {
-              console.log(`[sb wait] ${newPending.length} pending trigger message(s) found`);
+              console.log(`[ink wait] ${newPending.length} pending trigger message(s) found`);
               for (const msg of newPending) {
                 const sender =
                   typeof msg.sender === 'object'
@@ -130,7 +130,7 @@ export function registerWaitCommand(program: Command): void {
                 const preview = typeof msg.content === 'string' ? msg.content.slice(0, 200) : '';
                 console.log(`  from ${sender}: ${preview}`);
               }
-              // Mark as read so next sb wait doesn't re-trigger on them
+              // Mark as read so next ink wait doesn't re-trigger on them
               const ids = newPending.map((m) => m.id as string).filter(Boolean);
               if (ids.length) {
                 await pcp.callTool('mark_messages_read', { messageIds: ids }).catch(() => {});
@@ -161,7 +161,7 @@ export function registerWaitCommand(program: Command): void {
             // Filter out own messages — we're waiting for someone ELSE to reply
             const messages = allMessages.filter((m) => m.senderAgentId !== agentId);
             if (messages.length > 0) {
-              console.log(`[sb wait] ${messages.length} new message(s) on ${threadKey}`);
+              console.log(`[ink wait] ${messages.length} new message(s) on ${threadKey}`);
               for (const msg of messages) {
                 const sender = msg.senderAgentId || 'unknown';
                 const preview = typeof msg.content === 'string' ? msg.content.slice(0, 200) : '';
@@ -188,7 +188,7 @@ export function registerWaitCommand(program: Command): void {
                 | Array<Record<string, unknown>>
                 | undefined;
 
-              console.log(`[sb wait] ${currentUnread - baselineInboxCount} new unread message(s)`);
+              console.log(`[ink wait] ${currentUnread - baselineInboxCount} new unread message(s)`);
 
               if (messages?.length) {
                 for (const msg of messages.slice(0, 3)) {
@@ -208,14 +208,14 @@ export function registerWaitCommand(program: Command): void {
             }
           }
 
-          console.log('[sb wait] No new messages yet...');
+          console.log('[ink wait] No new messages yet...');
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          console.log(`[sb wait] Poll error (will retry): ${msg.slice(0, 100)}`);
+          console.log(`[ink wait] Poll error (will retry): ${msg.slice(0, 100)}`);
         }
       }
 
-      console.error(`[sb wait] Timed out after ${timeoutSec}s with no new messages.`);
+      console.error(`[ink wait] Timed out after ${timeoutSec}s with no new messages.`);
       process.exit(1);
     });
 }

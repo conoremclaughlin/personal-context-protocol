@@ -25,13 +25,13 @@ PCP hooks bridge coding agents (Claude Code, Codex, Gemini) with PCP's session, 
 
 **What it does:**
 
-1. Reads workspace ID from `.pcp/identity.json`
+1. Reads workspace ID from `.ink/identity.json`
 2. Calls `bootstrap` with agentId and workspaceId
 3. Calls `get_inbox` for unread messages
-4. Resolves PCP session ID (`PCP_SESSION_ID` env from launcher, or `start_session` fallback)
+4. Resolves PCP session ID (`INK_SESSION_ID` env from launcher, or `start_session` fallback)
 5. Reconciles PCP/backend session linkage when backend session ID is available (prefers existing server-side backend-session match)
-6. Stores runtime session state in `.pcp/runtime/sessions.json` (multi-session list + current pointer + correlation link)
-7. Stores backend session ID in `.pcp/runtime/session-id` (legacy compatibility)
+6. Stores runtime session state in `.ink/runtime/sessions.json` (multi-session list + current pointer + correlation link)
+7. Stores backend session ID in `.ink/runtime/session-id` (legacy compatibility)
 8. Links backend session ID to PCP session via `update_session_phase(sessionId, backendSessionId)`
 
 **Output:**
@@ -73,9 +73,9 @@ Workspace: {workspace name}
 
 Context is about to be compacted. Before compaction completes:
 
-1. **Save critical decisions** — Use `mcp__pcp__remember` to persist any
+1. **Save critical decisions** — Use `mcp__inkstand__remember` to persist any
    important reasoning, decisions, or context that should survive compaction.
-2. **Note current task state** — Use `mcp__pcp__update_session_phase` to record
+2. **Note current task state** — Use `mcp__inkstand__update_session_phase` to record
    where you are in the current task so you can resume smoothly after compaction.
 
 This context will be lost after compaction unless you save it now.
@@ -120,15 +120,15 @@ Agent: {agentId}
    - short-circuits on local `sessions.json` if linkage is already known
 3. Checks if inbox was polled within the last 5 minutes — if so, exits silently
 4. Calls `get_inbox` for unread messages
-5. Updates the `last-inbox-check` timestamp in `.pcp/runtime/`
+5. Updates the `last-inbox-check` timestamp in `.ink/runtime/`
 
 **Output (only if messages exist and inbox is stale):**
 
 ```
-<pcp-inbox count="{count}">
+<inkmail count="{count}">
 - **{from}**: {content or subject}
 ...
-</pcp-inbox>
+</inkmail>
 ```
 
 ---
@@ -142,7 +142,7 @@ Agent: {agentId}
 1. Marks runtime phase as `runtime:idle` via `update_session_phase(sessionId, phase)`
 2. Reconciles backend session ID linkage if the hook payload includes a session ID
    - short-circuits on local `sessions.json` if linkage is already known
-3. Increments tool call counter in `.pcp/runtime/tool-count`
+3. Increments tool call counter in `.ink/runtime/tool-count`
 4. Every 30 tool calls, outputs a nudge to log session progress
 5. If inbox is stale (>5 minutes), checks for new messages
 
@@ -151,25 +151,25 @@ Agent: {agentId}
 ```
 <pcp-reminder>
 You have completed ~{count} tool calls this session. Consider using
-`mcp__pcp__remember` to save a progress snapshot.
+`mcp__inkstand__remember` to save a progress snapshot.
 </pcp-reminder>
 
-<pcp-inbox count="{count}">
+<inkmail count="{count}">
 - **{from}**: {content or subject}
 ...
-</pcp-inbox>
+</inkmail>
 ```
 
 ## Runtime State
 
-Hooks store ephemeral state in `.pcp/runtime/` (gitignored):
+Hooks store ephemeral state in `.ink/runtime/` (gitignored):
 
 | File               | Purpose                                                                                                                           |
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
 | `sessions.json`    | Runtime session registry (list of PCP sessions + backend session IDs/history + current pointer + runtimeLinkId correlation token) |
-| `pcp-session-id`   | Current PCP session UUID (legacy convenience file)                                                                                |
+| `ink-session-id`   | Current PCP session UUID (legacy convenience file)                                                                                |
 | `session-id`       | Backend session ID from on-session-start (legacy convenience file)                                                                |
-| `runtime-link-id`  | Current run correlation token (`PCP_RUNTIME_LINK_ID`) for local reconciliation/debug                                              |
+| `runtime-link-id`  | Current run correlation token (`INK_RUNTIME_LINK_ID`) for local reconciliation/debug                                              |
 | `last-inbox-check` | ISO timestamp of last inbox poll                                                                                                  |
 | `tool-count`       | Cumulative tool call counter for on-stop nudges                                                                                   |
 

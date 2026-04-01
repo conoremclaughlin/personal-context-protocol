@@ -30,7 +30,7 @@ function initRepo(root: string): string {
 }
 
 describe('studio sandbox planning', () => {
-  const tmpRoot = join(tmpdir(), `pcp-studio-sandbox-${Date.now()}`);
+  const tmpRoot = join(tmpdir(), `ink-studio-sandbox-${Date.now()}`);
 
   afterEach(() => {
     rmSync(tmpRoot, { recursive: true, force: true });
@@ -61,7 +61,7 @@ describe('studio sandbox planning', () => {
       JSON.stringify(
         {
           mcpServers: {
-            pcp: { type: 'http', url: 'http://localhost:3001/mcp' },
+            inkstand: { type: 'http', url: 'http://localhost:3001/mcp' },
             supabase: { type: 'http', url: 'http://127.0.0.1:54321/mcp' },
             github: { type: 'http', url: 'https://api.githubcopilot.com/mcp/' },
           },
@@ -78,8 +78,8 @@ describe('studio sandbox planning', () => {
     expect(plan.context.canonicalRepoRoot.endsWith(basename(repoRoot))).toBe(true);
     expect(plan.studioAccess).toBe('rw');
     expect(plan.network).toBe('default');
-    expect(plan.containerName).toContain('pcp-studio-sandbox-alpha-');
-    expect(plan.env.PCP_SERVER_URL).toBe('http://host.docker.internal:3001');
+    expect(plan.containerName).toContain('ink-studio-sandbox-');
+    expect(plan.env.INK_SERVER_URL).toBe('http://host.docker.internal:3001');
 
     const activeStudioMount = plan.mounts.find((mount) => mount.target === '/studio');
     expect(activeStudioMount?.source.endsWith(basename(studioPath))).toBe(true);
@@ -102,7 +102,7 @@ describe('studio sandbox planning', () => {
     const patched = JSON.parse(readFileSync(plan.patchedMcpConfigPath!, 'utf-8')) as {
       mcpServers: Record<string, { url: string }>;
     };
-    expect(patched.mcpServers.pcp.url).toBe('http://host.docker.internal:3001/mcp');
+    expect(patched.mcpServers.inkstand.url).toBe('http://host.docker.internal:3001/mcp');
     expect(patched.mcpServers.supabase.url).toBe('http://host.docker.internal:54321/mcp');
     expect(patched.mcpServers.github.url).toBe('https://api.githubcopilot.com/mcp/');
 
@@ -151,7 +151,7 @@ describe('backend auth selection', () => {
     const codexDir = join(homedir(), '.codex');
     mkdirSync(codexDir, { recursive: true });
 
-    const repoRoot = initRepo(join(tmpdir(), `pcp-studio-sandbox-auth-${Date.now()}`, 'repo-auth'));
+    const repoRoot = initRepo(join(tmpdir(), `ink-studio-sandbox-auth-${Date.now()}`, 'repo-auth'));
     const plan = buildStudioSandboxPlan(repoRoot, { backendAuth: ['codex'] });
     const authMount = plan.mounts.find((mount) => mount.reason === 'codex auth/config');
 

@@ -1,15 +1,15 @@
 /**
- * sb chat Runtime Integration Tests
+ * ink chat Runtime Integration Tests
  *
  * Tests the real runtime wiring:
  * 1. PcpClient.callTool('recall') returns the shape our hooks expect
  * 2. turn_end is fire-and-forget — injections appear in NEXT turn's prompt
  * 3. Inbox messages enter the ledger and inform passive recall topic signal
  *
- * Requires PCP server on localhost:3001 (or PCP_SERVER_URL).
+ * Requires PCP server on localhost:3001 (or INK_SERVER_URL).
  *
  * Run with:
- *   PCP_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
+ *   INK_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts \
  *     packages/cli/src/repl/sb-chat-runtime.integration.test.ts
  */
 
@@ -23,7 +23,7 @@ import { isClientLocalTool, handleClientLocalTool } from './context-tools.js';
 
 // ─── Server check ───────────────────────────────────────────────
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 let serverAvailable = false;
 try {
   const result = execSync(`curl -sf -m 2 ${PCP_URL}/health`, { encoding: 'utf-8' });
@@ -328,7 +328,7 @@ describe('Inbox polling + passive recall interaction', () => {
     ledger.addEntry(
       'inbox',
       'From lumen: Please review PR #242 — context eviction + hooks',
-      'pcp-inbox'
+      'inkmail'
     );
 
     // User responds to the inbox message
@@ -357,16 +357,16 @@ describe('Inbox polling + passive recall interaction', () => {
     const ledger = new ContextLedger();
 
     // Add inbox messages
-    ledger.addEntry('inbox', 'Message 1 from myra', 'pcp-inbox');
-    ledger.addEntry('inbox', 'Message 2 from lumen', 'pcp-inbox');
+    ledger.addEntry('inbox', 'Message 1 from myra', 'inkmail');
+    ledger.addEntry('inbox', 'Message 2 from lumen', 'inkmail');
     ledger.addEntry('user', 'Got it, processing those');
     ledger.addEntry('assistant', 'Processing inbox messages...');
 
     // Evict inbox after processing
-    handleClientLocalTool('evict_context', { source: 'pcp-inbox' }, ledger);
+    handleClientLocalTool('evict_context', { source: 'inkmail' }, ledger);
 
     expect(ledger.listEntries()).toHaveLength(2); // user + assistant remain
-    expect(ledger.listEntries().every((e) => e.source !== 'pcp-inbox')).toBe(true);
+    expect(ledger.listEntries().every((e) => e.source !== 'inkmail')).toBe(true);
 
     // Topic extraction still works on remaining entries
     const signal = extractTopicSignal('Got it, processing those', 'Processing inbox messages...');
@@ -412,7 +412,7 @@ describe('Inbox polling + passive recall interaction', () => {
       ledger.addEntry(
         'inbox',
         'From lumen: Reviewed PR #242. Two design blockers on hook execution semantics.',
-        'pcp-inbox'
+        'inkmail'
       );
       ledger.addEntry('user', 'Let me address Lumen review feedback on the hook system');
       ledger.addEntry(

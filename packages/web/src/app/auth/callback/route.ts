@@ -34,7 +34,7 @@ export async function GET(request: Request) {
       // If this is MCP auth, redirect to MCP callback with tokens
       if (isMcpAuth) {
         const apiUrl =
-          process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
+          process.env.API_URL || `http://localhost:${process.env.INK_PORT_BASE || 3001}`;
         const mcpCallbackUrl = new URL(`${apiUrl}/mcp/auth/callback`);
         mcpCallbackUrl.searchParams.set('pending_id', mcpPendingId!);
         mcpCallbackUrl.searchParams.set('access_token', data.session.access_token);

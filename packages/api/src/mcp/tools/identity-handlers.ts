@@ -69,7 +69,7 @@ export const saveIdentitySchema = userIdentifierBaseSchema.extend({
   syncToFile: z
     .boolean()
     .optional()
-    .describe('Also write to ~/.pcp/individuals/{agentId}/IDENTITY.md'),
+    .describe('Also write to ~/.ink/individuals/{agentId}/IDENTITY.md'),
 });
 
 export const getIdentitySchema = userIdentifierBaseSchema.extend({
@@ -883,7 +883,7 @@ export async function handleChooseName(args: unknown, dataComposer: DataComposer
               ...(filePath && { syncedToFile: filePath }),
             },
             nextSteps: [
-              'Your identity is now stored in the database and synced to ~/.pcp/individuals/' +
+              'Your identity is now stored in the database and synced to ~/.ink/individuals/' +
                 agentId +
                 '/',
               'On your next session, call bootstrap(agentId: "' +

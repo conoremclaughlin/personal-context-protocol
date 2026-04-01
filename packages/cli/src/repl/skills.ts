@@ -39,7 +39,7 @@ function inferTrustLevel(
 }
 
 function loadProvenance(skillPath: string): SkillProvenance | undefined {
-  const candidates = ['skill-provenance.json', 'provenance.json', '.pcp-skill.json'];
+  const candidates = ['skill-provenance.json', 'provenance.json', '.ink-skill.json'];
   for (const name of candidates) {
     const filePath = join(skillPath, name);
     if (!existsSync(filePath)) continue;
@@ -102,8 +102,8 @@ export function discoverSkills(cwd: string): DiscoveredSkill[] {
   const roots: Array<{ dir: string; source: string }> = [
     { dir: join(cwd, '.codex', 'skills'), source: 'repo:.codex/skills' },
     { dir: join(homedir(), '.codex', 'skills'), source: 'home:~/.codex/skills' },
-    { dir: join(cwd, '.pcp', 'skills'), source: 'repo:.pcp/skills' },
-    { dir: join(homedir(), '.pcp', 'skills'), source: 'home:~/.pcp/skills' },
+    { dir: join(cwd, '.ink', 'skills'), source: 'repo:.ink/skills' },
+    { dir: join(homedir(), '.ink', 'skills'), source: 'home:~/.ink/skills' },
     { dir: join(cwd, '.claude', 'skills'), source: 'repo:.claude/skills' },
     { dir: join(homedir(), '.claude', 'skills'), source: 'home:~/.claude/skills' },
     { dir: join(cwd, '.gemini', 'skills'), source: 'repo:.gemini/skills' },

@@ -26,7 +26,7 @@ export async function maybeWarnServerUpdate(): Promise<void> {
     return;
   }
 
-  const baseUrl = (process.env.PCP_SERVER_URL || 'http://localhost:3001').replace(/\/+$/, '');
+  const baseUrl = (process.env.INK_SERVER_URL || 'http://localhost:3001').replace(/\/+$/, '');
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 750);
 
@@ -44,7 +44,7 @@ export async function maybeWarnServerUpdate(): Promise<void> {
 
     console.log(
       chalk.yellow(
-        `⚠ PCP server restart recommended: running ${shortSha(body.build.startupGitSha)}, latest ${shortSha(body.build.currentGitSha)}`
+        `⚠ Inkstand server restart recommended: running ${shortSha(body.build.startupGitSha)}, latest ${shortSha(body.build.currentGitSha)}`
       )
     );
     console.log(chalk.dim('  Run `yarn prod:refresh` and restart the server process.\n'));

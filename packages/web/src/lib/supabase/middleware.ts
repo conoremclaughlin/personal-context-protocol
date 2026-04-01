@@ -111,7 +111,7 @@ export async function updateSession(request: NextRequest) {
       if (session?.access_token) {
         console.log('[middleware] Redirecting to MCP callback with access token');
         const apiUrl =
-          process.env.API_URL || `http://localhost:${process.env.PCP_PORT_BASE || 3001}`;
+          process.env.API_URL || `http://localhost:${process.env.INK_PORT_BASE || 3001}`;
         const callbackUrl = new URL(`${apiUrl}/mcp/auth/callback`);
         callbackUrl.searchParams.set('pending_id', mcpPendingId);
         callbackUrl.searchParams.set('access_token', session.access_token);

@@ -30,15 +30,15 @@ export interface IdentityJson {
   role?: string;
   studioId?: string;
   studio?: string;
-  /** Persisted runtime preferences for sb chat */
+  /** Persisted runtime preferences for ink chat */
   runtime?: RuntimePreferences;
 }
 
 /**
- * Read .pcp/identity.json from a directory. Returns null if not found/unparseable.
+ * Read .ink/identity.json from a directory. Returns null if not found/unparseable.
  */
 export function readIdentityJson(cwd: string): IdentityJson | null {
-  const identityPath = join(cwd, '.pcp', 'identity.json');
+  const identityPath = join(cwd, '.ink', 'identity.json');
   if (!existsSync(identityPath)) return null;
   try {
     return JSON.parse(readFileSync(identityPath, 'utf-8'));
@@ -48,11 +48,11 @@ export function readIdentityJson(cwd: string): IdentityJson | null {
 }
 
 /**
- * Save runtime preferences to .pcp/identity.json.
+ * Save runtime preferences to .ink/identity.json.
  * Merges with existing content — only updates the `runtime` field.
  */
 export function saveRuntimePreferences(cwd: string, prefs: RuntimePreferences): boolean {
-  const identityPath = join(cwd, '.pcp', 'identity.json');
+  const identityPath = join(cwd, '.ink', 'identity.json');
   try {
     const existing = readIdentityJson(cwd) || ({} as Record<string, unknown>);
     const merged = { ...existing, runtime: { ...(existing.runtime || {}), ...prefs } };
@@ -64,12 +64,12 @@ export function saveRuntimePreferences(cwd: string, prefs: RuntimePreferences): 
 }
 
 /**
- * Read .pcp/ROLE.md from a directory. Returns null if not found.
+ * Read .ink/ROLE.md from a directory. Returns null if not found.
  * ROLE.md defines the studio's situational focus — what the agent is doing
  * in this context (e.g., reviewing, building, product thinking).
  */
 export function readRoleMd(cwd: string): string | null {
-  const rolePath = join(cwd, '.pcp', 'ROLE.md');
+  const rolePath = join(cwd, '.ink', 'ROLE.md');
   if (!existsSync(rolePath)) return null;
   try {
     const content = readFileSync(rolePath, 'utf-8').trim();
@@ -83,8 +83,8 @@ export function readRoleMd(cwd: string): string | null {
  * Resolve agent ID from multiple sources:
  * 1. CLI --agent flag (if provided)
  * 2. AGENT_ID env var (propagated by sb launcher into backend/hook subprocesses)
- * 3. .pcp/identity.json in current directory
- * 4. ~/.pcp/config.json agentMapping (backend-aware when possible)
+ * 3. .ink/identity.json in current directory
+ * 4. ~/.ink/config.json agentMapping (backend-aware when possible)
  * 5. null (no identity configured)
  */
 export function resolveAgentId(cliAgent?: string, backendHint?: string): string | null {
@@ -110,7 +110,7 @@ export function resolveAgentId(cliAgent?: string, backendHint?: string): string 
   }
 
   if (cwd) {
-    const localIdentity = join(cwd, '.pcp', 'identity.json');
+    const localIdentity = join(cwd, '.ink', 'identity.json');
     if (existsSync(localIdentity)) {
       try {
         const identity: IdentityJson = JSON.parse(readFileSync(localIdentity, 'utf-8'));
@@ -121,13 +121,13 @@ export function resolveAgentId(cliAgent?: string, backendHint?: string): string 
     }
   }
 
-  const configPath = join(homedir(), '.pcp', 'config.json');
+  const configPath = join(homedir(), '.ink', 'config.json');
   if (existsSync(configPath)) {
     try {
       const config: PcpConfig = JSON.parse(readFileSync(configPath, 'utf-8'));
       const mapping = config.agentMapping || {};
 
-      const normalized = (backendHint || process.env.SB_BACKEND || process.env.PCP_BACKEND || '')
+      const normalized = (backendHint || process.env.SB_BACKEND || process.env.INK_BACKEND || '')
         .toLowerCase()
         .trim();
       const backendKeyCandidates: string[] =
@@ -159,7 +159,7 @@ export function resolveAgentId(cliAgent?: string, backendHint?: string): string 
 /**
  * Resolve backend from multiple sources:
  * 1. CLI --backend flag (if provided)
- * 2. .pcp/identity.json → backend field
+ * 2. .ink/identity.json → backend field
  * 3. Default: 'claude'
  */
 export function resolveBackend(cliBackend?: string): string {
@@ -191,18 +191,18 @@ export function buildIdentityPrompt(agentId: string, startupContextBlock?: strin
 **You are ${agentId}. Your agent ID is \`${agentId}\`.**
 
 When calling PCP tools (bootstrap, remember, recall, update_session_phase, etc.), use \`agentId: "${agentId}"\`.
-Do NOT read \`.pcp/identity.json\` — your identity is set by this system prompt.
+Do NOT read \`.ink/identity.json\` — your identity is set by this system prompt.
 Do NOT run \`echo $AGENT_ID\` — use the agentId provided above.
 
-Skip directly to loading user config from ~/.pcp/config.json and bootstrap as "${agentId}".
+Skip directly to loading user config from ~/.ink/config.json and bootstrap as "${agentId}".
 
 ## Tool Priority (IMPORTANT)
 
-Always use **PCP cloud tools** (mcp__pcp__*) over file reads or Claude Code builtins:
-- Identity: use mcp__pcp__bootstrap, not file reads
-- Tasks: use mcp__pcp__create_task, not TaskCreate
-- Memory: use mcp__pcp__remember, not local notes
-- Sessions: use mcp__pcp__update_session_phase/get_session/list_sessions
+Always use **PCP cloud tools** (mcp__inkstand__*) over file reads or Claude Code builtins:
+- Identity: use mcp__inkstand__bootstrap, not file reads
+- Tasks: use mcp__inkstand__create_task, not TaskCreate
+- Memory: use mcp__inkstand__remember, not local notes
+- Sessions: use mcp__inkstand__update_session_phase/get_session/list_sessions
 
 PCP tools persist across sessions and are shared with the user and other agents.`;
 

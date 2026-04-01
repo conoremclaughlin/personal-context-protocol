@@ -1,7 +1,7 @@
 /**
  * PCP Auth Tokens
  *
- * PKCE generation, token storage (~/.pcp/auth.json), refresh,
+ * PKCE generation, token storage (~/.ink/auth.json), refresh,
  * and JWT payload decoding for CLI OAuth flow.
  */
 
@@ -54,15 +54,15 @@ export interface JwtPayload {
 const CLIENT_ID = 'sb-cli';
 
 function authFilePath(): string {
-  return join(homedir(), '.pcp', 'auth.json');
+  return join(homedir(), '.ink', 'auth.json');
 }
 
 function configFilePath(): string {
-  return join(homedir(), '.pcp', 'config.json');
+  return join(homedir(), '.ink', 'config.json');
 }
 
 function delegatedAuthDirPath(): string {
-  return join(homedir(), '.pcp', 'auth', 'agents');
+  return join(homedir(), '.ink', 'auth', 'agents');
 }
 
 function sanitizeAgentId(agentId: string): string {
@@ -102,7 +102,7 @@ export function loadAuth(): StoredAuth | null {
 
 export function saveAuth(auth: StoredAuth): void {
   const path = authFilePath();
-  const dir = join(homedir(), '.pcp');
+  const dir = join(homedir(), '.ink');
   mkdirSync(dir, { recursive: true });
   writeFileSync(path, JSON.stringify(auth, null, 2) + '\n');
   chmodSync(path, 0o600);
@@ -222,7 +222,7 @@ export async function getValidAccessToken(
 ): Promise<string | null> {
   const allowEnvToken = options?.allowEnvToken !== false;
   if (allowEnvToken) {
-    const envToken = process.env.PCP_ACCESS_TOKEN?.trim();
+    const envToken = process.env.INK_ACCESS_TOKEN?.trim();
     if (envToken) {
       return envToken;
     }
@@ -263,7 +263,7 @@ export function getValidDelegatedAccessToken(
 
 export function updateConfigEmail(email: string, userId?: string): void {
   const path = configFilePath();
-  const dir = join(homedir(), '.pcp');
+  const dir = join(homedir(), '.ink');
   mkdirSync(dir, { recursive: true });
 
   let existing: Record<string, unknown> = {};

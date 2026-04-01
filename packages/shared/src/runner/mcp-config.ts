@@ -1,7 +1,7 @@
 /**
  * MCP Config Injection
  *
- * Shared utilities for injecting PCP session headers into .mcp.json configs.
+ * Shared utilities for injecting Ink session headers into .mcp.json configs.
  * Used by both CLI (buildMergedMcpConfig) and server runners to ensure
  * spawned agents' MCP calls carry session identity.
  *
@@ -52,17 +52,17 @@ export interface InjectSessionHeadersResult {
 // ─── Core ───────────────────────────────────────────────────────
 
 /**
- * Inject PCP session headers into an MCP config file.
+ * Inject Ink session headers into an MCP config file.
  *
- * Reads the given .mcp.json, adds x-pcp-session-id (and optionally
- * x-pcp-studio-id) headers to the "pcp" server entry, and writes
+ * Reads the given .mcp.json, adds x-ink-session-id (and optionally
+ * x-ink-studio-id) headers to the "inkstand" server entry, and writes
  * a temp file if modifications were needed.
  *
  * The header values use ${VAR} interpolation so Claude Code resolves
  * them from the spawned process's env vars at runtime.
  *
  * If the config already has the headers, or the file doesn't exist,
- * or there's no "pcp" server entry, returns the original path unchanged.
+ * or there's no "inkstand" server entry, returns the original path unchanged.
  */
 export function injectSessionHeaders(
   options: InjectSessionHeadersOptions
@@ -82,47 +82,47 @@ export function injectSessionHeaders(
     return { mcpConfigPath, cleanup: () => {}, modified: false };
   }
 
-  // No PCP server entry — nothing to inject into
-  if (!config.mcpServers.pcp) {
+  // No Inkstand server entry — nothing to inject into
+  if (!config.mcpServers.inkstand) {
     return { mcpConfigPath, cleanup: () => {}, modified: false };
   }
 
   let modified = false;
 
   // Inject session ID header (uses ${VAR} interpolation — Claude Code resolves at runtime)
-  if (!config.mcpServers.pcp.headers?.['x-pcp-session-id']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
-      'x-pcp-session-id': '${PCP_SESSION_ID}',
+  if (!config.mcpServers.inkstand.headers?.['x-ink-session-id']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
+      'x-ink-session-id': '${INK_SESSION_ID}',
     };
     modified = true;
   }
 
   // Inject studio ID header
-  if (studioId && !config.mcpServers.pcp.headers?.['x-pcp-studio-id']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
-      'x-pcp-studio-id': '${PCP_STUDIO_ID}',
+  if (studioId && !config.mcpServers.inkstand.headers?.['x-ink-studio-id']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
+      'x-ink-studio-id': '${INK_STUDIO_ID}',
     };
     modified = true;
   }
 
   // Inject Authorization header for triggered sessions.
-  // Uses ${VAR} interpolation so the token is resolved from PCP_ACCESS_TOKEN
+  // Uses ${VAR} interpolation so the token is resolved from INK_ACCESS_TOKEN
   // env var at runtime, not hardcoded in the config file.
-  if (accessToken && !config.mcpServers.pcp.headers?.['Authorization']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
-      Authorization: 'Bearer ${PCP_ACCESS_TOKEN}',
+  if (accessToken && !config.mcpServers.inkstand.headers?.['Authorization']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
+      Authorization: 'Bearer ${INK_ACCESS_TOKEN}',
     };
     modified = true;
   }
 
   // Inject consolidated context token (Phase 1 — alongside individual headers)
-  if (!config.mcpServers.pcp.headers?.['x-pcp-context']) {
-    config.mcpServers.pcp.headers = {
-      ...config.mcpServers.pcp.headers,
-      'x-pcp-context': '${PCP_CONTEXT_TOKEN}',
+  if (!config.mcpServers.inkstand.headers?.['x-ink-context']) {
+    config.mcpServers.inkstand.headers = {
+      ...config.mcpServers.inkstand.headers,
+      'x-ink-context': '${INK_CONTEXT_TOKEN}',
     };
     modified = true;
   }
@@ -153,8 +153,8 @@ export function injectSessionHeaders(
 // ─── Context Token ──────────────────────────────────────────
 
 /**
- * PCP context token payload — consolidated session/routing metadata.
- * Carried in the `x-pcp-context` header as base64url-encoded JSON.
+ * Ink context token payload — consolidated session/routing metadata.
+ * Carried in the `x-ink-context` header as base64url-encoded JSON.
  * See spec: pcp://specs/mcp-context-token
  */
 export interface PcpContextToken {
@@ -166,14 +166,14 @@ export interface PcpContextToken {
 }
 
 /**
- * Encode a context token for the `x-pcp-context` header.
+ * Encode a context token for the `x-ink-context` header.
  */
 export function encodeContextToken(token: PcpContextToken): string {
   return Buffer.from(JSON.stringify(token)).toString('base64url');
 }
 
 /**
- * Decode a context token from the `x-pcp-context` header.
+ * Decode a context token from the `x-ink-context` header.
  * Returns null if the header is missing or malformed.
  */
 export function decodeContextToken(header: string | undefined | null): PcpContextToken | null {
@@ -195,8 +195,8 @@ export function decodeContextToken(header: string | undefined | null): PcpContex
  * Build the session-related env vars for a spawned backend process.
  *
  * Sets both:
- * - PCP_CONTEXT_TOKEN: consolidated context token for x-pcp-context header
- * - Legacy individual env vars (PCP_SESSION_ID, PCP_STUDIO_ID, etc.)
+ * - INK_CONTEXT_TOKEN: consolidated context token for x-ink-context header
+ * - Legacy individual env vars (INK_SESSION_ID, INK_STUDIO_ID, etc.)
  *   for backward compat during Phase 1 migration
  */
 export function buildSessionEnv(options: {
@@ -212,23 +212,23 @@ export function buildSessionEnv(options: {
 
   // Legacy individual env vars (Phase 1 backward compat)
   if (options.pcpSessionId) {
-    env.PCP_SESSION_ID = options.pcpSessionId;
+    env.INK_SESSION_ID = options.pcpSessionId;
   }
   if (options.runtimeLinkId) {
-    env.PCP_RUNTIME_LINK_ID = options.runtimeLinkId;
+    env.INK_RUNTIME_LINK_ID = options.runtimeLinkId;
   }
   if (options.studioId) {
-    env.PCP_STUDIO_ID = options.studioId;
+    env.INK_STUDIO_ID = options.studioId;
   }
   if (options.accessToken) {
-    env.PCP_ACCESS_TOKEN = options.accessToken;
+    env.INK_ACCESS_TOKEN = options.accessToken;
     // Codex env_http_headers maps env var name → full header value
-    env.PCP_AUTH_BEARER = `Bearer ${options.accessToken}`;
+    env.INK_AUTH_BEARER = `Bearer ${options.accessToken}`;
   }
 
   // Consolidated context token (new — Phase 1)
   if (options.pcpSessionId && options.agentId) {
-    env.PCP_CONTEXT_TOKEN = encodeContextToken({
+    env.INK_CONTEXT_TOKEN = encodeContextToken({
       sessionId: options.pcpSessionId,
       studioId: options.studioId || '',
       agentId: options.agentId,

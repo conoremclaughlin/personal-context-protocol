@@ -43,7 +43,7 @@ function hasPcpHookCommand(value: unknown): boolean {
   ];
   if (typeof value === 'string') {
     return (
-      value.includes('sb hooks ') ||
+      value.includes('ink hooks ') ||
       signatures.some((signature) => value.includes(signature)) ||
       value.includes('commands/hooks.js')
     );
@@ -103,10 +103,10 @@ interface ClaudePermissionsStatus {
 function hasPcpMcpAllowRule(rule: string): boolean {
   const normalized = rule.trim();
   return (
-    normalized === 'mcp__pcp__*' ||
+    normalized === 'mcp__inkstand__*' ||
     normalized === 'mcp__*' ||
     normalized === '*' ||
-    normalized.startsWith('mcp__pcp__')
+    normalized.startsWith('mcp__inkstand__')
   );
 }
 
@@ -170,7 +170,7 @@ export function getMcpConfigStatus(cwd: string): McpConfigStatus {
     const parsed = JSON.parse(readFileSync(mcpPath, 'utf-8')) as {
       mcpServers?: Record<string, { url?: unknown }>;
     };
-    const pcpServer = parsed.mcpServers?.pcp;
+    const pcpServer = parsed.mcpServers?.inkstand;
     const pcpUrl = typeof pcpServer?.url === 'string' ? pcpServer.url : undefined;
     return {
       configExists: true,
@@ -213,7 +213,7 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
   console.log(chalk.bold('Auth'));
   if (!auth) {
     console.log(`  ${chalk.yellow('Not logged in')}`);
-    console.log(chalk.dim('  Run: sb auth login'));
+    console.log(chalk.dim('  Run: ink auth login'));
   } else if (expired) {
     console.log(`  ${chalk.yellow('Token expired')}`);
     if (payload?.email) {
@@ -228,14 +228,14 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
   console.log(`  ${chalk.dim(hookConfig)}`);
   if (!hooks.configExists) {
     console.log(`  ${chalk.yellow('Not installed')}`);
-    console.log(chalk.dim(`  Run: sb hooks install -b ${backend}`));
+    console.log(chalk.dim(`  Run: ink hooks install -b ${backend}`));
   } else if (hooks.parseError) {
     console.log(`  ${chalk.red('Config parse error')}`);
   } else if (hooks.installed) {
     console.log(`  ${chalk.green('Installed')}`);
   } else {
     console.log(`  ${chalk.yellow('No PCP hooks found')}`);
-    console.log(chalk.dim(`  Run: sb hooks install -b ${backend}`));
+    console.log(chalk.dim(`  Run: ink hooks install -b ${backend}`));
   }
   console.log('');
 
@@ -244,18 +244,18 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
     console.log(chalk.dim('  Managed by backend runtime (no local allow/deny file).'));
   } else if (!claudePermissions?.configExists) {
     console.log(chalk.yellow('  .claude/settings.local.json missing'));
-    console.log(chalk.dim('  Run: sb permissions auto'));
+    console.log(chalk.dim('  Run: ink permissions auto'));
   } else if (claudePermissions.parseError) {
     console.log(chalk.red('  .claude/settings.local.json parse error'));
   } else if (!claudePermissions.hasPermissions) {
     console.log(chalk.yellow('  No explicit permission rules configured'));
-    console.log(chalk.dim('  Run: sb permissions auto'));
+    console.log(chalk.dim('  Run: ink permissions auto'));
   } else {
     console.log(
       `  ${chalk.green('Configured')} (${claudePermissions.allowCount} allow, ${claudePermissions.denyCount} deny)`
     );
     if (!claudePermissions.hasPcpMcpAllowance) {
-      console.log(chalk.yellow('  No MCP PCP allow rule detected (mcp__pcp__*)'));
+      console.log(chalk.yellow('  No MCP PCP allow rule detected (mcp__inkstand__*)'));
     }
   }
   console.log('');
@@ -264,18 +264,18 @@ async function statusCommand(options: { backend?: string }): Promise<void> {
   console.log(`  ${chalk.dim('.mcp.json')}`);
   if (!mcpConfig.configExists) {
     console.log(chalk.yellow('  Missing'));
-    console.log(chalk.dim('  Run: sb init'));
+    console.log(chalk.dim('  Run: ink init'));
   } else if (mcpConfig.parseError) {
     console.log(chalk.red('  Parse error'));
   } else if (!mcpConfig.hasPcpServer) {
-    console.log(chalk.yellow('  Missing mcpServers.pcp'));
-    console.log(chalk.dim('  Run: sb init'));
+    console.log(chalk.yellow('  Missing mcpServers.inkstand'));
+    console.log(chalk.dim('  Run: ink init'));
   } else {
     console.log(
       `  ${chalk.green('PCP server configured')} (${mcpConfig.pcpUrl || chalk.dim('<url not set>')})`
     );
   }
-  console.log(`  ${chalk.dim('PCP_SERVER_URL')} ${pcpServerUrl}`);
+  console.log(`  ${chalk.dim('INK_SERVER_URL')} ${pcpServerUrl}`);
   console.log('');
 
   const permissionsHealthy =

@@ -211,7 +211,7 @@ export function resolveAttachCommand(
   if (directMatch) {
     const agentId = directMatch.agentId || 'wren';
     return {
-      command: `sb chat -a ${agentId} --session-id ${directMatch.id}`,
+      command: `ink chat -a ${agentId} --session-id ${directMatch.id}`,
       sessionId: directMatch.id,
       agentId,
     };
@@ -224,7 +224,7 @@ export function resolveAttachCommand(
 
   const agentId = byAgent.agentId || trimmed;
   return {
-    command: `sb chat -a ${agentId} --session-id ${byAgent.id}`,
+    command: `ink chat -a ${agentId} --session-id ${byAgent.id}`,
     sessionId: byAgent.id,
     agentId,
   };
@@ -624,7 +624,7 @@ async function fetchMissionSnapshot(options: MissionOptions): Promise<MissionSna
   const config = pcp.getConfig();
 
   if (!config.email) {
-    throw new Error('PCP not configured. Run: sb init');
+    throw new Error('PCP not configured. Run: ink init');
   }
 
   const listResult = (await pcp.callTool('list_sessions', {
@@ -780,8 +780,8 @@ function printSnapshot(snapshot: MissionSnapshot): void {
 
   console.log(chalk.bold('\nQuick attach commands'));
   for (const row of snapshot.rows) {
-    console.log(chalk.dim(`  sb chat -a ${row.agent} --attach`));
-    console.log(chalk.dim(`  sb chat -a ${row.agent} --attach-latest`));
+    console.log(chalk.dim(`  ink chat -a ${row.agent} --attach`));
+    console.log(chalk.dim(`  ink chat -a ${row.agent} --attach-latest`));
   }
 
   console.log(chalk.bold('\nActive sessions\n'));
@@ -982,7 +982,7 @@ async function runInkMission(options: MissionOptions): Promise<void> {
   const pcp = new PcpClient();
   const config = pcp.getConfig();
   if (!config.email) {
-    throw new Error('PCP not configured. Run: sb init');
+    throw new Error('PCP not configured. Run: ink init');
   }
 
   const intervalSeconds = Math.max(3, Number.parseInt(options.interval || '6', 10));

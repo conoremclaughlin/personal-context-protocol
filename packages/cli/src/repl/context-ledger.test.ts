@@ -163,13 +163,13 @@ describe('ContextLedger', () => {
     it('returns entry metadata with previews', () => {
       const ledger = new ContextLedger();
       ledger.addEntry('user', 'a short message');
-      ledger.addEntry('assistant', 'x'.repeat(200), 'pcp-tool');
+      ledger.addEntry('assistant', 'x'.repeat(200), 'ink-tool');
 
       const summary = ledger.summarizeEntries();
       expect(summary).toHaveLength(2);
       expect(summary[0].preview).toBe('a short message');
       expect(summary[1].preview.length).toBeLessThanOrEqual(123); // 120 + "..."
-      expect(summary[1].source).toBe('pcp-tool');
+      expect(summary[1].source).toBe('ink-tool');
     });
   });
 });

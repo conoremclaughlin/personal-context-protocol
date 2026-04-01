@@ -140,7 +140,7 @@ describe('resolveAttachCommand', () => {
 
   it('resolves direct session-id prefix first', () => {
     expect(resolveAttachCommand(sessions, 'abc1')).toEqual({
-      command: 'sb chat -a lumen --session-id abc12345-aaaa',
+      command: 'ink chat -a lumen --session-id abc12345-aaaa',
       sessionId: 'abc12345-aaaa',
       agentId: 'lumen',
     });
@@ -148,7 +148,7 @@ describe('resolveAttachCommand', () => {
 
   it('resolves latest session for agent target', () => {
     expect(resolveAttachCommand(sessions, 'lumen')).toEqual({
-      command: 'sb chat -a lumen --session-id def67890-bbbb',
+      command: 'ink chat -a lumen --session-id def67890-bbbb',
       sessionId: 'def67890-bbbb',
       agentId: 'lumen',
     });

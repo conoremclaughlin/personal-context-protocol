@@ -22,13 +22,13 @@ Skills are loaded from a 4-tier precedence cascade (lowest → highest). When na
 
 2. **Extra dirs**: configurable paths (default: `~/.openclaw/skills`)
    - ClawHub interop — `clawdhub install playwright-mcp` just works
-   - Configured in `~/.pcp/config.json` (see below)
+   - Configured in `~/.ink/config.json` (see below)
 
-3. **Managed**: `~/.pcp/skills/`
+3. **Managed**: `~/.ink/skills/`
    - Your custom skills
    - Downloaded skills from registries
 
-4. **Workspace**: `<cwd>/.pcp/skills/`
+4. **Workspace**: `<cwd>/.ink/skills/`
    - Per-worktree / per-SB skills
    - Highest precedence — overrides everything
 
@@ -36,7 +36,7 @@ Skills are loaded from a 4-tier precedence cascade (lowest → highest). When na
 
 ### Configuring Extra Directories
 
-Add `skills.extraDirs` to `~/.pcp/config.json`:
+Add `skills.extraDirs` to `~/.ink/config.json`:
 
 ```json
 {
@@ -55,7 +55,7 @@ This lets ClawHub-installed skills (and any other AgentSkills-compatible sources
 1. Create the skills directory if it doesn't exist:
 
    ```bash
-   mkdir -p ~/.pcp/skills
+   mkdir -p ~/.ink/skills
    ```
 
 2. Add a skill as either:
@@ -66,11 +66,11 @@ This lets ClawHub-installed skills (and any other AgentSkills-compatible sources
 
 ```bash
 # Clone a skill repository
-cd ~/.pcp/skills
+cd ~/.ink/skills
 git clone https://github.com/user/skill-name
 
 # Or download a single file
-curl -o ~/.pcp/skills/my-skill.md https://raw.githubusercontent.com/user/repo/main/SKILL.md
+curl -o ~/.ink/skills/my-skill.md https://raw.githubusercontent.com/user/repo/main/SKILL.md
 ```
 
 ### From URL / Registry (curl)
@@ -78,14 +78,14 @@ curl -o ~/.pcp/skills/my-skill.md https://raw.githubusercontent.com/user/repo/ma
 If a registry (PCP Hub, community index, or docs page) gives you a direct skill file URL:
 
 ```bash
-mkdir -p ~/.pcp/skills
-curl -fsSL "https://example.com/skills/my-skill/SKILL.md" -o ~/.pcp/skills/my-skill.md
+mkdir -p ~/.ink/skills
+curl -fsSL "https://example.com/skills/my-skill/SKILL.md" -o ~/.ink/skills/my-skill.md
 ```
 
 If the skill is a directory package, place it under:
 
 ```text
-~/.pcp/skills/<skill-name>/
+~/.ink/skills/<skill-name>/
 ```
 
 ### From ClawHub
@@ -153,7 +153,7 @@ Step-by-step guidance for the AI.
 For more complex skills with multiple files:
 
 ```
-~/.pcp/skills/my-skill/
+~/.ink/skills/my-skill/
 ├── manifest.yaml     # Skill metadata (required)
 ├── SKILL.md          # Instructions for AI (optional)
 ├── run.js            # Bundled scripts (optional)
@@ -170,7 +170,7 @@ To run the automation:
 `cd {baseDir} && node run.js /tmp/my-script.js`
 ```
 
-At load time, `{baseDir}` is replaced with the skill's actual filesystem path (e.g., `~/.pcp/skills/my-skill`).
+At load time, `{baseDir}` is replaced with the skill's actual filesystem path (e.g., `~/.ink/skills/my-skill`).
 
 ## Skill Types
 
@@ -337,8 +337,8 @@ Default source priority is deterministic (lowest → highest precedence):
 1. **Built-in** — shipped with PCP
 2. **Cloud installations** — user's installed skills from registry
 3. **Extra dirs** — ClawHub and other configured sources
-4. **Managed** (`~/.pcp/skills/`) — user-installed local skills
-5. **Workspace** (`<cwd>/.pcp/skills/`) — per-worktree overrides
+4. **Managed** (`~/.ink/skills/`) — user-installed local skills
+5. **Workspace** (`<cwd>/.ink/skills/`) — per-worktree overrides
 
 Later sources override earlier ones when names collide.
 

@@ -25,4 +25,4 @@ The canonical source for these templates is `packages/templates/studio-roles/`. 
 - **Keep it short.** A ROLE.md should orient the agent quickly, not replace its identity. 20–40 lines is enough.
 - **Use plain language.** The agent reads this at session start. Jargon or complex conditionals slow things down.
 
-Custom templates can be placed in `~/.pcp/studio-templates/<name>/ROLE.md` and referenced by name with `--template <name>`.
+Custom templates can be placed in `~/.ink/studio-templates/<name>/ROLE.md` and referenced by name with `--template <name>`.

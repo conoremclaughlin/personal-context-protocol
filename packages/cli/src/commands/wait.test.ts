@@ -41,7 +41,7 @@ describe('sb wait', () => {
   });
 
   // Integration tests — require running PCP server
-  it.skipIf(!process.env.PCP_INTEGRATION)(
+  it.skipIf(!process.env.INK_INTEGRATION)(
     'times out with exit code 1 when no new messages',
     async () => {
       const result = await runWait(['--timeout', '10', '--interval', '5']);
@@ -50,7 +50,7 @@ describe('sb wait', () => {
     }
   );
 
-  it.skipIf(!process.env.PCP_INTEGRATION)(
+  it.skipIf(!process.env.INK_INTEGRATION)(
     'detects existing thread messages and exits 0',
     async () => {
       const result = await runWait(['--thread', 'pr:235', '--timeout', '10', '--interval', '5']);

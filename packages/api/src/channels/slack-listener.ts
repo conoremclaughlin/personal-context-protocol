@@ -570,7 +570,7 @@ export class SlackListener extends EventEmitter {
 
   /**
    * Download a Slack file and save locally
-   * Files are saved to ~/.pcp/files/slack/
+   * Files are saved to ~/.ink/files/slack/
    */
   private async downloadFile(file: {
     url_private?: string;
@@ -594,7 +594,7 @@ export class SlackListener extends EventEmitter {
       const path = await import('path');
       const os = await import('os');
 
-      const pcpFilesDir = path.join(os.homedir(), '.pcp', 'files', 'slack');
+      const pcpFilesDir = path.join(os.homedir(), '.ink', 'files', 'slack');
       await fs.mkdir(pcpFilesDir, { recursive: true });
 
       const safeName = (file.name || `attachment_${Date.now()}`).replace(/[^a-zA-Z0-9._-]/g, '_');

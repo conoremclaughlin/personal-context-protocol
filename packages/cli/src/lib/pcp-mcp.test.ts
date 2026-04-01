@@ -19,15 +19,15 @@ function mockJsonResponse(payload: Record<string, unknown>): Partial<Response> {
 }
 
 describe('pcp-mcp callPcpTool', () => {
-  const originalServerUrl = process.env.PCP_SERVER_URL;
+  const originalServerUrl = process.env.INK_SERVER_URL;
 
   beforeEach(() => {
-    process.env.PCP_SERVER_URL = 'http://localhost:3999';
+    process.env.INK_SERVER_URL = 'http://localhost:3999';
     mockedGetValidAccessToken.mockResolvedValue(null);
   });
 
   afterEach(() => {
-    process.env.PCP_SERVER_URL = originalServerUrl;
+    process.env.INK_SERVER_URL = originalServerUrl;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -132,7 +132,7 @@ describe('pcp-mcp callPcpTool', () => {
 
     const [, options] = fetchSpy.mock.calls[0];
     expect(options.headers).toMatchObject({
-      'x-pcp-caller-profile': 'runtime',
+      'x-ink-caller-profile': 'runtime',
     });
   });
 
@@ -152,7 +152,7 @@ describe('pcp-mcp callPcpTool', () => {
     );
     await expect(callPcpTool('list_sessions', { limit: 1 })).rejects.toThrow('ECONNREFUSED');
     await expect(callPcpTool('list_sessions', { limit: 1 })).rejects.toThrow(
-      'Ensure PCP server is running and PCP_SERVER_URL is correct.'
+      'Ensure PCP server is running and INK_SERVER_URL is correct.'
     );
   });
 });

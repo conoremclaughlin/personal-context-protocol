@@ -1,18 +1,17 @@
 {
-  "name": "@pcp/openclaw-plugin",
+  "name": "@inkstand/openclaw-plugin",
   "version": "0.1.0",
-  "description": "Personal Context Protocol plugin for OpenClaw — identity, memory, sessions, and cross-agent messaging",
+  "description": "Inkstand plugin for OpenClaw — identity, memory, sessions, and cross-agent messaging",
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/conoremclaughlin/personal-context-protocol.git",
+    "url": "https://github.com/conoremclaughlin/inkstand.git",
     "directory": "packages/openclaw-plugin"
   },
   "keywords": [
     "openclaw",
-    "pcp",
-    "personal-context-protocol",
+    "inkstand",
     "mcp",
     "ai-agent",
     "memory",

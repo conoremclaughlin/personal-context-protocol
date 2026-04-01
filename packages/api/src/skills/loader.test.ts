@@ -305,7 +305,7 @@ Other content.
       const paths = getSkillPaths();
 
       expect(paths).toHaveLength(2);
-      expect(paths[1]).toContain('.pcp/skills');
+      expect(paths[1]).toContain('.ink/skills');
     });
   });
 });

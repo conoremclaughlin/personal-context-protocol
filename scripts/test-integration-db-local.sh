@@ -97,7 +97,7 @@ export SUPABASE_PUBLISHABLE_KEY="${SUPABASE_PUBLISHABLE_KEY:-${ANON_KEY:-}}"
 export SUPABASE_SECRET_KEY="${SUPABASE_SECRET_KEY:-${SERVICE_ROLE_KEY:-}}"
 export JWT_SECRET="${JWT_SECRET:-${AUTH_JWT_SECRET:-}}"
 export NODE_ENV="test"
-export PCP_ALLOW_REMOTE_INTEGRATION_DB="0"
+export INK_ALLOW_REMOTE_INTEGRATION_DB="0"
 export INTEGRATION_SUPABASE_WORKDIR="${SUPABASE_WORKDIR}"
 
 if [[ -z "${SUPABASE_URL}" || -z "${SUPABASE_SECRET_KEY}" || -z "${JWT_SECRET}" ]]; then
@@ -107,6 +107,6 @@ if [[ -z "${SUPABASE_URL}" || -z "${SUPABASE_SECRET_KEY}" || -z "${JWT_SECRET}" 
 fi
 
 echo "[integration-db] Running API DB integration suite against ${SUPABASE_URL}"
-yarn --cwd "${ROOT_DIR}" workspace @personal-context/api test:integration:db
+yarn --cwd "${ROOT_DIR}" workspace @inkstand/api test:integration:db
 
 echo "[integration-db] ✅ Integration DB tests passed."

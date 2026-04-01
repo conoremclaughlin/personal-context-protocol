@@ -4,12 +4,12 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { env } from '../config/env';
 
-// PCP log directory in user's home
-const PCP_LOG_DIR = join(homedir(), '.pcp', 'logs');
+// Ink log directory in user's home
+const INK_LOG_DIR = join(homedir(), '.ink', 'logs');
 
 // Ensure log directory exists
-if (!existsSync(PCP_LOG_DIR)) {
-  mkdirSync(PCP_LOG_DIR, { recursive: true });
+if (!existsSync(INK_LOG_DIR)) {
+  mkdirSync(INK_LOG_DIR, { recursive: true });
 }
 
 // Define log format
@@ -34,7 +34,7 @@ const consoleFormat = winston.format.combine(
 export const logger = winston.createLogger({
   level: env.LOG_LEVEL,
   format: logFormat,
-  defaultMeta: { service: 'personal-context-protocol' },
+  defaultMeta: { service: 'inkstand' },
   transports: [
     // Write all logs to console
     new winston.transports.Console({
@@ -42,7 +42,7 @@ export const logger = winston.createLogger({
     }),
     // Write all logs with level 'error' and below to error.log
     new winston.transports.File({
-      filename: join(PCP_LOG_DIR, 'error.log'),
+      filename: join(INK_LOG_DIR, 'error.log'),
       level: 'error',
       maxsize: 5242880, // 5MB
       maxFiles: 5,
@@ -50,7 +50,7 @@ export const logger = winston.createLogger({
     }),
     // Write all logs to combined.log
     new winston.transports.File({
-      filename: join(PCP_LOG_DIR, 'combined.log'),
+      filename: join(INK_LOG_DIR, 'combined.log'),
       maxsize: 10485760, // 10MB
       maxFiles: 5,
       tailable: true,
@@ -58,11 +58,11 @@ export const logger = winston.createLogger({
   ],
   exceptionHandlers: [
     new winston.transports.Console({ format: consoleFormat }),
-    new winston.transports.File({ filename: join(PCP_LOG_DIR, 'exceptions.log') }),
+    new winston.transports.File({ filename: join(INK_LOG_DIR, 'exceptions.log') }),
   ],
   rejectionHandlers: [
     new winston.transports.Console({ format: consoleFormat }),
-    new winston.transports.File({ filename: join(PCP_LOG_DIR, 'rejections.log') }),
+    new winston.transports.File({ filename: join(INK_LOG_DIR, 'rejections.log') }),
   ],
 });
 

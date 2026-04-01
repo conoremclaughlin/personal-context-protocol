@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-requested_target="${PCP_MIGRATION_TARGET:-auto}"
+requested_target="${INK_MIGRATION_TARGET:-auto}"
 if [[ "${1:-}" == "--local" || "${1:-}" == "local" ]]; then
   requested_target="local"
 elif [[ "${1:-}" == "--linked" || "${1:-}" == "linked" ]]; then

@@ -15,8 +15,8 @@ if ! docker info >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ -n "${PCP_DOCKER_ENV_FILE:-}" ]]; then
-  ENV_FILE="${PCP_DOCKER_ENV_FILE}"
+if [[ -n "${INK_DOCKER_ENV_FILE:-}" ]]; then
+  ENV_FILE="${INK_DOCKER_ENV_FILE}"
 elif [[ -f "${ROOT_DIR}/.env.docker" ]]; then
   ENV_FILE="${ROOT_DIR}/.env.docker"
 elif [[ -f "${ROOT_DIR}/.env.local" ]]; then
@@ -25,7 +25,7 @@ elif [[ -f "${ROOT_DIR}/.env" ]]; then
   ENV_FILE="${ROOT_DIR}/.env"
 else
   echo "[docker-app] No env file found." >&2
-  echo "[docker-app] Create .env.docker from .env.docker.example, or set PCP_DOCKER_ENV_FILE." >&2
+  echo "[docker-app] Create .env.docker from .env.docker.example, or set INK_DOCKER_ENV_FILE." >&2
   exit 1
 fi
 

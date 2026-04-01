@@ -1,23 +1,23 @@
 #!/usr/bin/env node
 /**
- * PCP Channel Plugin for Claude Code
+ * InkMail Plugin for Claude Code
  *
- * Pushes PCP inbox messages and thread replies into a running Claude Code
+ * Pushes InkMail inbox messages and thread replies into a running Claude Code
  * session in real time via the Channels API (v2.1.80+).
  *
  * Features:
- * - Polls PCP inbox for new unread messages
+ * - Polls InkMail inbox for new unread messages
  * - Polls specific threads for new replies
  * - Pushes events as <channel source="pcp" ...> tags
  * - Exposes reply tool for two-way communication
  *
  * Usage:
- *   claude --dangerously-load-development-channels server:pcp-inbox
+ *   claude --dangerously-load-development-channels server:inkmail
  *
  * Environment:
- *   PCP_SERVER_URL  — PCP server URL (default: http://localhost:3001)
- *   PCP_AGENT_ID    — Agent identity (default: from AGENT_ID or .pcp/identity.json)
- *   PCP_POLL_INTERVAL_MS — Poll interval in ms (default: 10000)
+ *   INK_SERVER_URL  — Ink server URL (default: http://localhost:3001)
+ *   INK_AGENT_ID    — Agent identity (default: from AGENT_ID or .ink/identity.json)
+ *   INK_POLL_INTERVAL_MS — Poll interval in ms (default: 10000)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -27,10 +27,10 @@ import { join } from 'path';
 import { homedir } from 'os';
 
 // ─── Logging ────────────────────────────────────────────────
-// Logs to ~/.pcp/logs/channel-plugin.log for debugging.
+// Logs to ~/.ink/logs/channel-plugin.log for debugging.
 // Cannot use stdout (reserved for MCP stdio transport).
 
-const LOG_DIR = join(homedir(), '.pcp', 'logs');
+const LOG_DIR = join(homedir(), '.ink', 'logs');
 const LOG_FILE = join(LOG_DIR, 'channel-plugin.log');
 
 function log(level: 'info' | 'warn' | 'error' | 'debug', message: string, data?: Record<string, unknown>): void {
@@ -48,15 +48,15 @@ function log(level: 'info' | 'warn' | 'error' | 'debug', message: string, data?:
 
 // ─── Config ─────────────────────────────────────────────────
 
-const PCP_SERVER_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
-const POLL_INTERVAL_MS = parseInt(process.env.PCP_POLL_INTERVAL_MS || '10000', 10);
+const INK_SERVER_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
+const POLL_INTERVAL_MS = parseInt(process.env.INK_POLL_INTERVAL_MS || '10000', 10);
 
 function resolveAgentId(): string {
-  if (process.env.PCP_AGENT_ID) return process.env.PCP_AGENT_ID;
+  if (process.env.INK_AGENT_ID) return process.env.INK_AGENT_ID;
   if (process.env.AGENT_ID) return process.env.AGENT_ID;
 
-  // Try .pcp/identity.json in cwd
-  const identityPath = join(process.cwd(), '.pcp', 'identity.json');
+  // Try .ink/identity.json in cwd
+  const identityPath = join(process.cwd(), '.ink', 'identity.json');
   if (existsSync(identityPath)) {
     try {
       const identity = JSON.parse(readFileSync(identityPath, 'utf-8'));
@@ -70,7 +70,7 @@ function resolveAgentId(): string {
 }
 
 function resolveEmail(): string | undefined {
-  const configPath = join(homedir(), '.pcp', 'config.json');
+  const configPath = join(homedir(), '.ink', 'config.json');
   if (existsSync(configPath)) {
     try {
       const config = JSON.parse(readFileSync(configPath, 'utf-8'));
@@ -83,13 +83,13 @@ function resolveEmail(): string | undefined {
 }
 
 function resolveAccessToken(): string | undefined {
-  if (process.env.PCP_ACCESS_TOKEN) return process.env.PCP_ACCESS_TOKEN;
+  if (process.env.INK_ACCESS_TOKEN) return process.env.INK_ACCESS_TOKEN;
 
   // Try auth credentials
   const projectHash = Buffer.from(process.cwd()).toString('base64url').slice(0, 16);
   const credPaths = [
-    join(homedir(), '.pcp', 'auth', projectHash, 'credentials.json'),
-    join(homedir(), '.pcp', 'auth', 'default', 'credentials.json'),
+    join(homedir(), '.ink', 'auth', projectHash, 'credentials.json'),
+    join(homedir(), '.ink', 'auth', 'default', 'credentials.json'),
   ];
   for (const credPath of credPaths) {
     if (existsSync(credPath)) {
@@ -109,8 +109,8 @@ function resolveAccessToken(): string | undefined {
 const agentId = resolveAgentId();
 const email = resolveEmail();
 const accessToken = resolveAccessToken();
-const studioId = process.env.PCP_STUDIO_ID || undefined;
-const sessionId = process.env.PCP_SESSION_ID || undefined;
+const studioId = process.env.INK_STUDIO_ID || undefined;
+const sessionId = process.env.INK_SESSION_ID || undefined;
 
 /**
  * Check if a legacy inbox message is addressed to this studio.
@@ -136,7 +136,7 @@ log('info', 'Channel plugin starting', {
   hasToken: !!accessToken,
   studioId: studioId || '(none)',
   sessionId: sessionId || '(none)',
-  server: PCP_SERVER_URL,
+  server: INK_SERVER_URL,
   pollIntervalMs: POLL_INTERVAL_MS,
 });
 
@@ -144,7 +144,7 @@ async function callPcp(
   tool: string,
   args: Record<string, unknown>
 ): Promise<Record<string, unknown> | null> {
-  const url = `${PCP_SERVER_URL}/mcp`;
+  const url = `${INK_SERVER_URL}/mcp`;
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     Accept: 'application/json, text/event-stream',
@@ -154,10 +154,10 @@ async function callPcp(
   }
   // Forward studio/session context so the server can apply channelPoll filtering
   if (studioId) {
-    headers['x-pcp-studio-id'] = studioId;
+    headers['x-ink-studio-id'] = studioId;
   }
   if (sessionId) {
-    headers['x-pcp-session-id'] = sessionId;
+    headers['x-ink-session-id'] = sessionId;
   }
 
   try {
@@ -203,7 +203,7 @@ async function callPcp(
 // ─── MCP Server ─────────────────────────────────────────────
 
 const mcp = new Server(
-  { name: 'pcp-inbox', version: '0.1.0' },
+  { name: 'inkmail', version: '0.1.0' },
   {
     capabilities: {
       experimental: {
@@ -215,9 +215,9 @@ const mcp = new Server(
         // 'claude/channel/permission': {},
       },
     },
-    instructions: `Messages from other SBs (AI agents) arrive as <channel source="pcp-inbox" ...> tags.
+    instructions: `Messages from other SBs (AI agents) arrive as <channel source="inkmail" ...> tags.
 
-These are real-time notifications from the PCP inbox — thread replies, task requests, review feedback, etc.
+These are real-time notifications from the Ink inbox — thread replies, task requests, review feedback, etc.
 
 When you receive a channel message:
 - Read and understand the content

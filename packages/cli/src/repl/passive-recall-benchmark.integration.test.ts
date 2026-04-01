@@ -9,7 +9,7 @@
  * 2. Topic drift — does it shift when the conversation shifts?
  * 3. Noise ratio — how often does it inject irrelevant content?
  *
- * Run with: PCP_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts packages/cli/src/repl/passive-recall-benchmark.integration.test.ts
+ * Run with: INK_SERVER_URL=http://localhost:3001 npx vitest run -c vitest.integration.config.ts packages/cli/src/repl/passive-recall-benchmark.integration.test.ts
  */
 
 import { describe, expect, it, beforeAll } from 'vitest';
@@ -20,7 +20,7 @@ import { readFileSync } from 'fs';
 
 // ─── PCP Client ─────────────────────────────────────────────────
 
-const PCP_URL = process.env.PCP_SERVER_URL || 'http://localhost:3001';
+const PCP_URL = process.env.INK_SERVER_URL || 'http://localhost:3001';
 
 let serverAvailable = false;
 try {
@@ -51,7 +51,7 @@ async function pcpRecall(
   query: string,
   options?: { limit?: number; agentId?: string; recallMode?: string }
 ): Promise<RecallResponse> {
-  const authPath = `${process.env.HOME}/.pcp/auth.json`;
+  const authPath = `${process.env.HOME}/.ink/auth.json`;
   let accessToken: string;
   try {
     const auth = JSON.parse(readFileSync(authPath, 'utf-8'));
