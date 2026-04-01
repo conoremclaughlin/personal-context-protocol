@@ -109,10 +109,15 @@ export class CodexRunner implements IRunner {
     config: ClaudeRunnerConfig,
     promptPath: string
   ): string[] {
-    // -a never must come BEFORE the exec subcommand — it's a root-level flag.
-    // Non-interactive: never prompt for approvals (no human present).
-    // Keeps sandbox protections — recommended by Codex docs for exec mode.
-    const args: string[] = ['-a', 'never', 'exec'];
+    // Triggered sessions are non-interactive (no human present).
+    // sandbox_bypass (opt-in per studio): bypasses sandbox + approvals so
+    // HTTP MCP tools work in exec mode. Without it, Codex's sandbox blocks
+    // network access and MCP calls return "user cancelled".
+    // -a never: fallback when sandbox_bypass is off — suppresses shell
+    // approval prompts but MCP tools remain blocked.
+    const args: string[] = config.sandboxBypass
+      ? ['--dangerously-bypass-approvals-and-sandbox', 'exec']
+      : ['-a', 'never', 'exec'];
     if (isResume) {
       args.push('resume');
     }

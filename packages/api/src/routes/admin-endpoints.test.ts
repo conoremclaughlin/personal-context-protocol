@@ -1148,4 +1148,151 @@ describe('admin endpoint handlers (no-500 regression)', () => {
       expect((res._json as any).users).toEqual([]);
     });
   });
+
+  describe('PATCH /studios/:studioId', () => {
+    it('should update sandbox_bypass on a valid studio', async () => {
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'studios') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  maybeSingle: vi.fn().mockResolvedValue({
+                    data: { id: 'studio-123', user_id: 'user-123' },
+                    error: null,
+                  }),
+                }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          };
+        }
+        return createQueryChain(null);
+      });
+
+      const handler = findRouteHandler('patch', '/studios/:studioId');
+      const req = createAuthenticatedReq({
+        params: { studioId: 'studio-123' },
+        body: { sandboxBypass: true },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).success).toBe(true);
+      expect((res._json as any).sandbox_bypass).toBe(true);
+    });
+
+    it('should return 404 for non-existent studio', async () => {
+      mockSupabaseFrom.mockImplementation(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          }),
+        }),
+      }));
+
+      const handler = findRouteHandler('patch', '/studios/:studioId');
+      const req = createAuthenticatedReq({
+        params: { studioId: 'nonexistent' },
+        body: { sandboxBypass: true },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(404);
+    });
+
+    it('should return 400 when no valid fields provided', async () => {
+      mockSupabaseFrom.mockImplementation(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              maybeSingle: vi.fn().mockResolvedValue({
+                data: { id: 'studio-123', user_id: 'user-123' },
+                error: null,
+              }),
+            }),
+          }),
+        }),
+      }));
+
+      const handler = findRouteHandler('patch', '/studios/:studioId');
+      const req = createAuthenticatedReq({
+        params: { studioId: 'studio-123' },
+        body: {},
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(400);
+    });
+  });
+
+  describe('PATCH /identities/:agentId/settings', () => {
+    it('should update sandbox_bypass on a valid identity', async () => {
+      mockSupabaseFrom.mockImplementation((table: string) => {
+        if (table === 'agent_identities') {
+          return {
+            select: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                eq: vi.fn().mockReturnValue({
+                  eq: vi.fn().mockReturnValue({
+                    maybeSingle: vi.fn().mockResolvedValue({
+                      data: { id: 'identity-abc' },
+                      error: null,
+                    }),
+                  }),
+                }),
+              }),
+            }),
+            update: vi.fn().mockReturnValue({
+              eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+            }),
+          };
+        }
+        return createQueryChain(null);
+      });
+
+      const handler = findRouteHandler('patch', '/identities/:agentId/settings');
+      const req = createAuthenticatedReq({
+        params: { agentId: 'lumen' },
+        body: { sandboxBypass: true },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(200);
+      expect((res._json as any).success).toBe(true);
+      expect((res._json as any).sandbox_bypass).toBe(true);
+    });
+
+    it('should return 404 for unknown agent', async () => {
+      mockSupabaseFrom.mockImplementation(() => ({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              eq: vi.fn().mockReturnValue({
+                maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+              }),
+            }),
+          }),
+        }),
+      }));
+
+      const handler = findRouteHandler('patch', '/identities/:agentId/settings');
+      const req = createAuthenticatedReq({
+        params: { agentId: 'nonexistent' },
+        body: { sandboxBypass: true },
+      });
+      const res = createMockRes();
+      await handler!(req, res);
+
+      expect(res._status).toBe(404);
+    });
+  });
 });

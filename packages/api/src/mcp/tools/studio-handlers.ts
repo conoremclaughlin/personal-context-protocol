@@ -113,6 +113,9 @@ const updateStudioSchema = userIdentifierBaseSchema.extend({
     .describe(
       'ThreadKey glob patterns this studio handles for trigger routing. Examples: "pr:*", "spec:*", "branch:wren/feat/auth". Use "*" for catch-all (one per agent). Replaces existing patterns.'
     ),
+  // NOTE: sandbox_bypass is intentionally NOT exposed via MCP tools — it's a
+  // security-sensitive setting that should only be changed via admin API
+  // endpoints or the web dashboard (future: /individuals/<id> settings page).
 });
 
 const closeStudioSchema = userIdentifierBaseSchema.extend({

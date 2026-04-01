@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { MessageSquare, GitBranch, ArrowRight, Monitor, FolderGit2 } from 'lucide-react';
+import { MessageSquare, GitBranch, ArrowRight, Monitor, FolderGit2, Settings } from 'lucide-react';
 import Link from 'next/link';
 import { useApiQuery } from '@/lib/api';
 import clsx from 'clsx';
@@ -229,8 +229,9 @@ export default function DashboardPage() {
                       )}
                       <Link
                         href={`/routing/${agent.agentId}`}
-                        className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+                        className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-gray-600 bg-white border border-gray-200 rounded-md hover:bg-gray-50 hover:text-gray-900 transition-colors"
                       >
+                        <Settings className="h-3 w-3" />
                         Manage
                       </Link>
                     </div>

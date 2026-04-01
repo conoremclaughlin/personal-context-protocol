@@ -64,6 +64,7 @@ interface AgentStudio {
   branch: string | null;
   status: string;
   routePatterns: string[];
+  sandboxBypass: boolean | null; // null = inherit from SB default
 }
 
 interface AgentRoutingResponse {
@@ -76,6 +77,7 @@ interface AgentRoutingResponse {
     description: string | null;
     backend: string | null;
     studioHint: string;
+    sandboxBypass: boolean;
     updatedAt: string;
   };
   studios: AgentStudio[];
@@ -275,6 +277,52 @@ export default function AgentRoutingPage() {
           </Badge>
         )}
       </div>
+
+      {/* SB-level settings */}
+      {data?.agent && (
+        <Card className="mt-6">
+          <CardHeader className="pb-3">
+            <div className="flex items-center gap-2">
+              <Info className="h-4 w-4 text-gray-400" />
+              <CardTitle className="text-base font-semibold">Security & Permissions</CardTitle>
+            </div>
+            <CardDescription>
+              Default settings for all of {data.agent.name || agentId}&apos;s studios. Individual studios can override below.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center justify-between rounded-lg border p-3 bg-gray-50/50">
+              <div>
+                <p className="text-sm font-medium text-gray-700">MCP sandbox bypass</p>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Allow MCP tools in triggered sessions (required for Codex HTTP MCP)
+                </p>
+              </div>
+              <button
+                onClick={async () => {
+                  try {
+                    await apiPatch(`/api/admin/identities/${agentId}/settings`, {
+                      sandboxBypass: !data.agent.sandboxBypass,
+                    });
+                    queryClient.invalidateQueries({ queryKey: ['routing-agent', agentId] });
+                  } catch (e) {
+                    console.error('Failed to update SB settings:', e);
+                  }
+                }}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  data.agent.sandboxBypass ? 'bg-blue-600' : 'bg-gray-200'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${
+                    data.agent.sandboxBypass ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {data && !data.heartbeatProcessingEnabled && (
         <div className="mt-4 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
@@ -614,16 +662,49 @@ export default function AgentRoutingPage() {
                       </p>
                     )}
                   </div>
-                  <Badge
-                    variant="outline"
-                    className={
-                      studio.status === 'active'
-                        ? 'bg-green-50 text-green-700 border-green-200'
-                        : 'bg-gray-50 text-gray-500 border-gray-200'
-                    }
-                  >
-                    {studio.status}
-                  </Badge>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <label
+                      className="flex items-center gap-1.5 cursor-pointer"
+                      title={studio.sandboxBypass === null
+                        ? `MCP bypass: inheriting ${data?.agent?.sandboxBypass ? 'ON' : 'OFF'} from SB default (click to override)`
+                        : 'MCP bypass: studio override (click to toggle, shift+click to reset to inherit)'}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={studio.sandboxBypass ?? data?.agent?.sandboxBypass ?? false}
+                        onChange={async (e) => {
+                          try {
+                            // Shift+click resets to null (inherit from SB)
+                            const newValue = e.nativeEvent instanceof MouseEvent && e.nativeEvent.shiftKey
+                              ? null
+                              : !(studio.sandboxBypass ?? data?.agent?.sandboxBypass ?? false);
+                            await apiPatch(`/api/admin/studios/${studio.id}`, {
+                              sandboxBypass: newValue,
+                            });
+                            queryClient.invalidateQueries({ queryKey: ['routing-agent', agentId] });
+                          } catch (err) {
+                            console.error('Failed to update sandbox bypass:', err);
+                          }
+                        }}
+                        className={`h-3.5 w-3.5 rounded border-gray-300 focus:ring-blue-500 ${
+                          studio.sandboxBypass === null ? 'text-gray-400' : 'text-blue-600'
+                        }`}
+                      />
+                      <span className="text-xs text-gray-500">
+                        MCP bypass{studio.sandboxBypass === null ? ' (inherited)' : ''}
+                      </span>
+                    </label>
+                    <Badge
+                      variant="outline"
+                      className={
+                        studio.status === 'active'
+                          ? 'bg-green-50 text-green-700 border-green-200'
+                          : 'bg-gray-50 text-gray-500 border-gray-200'
+                      }
+                    >
+                      {studio.status}
+                    </Badge>
+                  </div>
                 </div>
               ))}
             </div>
