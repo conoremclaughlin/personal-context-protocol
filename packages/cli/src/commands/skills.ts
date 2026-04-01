@@ -255,7 +255,7 @@ async function listCommand(): Promise<void> {
         '  Skills are discovered from .ink/skills/, .claude/skills/, .codex/skills/, .gemini/skills/'
       )
     );
-    console.log(chalk.dim('  Run `sb skills sync` to install skills from PCP server.\n'));
+    console.log(chalk.dim('  Run `ink skills sync` to install skills from PCP server.\n'));
     return;
   }
 
@@ -283,7 +283,7 @@ async function listCommand(): Promise<void> {
             `  ${skill.name} ${chalk.cyan('[MCP]')} ${chalk.dim(`— ${skill.description}`)}`
           );
         }
-        console.log(chalk.dim('\n  Run `sb skills sync` to install these locally.\n'));
+        console.log(chalk.dim('\n  Run `ink skills sync` to install these locally.\n'));
       }
     }
   } catch {
@@ -305,7 +305,7 @@ export interface SyncSkillsResult {
 
 /**
  * Sync skills from PCP server to local dirs + backend configs.
- * Pure logic — no console output. Used by both `sb skills sync` and `sb init`.
+ * Pure logic — no console output. Used by both `ink skills sync` and `ink init`.
  */
 export async function syncSkills(
   cwd: string,

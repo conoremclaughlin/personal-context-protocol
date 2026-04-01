@@ -1,5 +1,5 @@
 /**
- * Built-in Hooks for sb chat
+ * Built-in Hooks for ink chat
  *
  * These hooks ship with the runtime and are registered by default.
  * They implement core behaviors: passive memory recall, budget monitoring,

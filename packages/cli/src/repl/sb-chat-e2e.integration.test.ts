@@ -1,7 +1,7 @@
 /**
- * sb chat Runtime E2E Integration Tests
+ * ink chat Runtime E2E Integration Tests
  *
- * Tests the full sb chat pipeline against a live PCP server:
+ * Tests the full ink chat pipeline against a live PCP server:
  * 1. Bootstrap verification — identity loads, memories returned
  * 2. Hook lifecycle — hooks fire in correct order with correct context
  * 3. Passive recall in REPL context — recall fires, injects, respects budget

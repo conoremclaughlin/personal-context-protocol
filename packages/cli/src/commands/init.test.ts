@@ -1,7 +1,7 @@
 /**
  * Init Command Tests
  *
- * Tests for sb init: .ink/ creation, .mcp.json setup,
+ * Tests for ink init: .ink/ creation, .mcp.json setup,
  * hooks installation, and idempotency.
  */
 

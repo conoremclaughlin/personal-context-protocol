@@ -1,5 +1,5 @@
 /**
- * sb permissions — manage backend permission configs
+ * ink permissions — manage backend permission configs
  *
  * Currently supports Claude Code only (the only backend with granular
  * allow/deny rules). Codex and Gemini lack per-command deny support.
@@ -130,7 +130,7 @@ export function registerPermissionsCommands(parent: Command): void {
       if (!perms?.allow?.length && !perms?.deny?.length) {
         console.log(chalk.dim('No permission rules configured.'));
         console.log(
-          chalk.dim('Run `sb permissions auto` to set up auto-approve with safety deny rules.')
+          chalk.dim('Run `ink permissions auto` to set up auto-approve with safety deny rules.')
         );
         return;
       }

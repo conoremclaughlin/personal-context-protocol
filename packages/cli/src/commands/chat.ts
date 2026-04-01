@@ -328,7 +328,7 @@ function buildBackendToolPassthrough(
         passthroughArgs: [],
         warning:
           toolRouting === 'local'
-            ? 'Codex CLI has no allowlist passthrough flag; relying on sb local-tool routing prompt guard.'
+            ? 'Codex CLI has no allowlist passthrough flag; relying on ink local-tool routing prompt guard.'
             : 'Codex CLI has no allowlist passthrough flag; backend tool gating is not enforced by CLI flags.',
       };
     }
@@ -1766,7 +1766,7 @@ function buildPromptEnvelope(
 
   return [
     `You are ${agentId}.`,
-    'You are running inside sb chat (first-class PCP REPL).',
+    'You are running inside ink chat (first-class PCP REPL).',
     'Answer in plain text. Be concise but complete.',
     `Current backend: ${runtime.backend}${runtime.model ? ` (${runtime.model})` : ''}.`,
     `Tool mode: ${runtime.toolMode}.`,
@@ -1813,7 +1813,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
   const resolvedAgentId = resolveAgentId(options.agent);
   if (!resolvedAgentId) {
-    throw new Error('Could not resolve agent identity. Run `sb init` or pass `--agent <id>`.');
+    throw new Error('Could not resolve agent identity. Run `ink init` or pass `--agent <id>`.');
   }
   const agentId: string = resolvedAgentId;
   const pcp = new PcpClient();
@@ -2936,7 +2936,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
 
       if (localToolCalls.length === 0) break;
 
-      // Execute tool calls through sb's policy pipeline
+      // Execute tool calls through ink's policy pipeline
       const iterationResults: typeof allToolResults = [];
       await executeToolCalls(localToolCalls, {
         policy: toolPolicy,
@@ -3439,7 +3439,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
     } else {
       console.log(chalk.dim(`\nSession paused (${maxTurns} turn(s) completed).`));
     }
-    console.log(chalk.cyan(`  Resume with: sb chat --attach-latest ${agentId}\n`));
+    console.log(chalk.cyan(`  Resume with: ink chat --attach-latest ${agentId}\n`));
     return;
   }
 
@@ -4866,7 +4866,7 @@ export async function runChat(options: ChatOptions): Promise<void> {
   });
 
   if (runtime.sessionId) {
-    console.log(chalk.dim(`Reattach: sb chat -a ${agentId} --attach ${runtime.sessionId}`));
+    console.log(chalk.dim(`Reattach: ink chat -a ${agentId} --attach ${runtime.sessionId}`));
   }
   console.log(chalk.dim('\nChat ended.\n'));
 }
@@ -4881,7 +4881,7 @@ export function registerChatCommand(program: Command): void {
       .option('-m, --model <model>', 'Model override for backend')
       .option(
         '--tool-routing <mode>',
-        'Tool routing mode: local (ink-tool blocks handled by sb) or backend (native backend tools)',
+        'Tool routing mode: local (ink-tool blocks handled by ink) or backend (native backend tools)',
         'local'
       )
       .option('--ui <mode>', 'UI mode: live (default) or scroll status rendering', 'live')
@@ -4913,7 +4913,7 @@ export function registerChatCommand(program: Command): void {
         '--backend-timeout-seconds <n>',
         'Backend turn timeout in seconds (default: 120 for --non-interactive, otherwise 1200)'
       )
-      .option('--sb-debug', 'Enable sb debug logging for chat runtime')
+      .option('--sb-debug', 'Enable ink debug logging for chat runtime')
       .option(
         '--sb-strict-tools',
         'Harden backend-native tooling (Codex: disable MCP servers + force read-only sandbox in local routing)'
@@ -4932,5 +4932,5 @@ export function registerChatCommand(program: Command): void {
       .action((options: ChatOptions) => runChat(options));
 
   register('chat', 'Start first-class PCP REPL (experimental)');
-  register('alpha', 'Alias for `sb chat` (experimental)');
+  register('alpha', 'Alias for `ink chat` (experimental)');
 }

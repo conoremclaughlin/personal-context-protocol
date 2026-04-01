@@ -167,7 +167,7 @@ function runInstallHooks(cwd: string, force?: boolean): InitStepResult[] {
         results.push({
           label: `hooks (${resolvedBackend.name})`,
           status: 'skipped',
-          detail: 'existing non-PCP hooks (use sb hooks install --force)',
+          detail: 'existing non-PCP hooks (use ink hooks install --force)',
         });
         break;
     }
@@ -209,9 +209,9 @@ async function initCommand(options: { force?: boolean }): Promise<void> {
     console.log(chalk.dim(`  User: ${payload?.email || 'authenticated'}`));
   } else if (config?.email) {
     console.log(chalk.dim(`  User: ${config.email} (not authenticated)`));
-    console.log(chalk.yellow('  Run `sb auth login` to authenticate.'));
+    console.log(chalk.yellow('  Run `ink auth login` to authenticate.'));
   } else {
-    console.log(chalk.yellow('  Not authenticated. Run: sb auth login'));
+    console.log(chalk.yellow('  Not authenticated. Run: ink auth login'));
   }
   console.log('');
 

@@ -71,7 +71,7 @@ export class CodexAdapter implements BackendAdapter {
     }
 
     // Positional args spread individually so subcommands work
-    // e.g. "sb -b codex mcp login supabase" → codex ... mcp login supabase
+    // e.g. "ink -b codex mcp login supabase" → codex ... mcp login supabase
     //
     // Codex has subcommand-scoped flags (notably for `exec`) such as:
     //   --skip-git-repo-check, --color, --json

@@ -398,7 +398,7 @@ async function doctorCommand(options: {
       }
     } else {
       console.log(
-        chalk.dim('\nTip: run sb doctor --fix to confirm and apply from this directory.')
+        chalk.dim('\nTip: run ink doctor --fix to confirm and apply from this directory.')
       );
     }
     console.log('');
@@ -413,7 +413,7 @@ export function registerDoctorCommand(program: Command): void {
   program
     .command('doctor')
     .description('Inspect studio-linked SB CLI binary and target health')
-    .option('-n, --name <name>', 'Binary name (default: sb-<agent>)')
+    .option('-n, --name <name>', 'Binary name (default: ink-<agent>)')
     .option('--json', 'Output machine-readable JSON')
     .option('--fix', 'Prompt to run studio link fix command from current directory')
     .action(doctorCommand);

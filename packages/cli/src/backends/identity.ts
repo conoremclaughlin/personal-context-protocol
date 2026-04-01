@@ -30,7 +30,7 @@ export interface IdentityJson {
   role?: string;
   studioId?: string;
   studio?: string;
-  /** Persisted runtime preferences for sb chat */
+  /** Persisted runtime preferences for ink chat */
   runtime?: RuntimePreferences;
 }
 

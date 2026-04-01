@@ -585,7 +585,7 @@ function shellCommand(options: Record<string, unknown>): void {
 function execCommand(command: string[], options: Record<string, unknown>): void {
   const plan = buildPlanFromCommand(process.cwd(), options);
   if (!inspectContainerName(plan.containerName)) {
-    throw new Error(`Sandbox is not running: ${plan.containerName}. Start it with sb studio sandbox up`);
+    throw new Error(`Sandbox is not running: ${plan.containerName}. Start it with ink studio sandbox up`);
   }
   if (command.length === 0) {
     throw new Error('No command provided for sandbox exec');

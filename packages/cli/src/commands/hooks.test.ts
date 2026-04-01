@@ -61,8 +61,8 @@ describe('installHooks: Claude Code', () => {
     const configPath = join(TEST_DIR, '.claude', 'settings.local.json');
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
 
-    // Commands may be absolute paths (e.g., /path/to/node_modules/.bin/sb hooks ...)
-    // or bare `sb hooks ...` depending on whether node_modules/.bin/sb exists
+    // Commands may be absolute paths (e.g., /path/to/node_modules/.bin/ink hooks ...)
+    // or bare `ink hooks ...` depending on whether node_modules/.bin/ink exists
 
     // PreCompact
     expect(config.hooks.PreCompact[0].hooks[0].command).toContain('hooks pre-compact');
@@ -164,7 +164,7 @@ describe('installHooks: Claude Code', () => {
     const config = JSON.parse(readFileSync(configPath, 'utf-8'));
     // Add a new PCP-style hook entry
     config.hooks.Stop.push({
-      hooks: [{ type: 'command', command: 'sb hooks extra' }],
+      hooks: [{ type: 'command', command: 'ink hooks extra' }],
     });
     writeFileSync(configPath, JSON.stringify(config, null, 2));
 
@@ -258,12 +258,12 @@ describe('installHooks: Codex', () => {
     expect(existsSync(configPath)).toBe(true);
 
     const content = readFileSync(configPath, 'utf-8');
-    expect(content).toContain('# pcp-managed:hooks:start');
+    expect(content).toContain('# ink-managed:hooks:start');
     expect(content).toContain('[hooks]');
     expect(content).toMatch(/session_start = ".*hooks on-session-start[^"]*"/);
     expect(content).toMatch(/session_end = ".*hooks on-stop[^"]*"/);
     expect(content).toMatch(/user_prompt = ".*hooks on-prompt[^"]*"/);
-    expect(content).toContain('# pcp-managed:hooks:end');
+    expect(content).toContain('# ink-managed:hooks:end');
   });
 
   it('should return already-installed when PCP hooks are already present', () => {
@@ -278,10 +278,10 @@ describe('installHooks: Codex', () => {
     writeFileSync(
       join(configDir, 'config.toml'),
       [
-        '# pcp-managed:start mcp_servers',
+        '# ink-managed:start mcp_servers',
         '[mcp_servers.pcp]',
         'url = "http://localhost:3001/mcp"',
-        '# pcp-managed:end mcp_servers',
+        '# ink-managed:end mcp_servers',
         '',
       ].join('\n')
     );
@@ -290,8 +290,8 @@ describe('installHooks: Codex', () => {
     expect(result).toBe('installed');
 
     const content = readFileSync(join(configDir, 'config.toml'), 'utf-8');
-    expect(content).toContain('# pcp-managed:start mcp_servers');
-    expect(content).toContain('# pcp-managed:hooks:start');
+    expect(content).toContain('# ink-managed:start mcp_servers');
+    expect(content).toContain('# ink-managed:hooks:start');
   });
 
   it('should return conflict when non-PCP [hooks] exists', () => {
@@ -315,7 +315,7 @@ describe('installHooks: Codex', () => {
 
     const content = readFileSync(join(configDir, 'config.toml'), 'utf-8');
     expect(content).toContain('[mcp_servers.pcp]');
-    expect(content).toContain('# pcp-managed:hooks:start');
+    expect(content).toContain('# ink-managed:hooks:start');
   });
 
   it('should replace PCP section on re-install with force', () => {
@@ -327,8 +327,8 @@ describe('installHooks: Codex', () => {
 
     // Should have exactly one start marker and one end marker (no duplicates)
     const content = readFileSync(join(TEST_DIR, '.codex', 'config.toml'), 'utf-8');
-    const startMarkers = content.match(/# pcp-managed:hooks:start/g);
-    const endMarkers = content.match(/# pcp-managed:hooks:end/g);
+    const startMarkers = content.match(/# ink-managed:hooks:start/g);
+    const endMarkers = content.match(/# ink-managed:hooks:end/g);
     expect(startMarkers).toHaveLength(1);
     expect(endMarkers).toHaveLength(1);
     expect(content).toMatch(/session_start = ".*hooks on-session-start[^"]*"/);

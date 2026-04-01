@@ -38,15 +38,15 @@ function makeFs(overrides?: {
 }
 
 describe('analyzeCliLink', () => {
-  it('defaults to sb binary name when no identity hint is available', () => {
+  it('defaults to ink binary name when no identity hint is available', () => {
     const originalAgentId = process.env.AGENT_ID;
     delete process.env.AGENT_ID;
     try {
       const fsOps = makeFs();
       const result = analyzeCliLink({ binDir: '/bin' }, fsOps as never);
-      expect(result.binaryName.startsWith('sb')).toBe(true);
+      expect(result.binaryName.startsWith('ink')).toBe(true);
       const linkedBinaryCheck = result.checks.find((check) => check.name === 'Linked binary');
-      expect(linkedBinaryCheck?.detail).toContain('run: sb studio cli');
+      expect(linkedBinaryCheck?.detail).toContain('run: ink studio cli');
     } finally {
       if (originalAgentId === undefined) delete process.env.AGENT_ID;
       else process.env.AGENT_ID = originalAgentId;
@@ -59,12 +59,12 @@ describe('analyzeCliLink', () => {
     try {
       const fsOps = makeFs();
       const result = analyzeCliLink({ binDir: '/bin' }, fsOps as never);
-      expect(result.binaryName.startsWith('sb')).toBe(true);
+      expect(result.binaryName.startsWith('ink')).toBe(true);
       const linkedBinaryCheck = result.checks.find((check) => check.name === 'Linked binary');
-      if (result.binaryName === 'sb-lumen') {
-        expect(linkedBinaryCheck?.detail).toContain('run: sb studio cli --name sb-lumen');
+      if (result.binaryName === 'ink-lumen') {
+        expect(linkedBinaryCheck?.detail).toContain('run: ink studio cli --name ink-lumen');
       } else {
-        expect(linkedBinaryCheck?.detail).toContain('run: sb studio cli');
+        expect(linkedBinaryCheck?.detail).toContain('run: ink studio cli');
       }
     } finally {
       if (originalAgentId === undefined) delete process.env.AGENT_ID;
@@ -74,7 +74,7 @@ describe('analyzeCliLink', () => {
 
   it('reports failure when linked binary is missing', () => {
     const fsOps = makeFs();
-    const result = analyzeCliLink({ name: 'sb-lumen', binDir: '/bin' }, fsOps as never);
+    const result = analyzeCliLink({ name: 'ink-lumen', binDir: '/bin' }, fsOps as never);
     expect(result.checks.some((check) => check.status === 'fail')).toBe(true);
     expect(result.checks.some((check) => check.name === 'Linked binary')).toBe(true);
   });
@@ -89,13 +89,13 @@ describe('analyzeCliLink', () => {
         [cliTarget]: '#!/usr/bin/env node',
       },
       symlinks: {
-        '/bin/sb-lumen': cliTarget,
+        '/bin/ink-lumen': cliTarget,
       },
       modes: {
         [cliTarget]: 0o755,
       },
     });
-    const result = analyzeCliLink({ name: 'sb-lumen', binDir: '/bin' }, fsOps as never);
+    const result = analyzeCliLink({ name: 'ink-lumen', binDir: '/bin' }, fsOps as never);
     const failing = result.checks.filter((check) => check.status === 'fail');
     expect(failing).toHaveLength(0);
     expect(result.checks.some((check) => check.name === 'Symlink')).toBe(true);

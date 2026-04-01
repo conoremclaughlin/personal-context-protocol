@@ -84,7 +84,7 @@ async function triggerAgent(
   try {
     const config = getPcpConfig();
     if (!config?.email) {
-      spinner.fail('PCP not configured. Run: sb init');
+      spinner.fail('PCP not configured. Run: ink init');
       process.exit(1);
     }
 
@@ -122,7 +122,7 @@ async function triggerAgent(
 async function statusCommand(agentId?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -165,13 +165,13 @@ async function statusCommand(agentId?: string): Promise<void> {
 async function inboxCommand(agentId?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
   const agent = agentId || resolveAgentId();
   if (!agent) {
-    console.error(chalk.red('No agent identity configured. Pass an agent ID or run `sb init`.'));
+    console.error(chalk.red('No agent identity configured. Pass an agent ID or run `ink init`.'));
     process.exit(1);
   }
 

@@ -324,7 +324,7 @@ async function fetchAdminJson<T>(options: {
   const serverUrl = getPcpServerUrl().replace(/\/+$/, '');
   const token = await getValidAccessToken(serverUrl);
   if (!token) {
-    throw new Error('Not authenticated. Run: sb auth login');
+    throw new Error('Not authenticated. Run: ink auth login');
   }
 
   const headers: Record<string, string> = {
@@ -398,7 +398,7 @@ async function resolvePullTarget(options: {
 
   if (options.studio) {
     if (!options.config?.email) {
-      throw new Error('PCP not configured. Run: sb init');
+      throw new Error('PCP not configured. Run: ink init');
     }
     const studio = await callPcpTool<StudioLookupResult>('get_studio', {
       email: options.config.email,
@@ -442,7 +442,7 @@ function formatSessionLine(session: Session): string[] {
     `  ${statusIcon} ${chalk.cyan(session.id.substring(0, 8))} ${chalk.dim(`(${phase})`)}`,
     chalk.dim(`      Started: ${formatDate(startedAt)}  Duration: ${duration}`),
     chalk.dim(`      Thread:  ${thread}`),
-    chalk.dim(`      Attach:  sb chat -a ${session.agentId || 'wren'} --attach ${session.id}`),
+    chalk.dim(`      Attach:  ink chat -a ${session.agentId || 'wren'} --attach ${session.id}`),
   ];
 
   if (session.summary) {
@@ -516,7 +516,7 @@ async function listCommand(options: {
 }): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -540,7 +540,7 @@ async function listCommand(options: {
 async function showCommand(sessionId: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -602,7 +602,7 @@ async function showCommand(sessionId: string): Promise<void> {
 async function resumeCommand(sessionId: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
@@ -632,13 +632,13 @@ async function resumeCommand(sessionId: string): Promise<void> {
 async function endCommand(sessionId?: string): Promise<void> {
   const config = getPcpConfig();
   if (!config?.email) {
-    console.error(chalk.red('PCP not configured. Run: sb init'));
+    console.error(chalk.red('PCP not configured. Run: ink init'));
     process.exit(1);
   }
 
   if (!sessionId) {
     // Find active session
-    console.log(chalk.yellow('No session ID provided. Use: sb session end <id>'));
+    console.log(chalk.yellow('No session ID provided. Use: ink session end <id>'));
     return;
   }
 
@@ -874,7 +874,7 @@ async function syncCommandDispatcher(
 
   if (target === 'pull') {
     if (!value) {
-      console.error(chalk.red('Missing session ID. Use: sb session sync pull <id>'));
+      console.error(chalk.red('Missing session ID. Use: ink session sync pull <id>'));
       process.exit(1);
     }
     await pullSyncedTranscriptCommand(value, options);
@@ -883,7 +883,7 @@ async function syncCommandDispatcher(
 
   if (target === 'push') {
     if (!value) {
-      console.error(chalk.red('Missing session ID. Use: sb session sync push <id>'));
+      console.error(chalk.red('Missing session ID. Use: ink session sync push <id>'));
       process.exit(1);
     }
     await syncTranscriptCommand(value, options);
@@ -893,7 +893,7 @@ async function syncCommandDispatcher(
   if (!target) {
     console.error(
       chalk.red(
-        'Missing sync action. Use: sb session sync <id>, sb session sync list, or sb session sync pull <id>'
+        'Missing sync action. Use: ink session sync <id>, ink session sync list, or ink session sync pull <id>'
       )
     );
     process.exit(1);
@@ -964,13 +964,13 @@ export function registerSessionCommands(program: Command): void {
       'after',
       `
 Examples:
-  sb session sync <id>               Push a local transcript to the server archive
-  sb session sync push <id>          Explicit push form
-  sb session sync list               Show synced transcripts available on the server
-  sb session sync pull <id>          Pull into the current directory context
-  sb session sync pull <id> --path /tmp/transcript.jsonl
-  sb session sync pull <id> --studio <studio-id>
-  sb session sync pull <id> --cwd /path/to/project
+  ink session sync <id>               Push a local transcript to the server archive
+  ink session sync push <id>          Explicit push form
+  ink session sync list               Show synced transcripts available on the server
+  ink session sync pull <id>          Pull into the current directory context
+  ink session sync pull <id> --path /tmp/transcript.jsonl
+  ink session sync pull <id> --studio <studio-id>
+  ink session sync pull <id> --cwd /path/to/project
 `
     )
     .action(syncCommandDispatcher);

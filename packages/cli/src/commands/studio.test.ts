@@ -298,29 +298,29 @@ describe('Studio default branch naming', () => {
 
 describe('CLI link path helpers', () => {
   it('should resolve ~/.ink/bin as primary and ~/.local/bin as compatibility path', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(targets.primaryBinDir).toBe('/tmp/home/.ink/bin');
     expect(targets.compatBinDir).toBe('/tmp/home/.local/bin');
-    expect(targets.primaryLinkPath).toBe('/tmp/home/.ink/bin/sb-lumen');
-    expect(targets.compatLinkPath).toBe('/tmp/home/.local/bin/sb-lumen');
+    expect(targets.primaryLinkPath).toBe('/tmp/home/.ink/bin/ink-lumen');
+    expect(targets.compatLinkPath).toBe('/tmp/home/.local/bin/ink-lumen');
   });
 
   it('should not warn when PATH includes primary bin dir', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(
       shouldWarnMissingCliBinPath(['/usr/bin', targets.primaryBinDir].join(pathDelimiter), targets)
     ).toBe(false);
   });
 
   it('should not warn when PATH includes compatibility bin dir', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(
       shouldWarnMissingCliBinPath(['/usr/bin', targets.compatBinDir].join(pathDelimiter), targets)
     ).toBe(false);
   });
 
   it('should warn when PATH includes neither PCP nor compatibility bin dirs', () => {
-    const targets = getCliLinkTargets('/tmp/home', 'sb-lumen');
+    const targets = getCliLinkTargets('/tmp/home', 'ink-lumen');
     expect(shouldWarnMissingCliBinPath(['/usr/bin', '/bin'].join(pathDelimiter), targets)).toBe(
       true
     );

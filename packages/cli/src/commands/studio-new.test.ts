@@ -351,7 +351,7 @@ describe('Config directory copying', () => {
     writeFileSync(
       join(wsPath, '.claude', 'settings.local.json'),
       JSON.stringify({
-        hooks: { Stop: [{ hooks: [{ type: 'command', command: 'sb hooks on-stop' }] }] },
+        hooks: { Stop: [{ hooks: [{ type: 'command', command: 'ink hooks on-stop' }] }] },
       })
     );
 

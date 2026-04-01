@@ -1,5 +1,5 @@
 /**
- * sb chat Runtime Integration Tests
+ * ink chat Runtime Integration Tests
  *
  * Tests the real runtime wiring:
  * 1. PcpClient.callTool('recall') returns the shape our hooks expect

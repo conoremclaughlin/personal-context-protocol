@@ -190,7 +190,7 @@ async function loginCommand(options: { browser: boolean }): Promise<void> {
   if (existing && !isTokenExpired(existing)) {
     const payload = decodeJwtPayload(existing.access_token);
     console.log(chalk.dim(`Already logged in as ${payload?.email || 'unknown'}.`));
-    console.log(chalk.dim('Run `sb auth logout` first to switch accounts.'));
+    console.log(chalk.dim('Run `ink auth logout` first to switch accounts.'));
     return;
   }
 
@@ -258,7 +258,7 @@ async function statusCommand(): Promise<void> {
 
   if (!auth) {
     console.log(chalk.yellow('Not logged in.'));
-    console.log(chalk.dim('Run: sb auth login'));
+    console.log(chalk.dim('Run: ink auth login'));
     return;
   }
 
@@ -276,7 +276,7 @@ async function statusCommand(): Promise<void> {
   if (expired) {
     console.log(`  ${chalk.bold('Token:')}   ${chalk.yellow('expired')}`);
     console.log(
-      chalk.dim('\n  Token will refresh automatically on next sb launch, or run: sb auth login')
+      chalk.dim('\n  Token will refresh automatically on next ink launch, or run: ink auth login')
     );
   } else {
     const expiresAtMs = auth.issued_at + auth.expires_in * 1000;
@@ -314,7 +314,7 @@ async function delegateCommand(options: { agent: string }): Promise<void> {
 
   const baseToken = await getValidAccessToken(serverUrl);
   if (!baseToken) {
-    console.log(chalk.yellow('Not authenticated. Run: sb auth login'));
+    console.log(chalk.yellow('Not authenticated. Run: ink auth login'));
     process.exitCode = 1;
     return;
   }

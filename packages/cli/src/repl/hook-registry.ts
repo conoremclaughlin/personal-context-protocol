@@ -1,7 +1,7 @@
 /**
  * SB Runtime Hook Registry
  *
- * Internal hook system for the sb chat REPL. Hooks are in-process TypeScript
+ * Internal hook system for the ink chat REPL. Hooks are in-process TypeScript
  * functions that fire at lifecycle events. They can inject context into the
  * ledger, evict entries, or block pre-* pipeline stages.
  *

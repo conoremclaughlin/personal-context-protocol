@@ -229,7 +229,7 @@ async function installCommand(options: InstallOptions): Promise<void> {
     console.log(chalk.dim(`Updated: ${envPath}`));
   }
   console.log(chalk.dim('Next useful commands:'));
-  console.log(chalk.dim('  sb memory backfill'));
+  console.log(chalk.dim('  ink memory backfill'));
   console.log(chalk.dim('  yarn benchmark:memory-recall'));
   console.log(chalk.dim('  yarn benchmark:bootstrap-relevance'));
 }
