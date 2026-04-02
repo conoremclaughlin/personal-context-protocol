@@ -159,13 +159,16 @@ function toCodexToml(servers: Record<string, McpServerConfig>): string {
   ];
 
   for (const [name, config] of Object.entries(servers)) {
-    lines.push(`[mcp_servers.${name}]`);
+    // Codex config.toml uses 'pcp' as the server key (the protocol name).
+    // .mcp.json uses 'inkstand' (the product name). Map for Codex compatibility.
+    const codexName = name === 'inkstand' ? 'pcp' : name;
+    lines.push(`[mcp_servers.${codexName}]`);
 
     if (config.url) {
       lines.push(`url = ${tomlString(config.url)}`);
     }
 
-    // PCP server: mark as required so Codex fails loudly if it can't connect
+    // Inkstand server: mark as required so Codex fails loudly if it can't connect
     if (name === 'inkstand') {
       lines.push('required = true');
     }

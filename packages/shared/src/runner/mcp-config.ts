@@ -82,26 +82,27 @@ export function injectSessionHeaders(
     return { mcpConfigPath, cleanup: () => {}, modified: false };
   }
 
-  // No Inkstand server entry — nothing to inject into
-  if (!config.mcpServers.inkstand) {
+  // Find the server entry — prefer 'inkstand', fall back to 'pcp' for backward compat
+  const serverKey = config.mcpServers.inkstand ? 'inkstand' : config.mcpServers.pcp ? 'pcp' : null;
+  if (!serverKey) {
     return { mcpConfigPath, cleanup: () => {}, modified: false };
   }
 
   let modified = false;
 
   // Inject session ID header (uses ${VAR} interpolation — Claude Code resolves at runtime)
-  if (!config.mcpServers.inkstand.headers?.['x-ink-session-id']) {
-    config.mcpServers.inkstand.headers = {
-      ...config.mcpServers.inkstand.headers,
+  if (!config.mcpServers[serverKey].headers?.['x-ink-session-id']) {
+    config.mcpServers[serverKey].headers = {
+      ...config.mcpServers[serverKey].headers,
       'x-ink-session-id': '${INK_SESSION_ID}',
     };
     modified = true;
   }
 
   // Inject studio ID header
-  if (studioId && !config.mcpServers.inkstand.headers?.['x-ink-studio-id']) {
-    config.mcpServers.inkstand.headers = {
-      ...config.mcpServers.inkstand.headers,
+  if (studioId && !config.mcpServers[serverKey].headers?.['x-ink-studio-id']) {
+    config.mcpServers[serverKey].headers = {
+      ...config.mcpServers[serverKey].headers,
       'x-ink-studio-id': '${INK_STUDIO_ID}',
     };
     modified = true;
@@ -110,18 +111,18 @@ export function injectSessionHeaders(
   // Inject Authorization header for triggered sessions.
   // Uses ${VAR} interpolation so the token is resolved from INK_ACCESS_TOKEN
   // env var at runtime, not hardcoded in the config file.
-  if (accessToken && !config.mcpServers.inkstand.headers?.['Authorization']) {
-    config.mcpServers.inkstand.headers = {
-      ...config.mcpServers.inkstand.headers,
+  if (accessToken && !config.mcpServers[serverKey].headers?.['Authorization']) {
+    config.mcpServers[serverKey].headers = {
+      ...config.mcpServers[serverKey].headers,
       Authorization: 'Bearer ${INK_ACCESS_TOKEN}',
     };
     modified = true;
   }
 
   // Inject consolidated context token (Phase 1 — alongside individual headers)
-  if (!config.mcpServers.inkstand.headers?.['x-ink-context']) {
-    config.mcpServers.inkstand.headers = {
-      ...config.mcpServers.inkstand.headers,
+  if (!config.mcpServers[serverKey].headers?.['x-ink-context']) {
+    config.mcpServers[serverKey].headers = {
+      ...config.mcpServers[serverKey].headers,
       'x-ink-context': '${INK_CONTEXT_TOKEN}',
     };
     modified = true;
