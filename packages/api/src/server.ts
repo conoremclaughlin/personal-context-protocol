@@ -209,14 +209,29 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       }
     }
 
-    // Resolve contact for per-sender session isolation
+    // Resolve contact for per-sender session isolation (only when agent has session_scope: 'per_sender')
     let contactId: string | undefined;
     const isExternalChannelForContact =
       channel === 'telegram' ||
       channel === 'whatsapp' ||
       channel === 'discord' ||
       channel === 'slack';
+    let agentSessionScope: string | null = null;
     if (isExternalChannelForContact && dataComposer) {
+      try {
+        const { data: identity } = await dataComposer
+          .getClient()
+          .from('agent_identities')
+          .select('session_scope')
+          .eq('user_id', userId)
+          .eq('agent_id', routedAgentId)
+          .single();
+        agentSessionScope = identity?.session_scope || 'global';
+      } catch {
+        // Fall through — default to global (no isolation)
+      }
+    }
+    if (isExternalChannelForContact && dataComposer && agentSessionScope === 'per_sender') {
       try {
         const platformMap: Record<string, 'telegram' | 'discord' | 'whatsapp' | 'imessage'> = {
           telegram: 'telegram',
