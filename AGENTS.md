@@ -630,11 +630,11 @@ These log files are written regardless of how the server is started (`yarn dev`,
 When we refer to "specs" in this project, we mean **PCP artifacts** — versioned documents stored on the Inkwell server and managed via MCP tools. They are NOT local markdown files.
 
 - **Browse**: `list_artifacts(type: "spec")` to discover available specs
-- **Read**: `get_artifact(uri: "pcp://specs/cli-session-hooks")` to view a spec by URI
+- **Read**: `get_artifact(uri: "ink://specs/cli-session-hooks")` to view a spec by URI
 - **Update**: `update_artifact(...)` to revise content (auto-increments version)
-- **Create**: `create_artifact(type: "spec", uri: "pcp://specs/<slug>", ...)` for new specs
+- **Create**: `create_artifact(type: "spec", uri: "ink://specs/<slug>", ...)` for new specs
 
-Spec URIs follow the pattern `pcp://specs/<slug>`. When referencing a spec in conversation, threadKeys, or code comments, use the URI slug (e.g., `spec:cli-session-hooks`).
+Spec URIs follow the pattern `ink://specs/<slug>`. When referencing a spec in conversation, threadKeys, or code comments, use the URI slug (e.g., `spec:cli-session-hooks`).
 
 ## Pull Requests & Git
 

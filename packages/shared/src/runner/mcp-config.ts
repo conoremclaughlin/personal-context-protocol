@@ -156,7 +156,7 @@ export function injectSessionHeaders(
 /**
  * Ink context token payload — consolidated session/routing metadata.
  * Carried in the `x-ink-context` header as base64url-encoded JSON.
- * See spec: pcp://specs/mcp-context-token
+ * See spec: ink://specs/mcp-context-token
  */
 export interface PcpContextToken {
   sessionId: string;
