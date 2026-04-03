@@ -799,6 +799,16 @@ export class SessionService implements ISessionService {
     }
   ): Promise<string | undefined> {
     if (options.explicitStudioId) {
+      // 'main' is a reserved convention — resolve it the same way studioHint does
+      if (options.explicitStudioId === 'main') {
+        const mainId = await this.resolveMainStudioId(userId);
+        if (mainId) return mainId;
+        logger.warn('[StudioResolve] explicitStudioId=main but no main studio found', {
+          userId,
+          agentId,
+        });
+        return undefined;
+      }
       return options.explicitStudioId;
     }
 
