@@ -65,7 +65,7 @@ describe('syncMcpConfig', () => {
 
     const toml = readFileSync(join(TEST_DIR, '.codex', 'config.toml'), 'utf-8');
     expect(toml).toContain('# pcp-managed:start mcp_servers');
-    expect(toml).toContain('[mcp_servers.pcp]');
+    expect(toml).toContain('[mcp_servers.inkwell]');
     expect(toml).toContain('url = "http://localhost:3001/mcp"');
     expect(toml).toContain('# pcp-managed:end mcp_servers');
   });
@@ -422,7 +422,7 @@ describe('syncMcpConfig', () => {
     const toml = readFileSync(join(TEST_DIR, '.codex', 'config.toml'), 'utf-8');
     expect(toml).toContain('[hooks]');
     expect(toml).toContain('enabled = true');
-    expect(toml).toContain('[mcp_servers.pcp]');
+    expect(toml).toContain('[mcp_servers.inkwell]');
     expect(toml).not.toContain('[mcp_servers.old]');
   });
 

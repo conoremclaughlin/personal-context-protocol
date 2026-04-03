@@ -159,10 +159,7 @@ function toCodexToml(servers: Record<string, McpServerConfig>): string {
   ];
 
   for (const [name, config] of Object.entries(servers)) {
-    // Codex config.toml uses 'pcp' as the server key (the protocol name).
-    // .mcp.json uses 'inkwell' (the product name). Map for Codex compatibility.
-    const codexName = name === 'inkwell' ? 'pcp' : name;
-    lines.push(`[mcp_servers.${codexName}]`);
+    lines.push(`[mcp_servers.${name}]`);
 
     if (config.url) {
       lines.push(`url = ${tomlString(config.url)}`);
