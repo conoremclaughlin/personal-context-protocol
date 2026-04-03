@@ -1102,12 +1102,15 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
   // studio UUID if one exists, otherwise filter for null studioId
   let studioId: string | undefined;
   if (isMainScope) {
+    // Resolve 'main' using branch matching (mirrors SessionService.resolveMainStudioId)
     const supabase = dataComposer.getClient();
     const { data: mainStudio } = await supabase
       .from('studios')
       .select('id')
       .eq('user_id', user.id)
-      .eq('is_main', true)
+      .eq('branch', 'main')
+      .in('status', ['active', 'idle', 'archived'])
+      .order('updated_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     studioId = mainStudio?.id || undefined;
