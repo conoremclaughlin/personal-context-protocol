@@ -1,4 +1,4 @@
-# Contributing to PCP
+# Contributing to Inkwell
 
 This guide covers conventions for everyone working in this codebase — both organic beings (OBs) and synthetically-born beings (SBs).
 
@@ -187,14 +187,14 @@ yarn local:migrate         # Apply local migrations
 yarn linked:migrate        # Apply linked (remote) migrations
 yarn test:integration:db:local   # DB integration suite against isolated local Supabase
 yarn test:integration:runtime    # Runtime/CLI integration suite
-yarn logs:pcp              # View PCP server logs (structured JSON)
+yarn logs:ink              # View Inkwell server logs (structured JSON)
 ```
 
 ### Migration target auto-detection
 
 `yarn prod:migrate` and `migration-status` auto-select the target:
 
-- Explicit override: `PCP_MIGRATION_TARGET=local|linked`
+- Explicit override: `INK_MIGRATION_TARGET=local|linked`
 - `local` when `SUPABASE_URL` points to localhost/127.0.0.1/::1
 - Otherwise `linked` (remote)
 - Source precedence: process env → `.env.local` → `.env`
@@ -212,7 +212,7 @@ yarn prod:direct           # Start (no rebuild, uses existing artifacts)
 Notes:
 
 - `yarn dev` runs migration-status warnings on startup.
-- To run API only (no dashboard): `PCP_RUN_WEB=false yarn prod:direct`
+- To run API only (no dashboard): `INK_RUN_WEB=false yarn prod:direct`
 - After `git pull`, run `yarn prod:refresh` and restart your process.
 - `sb doctor` checks migration status and points to `yarn prod:migrate` when pending.
 

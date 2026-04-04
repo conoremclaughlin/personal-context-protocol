@@ -2,7 +2,7 @@
 
 ## Overview
 
-PCP is a unified server that provides persistent context, memory, and identity for AI agents across multiple interfaces. A single process orchestrates MCP tools, channel listeners (Telegram, WhatsApp), session management, and scheduled tasks.
+Inkwell is a unified server that provides persistent context, memory, and identity for AI agents across multiple interfaces. A single process orchestrates MCP tools, channel listeners (Telegram, WhatsApp), session management, and scheduled tasks.
 
 ## System Diagram
 
@@ -10,7 +10,7 @@ PCP is a unified server that provides persistent context, memory, and identity f
 ┌──────────────────────────────────────────────────────────────────┐
 │                        USER INTERFACES                           │
 ├──────────────┬──────────────┬──────────────┬─────────────────────┤
-│  Claude Code │   Telegram   │   WhatsApp   │   SB CLI (sb)       │
+│  Claude Code │   Telegram   │   WhatsApp   │   Ink CLI (ink)       │
 │  (MCP/HTTP)  │  (Telegraf)  │  (Baileys)   │  (spawns Claude)    │
 └──────┬───────┴──────┬───────┴──────┬───────┴──────────┬──────────┘
        │              │              │                   │
@@ -44,7 +44,7 @@ PCP is a unified server that provides persistent context, memory, and identity f
 
 ## Core Components
 
-### PCP Server (`src/server.ts`)
+### Inkwell Server (`src/server.ts`)
 
 The unified entry point. Starts all components in order:
 
@@ -58,7 +58,7 @@ Runs as a single Node.js process.
 
 ### MCP Server (`src/mcp/server.ts`)
 
-Exposes PCP tools over HTTP/SSE at `http://localhost:3001/mcp`. Each client connection gets its own `McpServer + StreamableHTTPServerTransport` pair, managed in a session map.
+Exposes Inkwell tools over HTTP/SSE at `http://localhost:3001/mcp`. Each client connection gets its own `McpServer + StreamableHTTPServerTransport` pair, managed in a session map.
 
 Additional HTTP endpoints:
 
@@ -143,7 +143,7 @@ Wren calls send_to_inbox() + trigger: true
 
 ```
 sb "fix the bug" → Identity injection (--append-system-prompt)
-  → Spawns claude with PCP identity + MCP config
+  → Spawns claude with Inkwell identity + MCP config
   → Claude Code connects to MCP server at localhost:3001
   → Agent bootstraps, remembers who it is
 ```
@@ -158,7 +158,7 @@ Three agents share the same infrastructure with distinct identities and filtered
 | **Myra**   | Telegram / WhatsApp    | Persistent messaging bridge            |
 | **Benson** | Discord / Slack        | Conversational partner                 |
 
-Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.pcp/identity.json` → `~/.pcp/config.json`. Each agent has identity files at `~/.pcp/<agentId>/` and memories filtered by agentId.
+Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.ink/identity.json` → `~/.ink/config.json`. Each agent has identity files at `~/.ink/individuals/<agentId>/` and memories filtered by agentId.
 
 ## MCP Tools
 
@@ -189,10 +189,10 @@ Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.
 
 ## Security
 
-- **Application-level auth** is the primary security boundary — the API server validates JWTs, resolves PCP users, and scopes all queries. See [AGENTS.md Security section](./AGENTS.md#security-critical) for the full model.
+- **Application-level auth** is the primary security boundary — the API server validates JWTs, resolves Inkwell users, and scopes all queries. See [AGENTS.md Security section](./AGENTS.md#security-critical) for the full model.
 - **Service role key** (`SUPABASE_SECRET_KEY`) used server-side only — bypasses RLS entirely. Must never be exposed to the client.
 - **Frontend uses Supabase for auth only** — no direct database queries. All data access goes through API routes.
-- **Row Level Security (RLS)** is enabled on most tables but is not our primary defense. The `auth.uid()` policies are non-functional (PCP user IDs differ from Supabase Auth UIDs). Some tables have permissive service policies as a safety net.
+- **Row Level Security (RLS)** is enabled on most tables but is not our primary defense. The `auth.uid()` policies are non-functional (Inkwell user IDs differ from Supabase Auth UIDs). Some tables have permissive service policies as a safety net.
 - **OAuth2 token auth** for MCP connections (with refresh token support via `mcp_tokens` table)
 - **Permissions system** — per-user toggles for sensitive operations (web search, bash, etc.)
 - **Audit logging** — tracks sensitive operations with full context
@@ -200,13 +200,13 @@ Identity is resolved from: system prompt override → `$AGENT_ID` env var → `.
 
 ## Process Management
 
-`yarn dev` runs both services concurrently with hot reload via `scripts/dev-concurrently.mjs`. Port allocation is driven by `PCP_PORT_BASE` (default 3001):
+`yarn dev` runs both services concurrently with hot reload via `scripts/dev-concurrently.mjs`. Port allocation is driven by `INK_PORT_BASE` (default 3001):
 
 | Service | Port              | Description                                             |
 | ------- | ----------------- | ------------------------------------------------------- |
-| API/MCP | `PCP_PORT_BASE`   | Main server: MCP + channels + heartbeat + agent gateway |
-| Web     | `PCP_PORT_BASE+1` | Next.js admin dashboard                                 |
-| Myra    | `PCP_PORT_BASE+2` | Persistent messaging bridge                             |
+| API/MCP | `INK_PORT_BASE`   | Main server: MCP + channels + heartbeat + agent gateway |
+| Web     | `INK_PORT_BASE+1` | Next.js admin dashboard                                 |
+| Myra    | `INK_PORT_BASE+2` | Persistent messaging bridge                             |
 
 For production, use `yarn prod:direct` or Docker Compose (`docker-compose.app.yml`).
 

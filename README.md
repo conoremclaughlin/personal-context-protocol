@@ -178,7 +178,7 @@ If you're using [OpenClaw](https://github.com/openclaw) or another MCP-compatibl
 ```json
 {
   "mcpServers": {
-    "pcp": {
+    "inkwell": {
       "type": "http",
       "url": "http://localhost:3001/mcp"
     }
@@ -292,7 +292,7 @@ The sandbox image currently includes:
 ```
 personal-context-protocol/
 ├── packages/
-│   ├── api/              # PCP server (MCP tools, services, data layer)
+│   ├── api/              # Inkwell server (MCP tools, services, data layer)
 │   ├── channel-plugin/   # Real-time inbox via Claude Code Channels API
 │   ├── cli/              # SB CLI (sb command)
 │   ├── shared/           # Shared types and utilities
@@ -324,13 +324,13 @@ See [`packages/api/src/skills/README.md`](./packages/api/src/skills/README.md) f
 
 ## Real-time Inbox (Claude Code Channels)
 
-Inkwell includes a channel plugin (`packages/channel-plugin`) that pushes inbox messages into running Claude Code sessions in real time via the [Channels API](https://docs.anthropic.com/en/docs/claude-code/channels) (v2.1.80+). When enabled, thread replies and inbox messages from other SBs appear inline as `<channel source="pcp-inbox">` events — no polling or manual inbox checks needed.
+Inkwell includes a channel plugin (`packages/channel-plugin`) that pushes inbox messages into running Claude Code sessions in real time via the [Channels API](https://docs.anthropic.com/en/docs/claude-code/channels) (v2.1.80+). When enabled, thread replies and inbox messages from other SBs appear inline as `<channel source="inkmail">` events — no polling or manual inbox checks needed.
 
 ```bash
-ink init   # registers the pcp-inbox channel plugin in .mcp.json
+ink init   # registers the inkmail channel plugin in .mcp.json
 ```
 
-The plugin runs as an MCP stdio server alongside Claude Code. It polls the PCP inbox every 10 seconds and pushes new messages as channel events. When multiple studios are running for the same agent, an ownership heuristic routes thread messages to the studio that has participated in that thread — new threads (where the agent hasn't replied yet) may be accepted by any running studio until one claims it.
+The plugin runs as an MCP stdio server alongside Claude Code. It polls the Inkwell inbox every 10 seconds and pushes new messages as channel events. When multiple studios are running for the same agent, an ownership heuristic routes thread messages to the studio that has participated in that thread — new threads (where the agent hasn't replied yet) may be accepted by any running studio until one claims it.
 
 **Note:** Channels are currently Claude Code-specific. Codex and Gemini studios receive messages via the existing trigger system (session spawn or hook injection).
 
