@@ -1,5 +1,65 @@
 # Changelog
 
+## [0.4.0] — 2026-04-05
+
+138 commits since v0.3.0 by Conor, Wren, Lumen, and Aster. This release completes the rebrand from PCP to **Inkwell**, adds per-sender session isolation, studio sandbox controls, and patches three security vulnerabilities.
+
+### Rebrand: PCP → Inkwell
+
+- **Full rename** across 90+ source files, all documentation, and all config files
+- **Naming stack**: Ink Labs (`inklabs.io`) → Inkwell (server) → Ink (CLI) → Inkmail (channel)
+- **URI scheme**: `pcp://` → `ink://` for all artifacts and references
+- **MCP server key**: `pcp` / `inkstand` → `inkwell` across `.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`
+- **Claude Code permissions**: `mcp__pcp__*` / `mcp__inkstand__*` → `mcp__inkwell__*` in all `.claude/settings.local.json`
+- **Environment variables**: `PCP_*` → `INK_*` (context token, session ID, studio ID, etc.)
+- **Shared identity constants** (`packages/shared/src/identity.ts`): canonical `Backend` type, `BACKEND_ALIASES`, `MCP_SERVER_KEY`, `ENV` vars, `IDENTITY_CONTEXTS`
+- **Repo renamed** on GitHub: `conoremclaughlin/personal-context-protocol` → `conoremclaughlin/inkwell`
+
+### Per-Sender Session Isolation
+
+- **Contact-scoped sessions** — when agents handle messages from different people (e.g., Myra on Telegram), each sender gets their own session with isolated memory context
+- **Contact identity injection** — sender identity (name, platform, contact ID) propagated into session context
+
+### Studio Sandbox Controls
+
+- **Per-studio `sandbox_bypass`** — configurable per-studio, inheritable from agent identity
+- **Codex triggered sessions** need full sandbox bypass for MCP tools to work in exec mode
+- **`ink studio sandbox`** command for managing sandbox settings
+
+### Session & Routing
+
+- **`studioId: "main"` routing** — sessions from the main repo root now resolve correctly via `resolveMainStudioId()` branch matching
+- **`list_sessions` accepts `"main"`** — Zod schema relaxed, handler resolves to actual studio UUID
+- **CLI-attached session routing** — triggered messages inject into active CLI sessions instead of spawning new ones
+- **Studio route patterns** — pattern-based trigger routing for studios (`pr:*`, `spec:*`, etc.)
+- **Always-on hook lifecycle logging** — hooks log to structured JSON regardless of debug mode
+
+### Inkmail Channel Plugin
+
+- **Real-time inbox delivery** — thread replies and inbox messages from other SBs appear inline as `<channel source="inkmail">` events in Claude Code sessions
+- **Works from main repo root** — inkmail now delivers correctly when working outside a studio worktree
+
+### Fixes
+
+- **Gemini adapter auth** — auth + context headers now injected via settings.json override
+- **Codex adapter auth** — missing auth headers regression fixed
+- **Dead Gemini compact hooks removed** — PreCompress/postCompact hooks disabled for Gemini (no post-compression event exists)
+- **Mission control** — studio labels on completed sessions, width-aware detail collapse
+- **CI** — all tests green, Node 22 standardized, pre-commit lockfile auto-update
+
+### Security
+
+- **lodash** 4.17.23 → 4.18.0 — `options.imports` key injection in `_.template`
+- **brace-expansion** 1.1.12 → 1.1.13 — zero-step infinite loop DoS
+- **path-to-regexp** 8.3.0 → 8.4.0 — exponential regex DoS (scoped to `@slack/bolt`)
+
+### Contributors
+
+- **Wren** (Claude Code) — rebrand, per-sender isolation, session routing, inkmail, security patches, CI fixes
+- **Lumen** (Codex CLI) — PR reviews (caught Codex server key mismatch, `is_main` nonexistent column, list_sessions UUID validation), Supabase analytics cleanup
+- **Aster** (Gemini) — work strategies spec review
+- **Myra** (Telegram/WhatsApp) — work strategies spec review, identified inkwell permission rename blocker
+
 ## [0.3.0] — 2026-03-20
 
 24 commits since v0.2.0 by Conor, Wren, and Lumen. This release adds the `sb wait` holding pattern, x-pcp-context token consolidation, Gemini hook support, a tasks dashboard, and mission display polish.
