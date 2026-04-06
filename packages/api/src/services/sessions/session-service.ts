@@ -804,16 +804,10 @@ export class SessionService implements ISessionService {
       repoRoot?: string;
     }
   ): Promise<string | undefined> {
+    // explicitStudioId takes precedence — it's the precise routing signal.
     if (options.explicitStudioId) {
-      // 'main' is a reserved convention — resolve it the same way studioHint does
-      if (options.explicitStudioId === 'main') {
-        const mainId = await this.resolveMainStudioId(userId, options.repoRoot);
-        if (mainId) return mainId;
-        logger.warn('[StudioResolve] explicitStudioId=main but no main studio found', {
-          userId,
-          agentId,
-        });
-        return undefined;
+      if (isMainStudio(options.explicitStudioId)) {
+        return this.resolveMainStudioId(userId, options.repoRoot, agentId);
       }
       return options.explicitStudioId;
     }
@@ -822,21 +816,12 @@ export class SessionService implements ISessionService {
       return undefined;
     }
 
-    // Explicit convenience hint: resolve studio by name.
-    // 'main' is a special case resolved by worktree path / branch.
-    // Other hints resolve by matching the studio name for this user + agent.
-    if (options.studioHint) {
-      if (options.studioHint === 'main') {
-        const mainId = await this.resolveMainStudioId(userId, options.repoRoot);
-        if (mainId) return mainId;
-        // studioHint was explicit — don't silently fall through to unrelated studios
-        logger.warn('[StudioResolve] studioHint=main but no main studio found, skipping fallback', {
-          userId,
-          agentId,
-        });
-        return undefined;
-      }
+    // studioHint is a convenience fallback — only consulted when no explicit studioId.
+    if (isMainStudio(options.studioHint)) {
+      return this.resolveMainStudioId(userId, options.repoRoot, agentId);
+    }
 
+    if (options.studioHint) {
       // Studios use 'slug' not 'name' — match studioHint against slug
       const { data: namedStudio } = await this.supabase
         .from('studios')
@@ -982,7 +967,7 @@ export class SessionService implements ISessionService {
     // inherit the bad studio. The studios table is the authoritative source.
 
     // 5) Shared per-user main studio fallback
-    const mainStudioId = await this.resolveMainStudioId(userId, options.repoRoot);
+    const mainStudioId = await this.resolveMainStudioId(userId, options.repoRoot, agentId);
     if (mainStudioId) return mainStudioId;
 
     // Codex is worktree-sensitive: keep a deterministic warning when no studio could be resolved.
@@ -1002,26 +987,16 @@ export class SessionService implements ISessionService {
 
   private async resolveMainStudioId(
     userId: string,
-    repoRoot?: string
+    repoRoot?: string,
+    agentId?: string
   ): Promise<string | undefined> {
     if (!this.supabase) return undefined;
-
-    // "Main" = the root repo. Find the most recently used studio whose
-    // repo_root matches the target project. Falls back to server CWD
-    // when no repoRoot is provided (e.g., from the context token).
-    const targetRoot = repoRoot || this.config.defaultWorkingDirectory;
-
-    const { data: match } = await this.supabase
-      .from('studios')
-      .select('id, updated_at')
-      .eq('user_id', userId)
-      .eq('repo_root', targetRoot)
-      .in('status', ['active', 'idle', 'archived'])
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    return match?.id || undefined;
+    return resolveMainStudio(
+      this.supabase,
+      userId,
+      repoRoot || this.config.defaultWorkingDirectory,
+      agentId
+    );
   }
 
   private async resolveWorkingDirectory(
@@ -1437,10 +1412,48 @@ This session will continue with a fresh context after compaction. Your identity,
 }
 
 /**
- * Resolve a studio hint to a studioId. Shared by SessionService (private
- * resolveStudioId) and inbox-handlers (cross-studio self-messaging metadata).
+ * Resolve 'main' to a studio ID. "Main" = the root repo.
  *
- * For 'main': find the most recent studio in the target project via repo_root.
+ * Finds the most recently updated studio whose repo_root matches the
+ * target project. When no repoRoot is provided, falls back to process.cwd()
+ * (the server's working directory).
+ *
+ * Returns undefined when no matching studio exists — callers should use
+ * defaultWorkingDirectory as the spawn path (the root repo itself).
+ */
+export async function resolveMainStudio(
+  supabase: SupabaseClient<Database>,
+  userId: string,
+  repoRoot?: string,
+  agentId?: string
+): Promise<string | undefined> {
+  const targetRoot = repoRoot || process.cwd();
+  let query = supabase
+    .from('studios')
+    .select('id, updated_at')
+    .eq('user_id', userId)
+    .eq('repo_root', targetRoot)
+    .in('status', ['active', 'idle', 'archived'])
+    .order('updated_at', { ascending: false })
+    .limit(1);
+  if (agentId) {
+    query = query.eq('agent_id', agentId);
+  }
+  const { data: match } = await query.maybeSingle();
+  return match?.id || undefined;
+}
+
+/**
+ * Check if a studioId or studioHint value means "main" (the root repo).
+ */
+export function isMainStudio(value: string | undefined | null): boolean {
+  return value === 'main';
+}
+
+/**
+ * Resolve a studio hint to a studioId.
+ *
+ * For 'main': delegates to resolveMainStudio.
  * For named hints: slug match.
  */
 export async function resolveStudioHint(
@@ -1450,19 +1463,8 @@ export async function resolveStudioHint(
   agentId?: string,
   repoRoot?: string
 ): Promise<string | undefined> {
-  if (hint === 'main') {
-    // "Main" = the root repo. Find the most recent studio in this project.
-    const targetRoot = repoRoot || process.cwd();
-    const { data: mainByRepo } = await supabase
-      .from('studios')
-      .select('id, updated_at')
-      .eq('user_id', userId)
-      .eq('repo_root', targetRoot)
-      .in('status', ['active', 'idle', 'archived'])
-      .order('updated_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    return mainByRepo?.id || undefined;
+  if (isMainStudio(hint)) {
+    return resolveMainStudio(supabase, userId, repoRoot, agentId);
   }
 
   // Named hint: match by slug

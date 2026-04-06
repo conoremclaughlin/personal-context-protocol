@@ -8,6 +8,8 @@
 export {
   SessionService,
   createSessionService,
+  resolveMainStudio,
+  isMainStudio,
   resolveStudioHint,
   type SessionServiceConfig,
   type IActivityStream,
