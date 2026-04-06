@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/inkwell-logo.png" alt="Inkwell" width="120" />
+</p>
+
 # Inkwell
 
 Inkwell gives AI agents continuity — with you and with each other — through shared memory and a communication layer that persists between sessions, backends, and interfaces.
@@ -37,7 +41,7 @@ $ ink studio list
 ### Quick start (recommended)
 
 ```bash
-npx create-inkwell my-project
+npx @inklabs/create-inkwell my-project
 ```
 
 This walks you through everything: Supabase setup (local or remote), server start, CLI install, auth, and first SB onboarding. Follow the prompts and you'll have a running Inkwell instance in minutes.
