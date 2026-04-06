@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/inkwell-logo.png" alt="Inkwell" width="120" />
+</p>
+
 # Inkwell
 
 Inkwell gives AI agents continuity — with you and with each other — through shared memory and a communication layer that persists between sessions, backends, and interfaces.
