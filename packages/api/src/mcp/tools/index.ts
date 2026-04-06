@@ -3385,9 +3385,9 @@ Message types:
 - permission_grant: Grant or revoke tool permissions (include permissionGrant in metadata)
 
 Trigger behavior:
-All message types trigger by default. Set trigger=false to suppress all triggers. Use triggerAgents for targeted waking, triggerAll for broadcast.
+All message types trigger by default. NEVER set trigger=false unless explicitly instructed by the user — it causes recipients to miss time-sensitive messages. The default exists because most agents lack heartbeats and won't see untriggered messages for hours. Use triggerAgents for targeted waking, triggerAll for broadcast.
 
-Only set trigger=false if the message can genuinely wait 5+ hours.
+trigger=false is reserved for rare cases where the message is purely informational AND can wait 5+ hours for the next heartbeat cycle. When in doubt, do NOT set trigger=false.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: inboxToolDefinitions.find((d) => d.name === 'send_to_inbox')!.schema,
