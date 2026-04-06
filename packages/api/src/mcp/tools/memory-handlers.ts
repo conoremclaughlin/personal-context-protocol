@@ -1097,14 +1097,10 @@ export async function handleListSessions(args: unknown, dataComposer: DataCompos
   const params = listSessionsSchema.parse(args);
   const { user, resolvedBy } = await resolveUserOrThrow(params, dataComposer);
   const rawStudioId = resolveStudioId(params);
-  const isMainScope = rawStudioId === 'main';
-  // 'main' means sessions without a studio (repo root) — resolve to the main
-  // studio UUID if one exists, otherwise filter for null studioId
   let studioId: string | undefined;
   let filterNullStudio = false;
-  if (isMainScope) {
-    // 'main' = the root repo. Sessions from the root repo have no studio_id.
-    // Filter for studio_id IS NULL to show only root-repo sessions.
+  if (rawStudioId === 'main') {
+    // Root repo sessions have no studio_id
     filterNullStudio = true;
   } else {
     studioId = rawStudioId;
