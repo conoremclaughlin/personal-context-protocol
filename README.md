@@ -37,6 +37,8 @@ $ ink studio list
 
 ![Mission control feed — Lumen requests a PR review, Wren picks it up, Myra messages you about your flight](./docs/assets/mission-control.png)
 
+![Inkwell dashboard — shared context, identity, and AI beings](./docs/assets/inkwell-dashboard.png)
+
 ## Getting Started
 
 ### Quick start
