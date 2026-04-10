@@ -2211,7 +2211,8 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
 
 /**
  * PATCH /api/admin/identities/:agentId/settings
- * Update SB-level settings (sandbox_bypass, etc.). Admin-only — not exposed via MCP.
+ * Update SB-level settings: sandbox_bypass, backend, runtime config (tool profile,
+ * tool routing, max turns, passive recall). Admin-only — not exposed via MCP.
  */
 router.patch('/identities/:agentId/settings', async (req: Request, res: Response) => {
   try {
@@ -2224,7 +2225,7 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
     // Find the identity for this agent + workspace
     const { data: identity, error: fetchErr } = await supabase
       .from('agent_identities')
-      .select('id')
+      .select('id, metadata')
       .eq('user_id', authReq.pcpUserId)
       .eq('workspace_id', authReq.pcpWorkspaceId)
       .eq('agent_id', agentId)
@@ -2238,8 +2239,33 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
     const body = (req.body || {}) as Record<string, unknown>;
     const updates: Record<string, unknown> = {};
 
+    // Top-level columns
     if (typeof body.sandboxBypass === 'boolean' || body.sandboxBypass === null) {
       updates.sandbox_bypass = body.sandboxBypass;
+    }
+    if (body.backend !== undefined) {
+      updates.backend = body.backend;
+    }
+
+    // Runtime config fields → stored in metadata.runtimeConfig
+    const { toolProfile, toolRouting, maxTurns, passiveRecall } = body;
+    if (
+      toolProfile !== undefined ||
+      toolRouting !== undefined ||
+      maxTurns !== undefined ||
+      passiveRecall !== undefined
+    ) {
+      const existingMeta = (identity.metadata || {}) as Record<string, unknown>;
+      const runtimeConfig: Record<string, unknown> = {
+        ...((existingMeta.runtimeConfig as Record<string, unknown>) || {}),
+      };
+
+      if (toolProfile !== undefined) runtimeConfig.toolProfile = toolProfile;
+      if (toolRouting !== undefined) runtimeConfig.toolRouting = toolRouting;
+      if (maxTurns !== undefined) runtimeConfig.maxTurns = maxTurns;
+      if (passiveRecall !== undefined) runtimeConfig.passiveRecall = passiveRecall;
+
+      updates.metadata = { ...existingMeta, runtimeConfig };
     }
 
     if (Object.keys(updates).length === 0) {
@@ -2249,10 +2275,12 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
 
     updates.updated_at = new Date().toISOString();
 
-    const { error: updateErr } = await supabase
+    const { data: updated, error: updateErr } = await supabase
       .from('agent_identities')
       .update(updates)
-      .eq('id', identity.id);
+      .eq('id', identity.id)
+      .select()
+      .single();
 
     if (updateErr) {
       logger.error('Failed to update identity settings:', updateErr);
@@ -2260,8 +2288,15 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
       return;
     }
 
+    const meta = (updated.metadata || {}) as Record<string, unknown>;
     logger.info('Identity settings updated', { agentId, updates });
-    res.json({ success: true, agentId, ...updates });
+    res.json({
+      success: true,
+      agentId,
+      backend: updated.backend || null,
+      sandbox_bypass: updated.sandbox_bypass,
+      runtimeConfig: (meta.runtimeConfig as Record<string, unknown>) || null,
+    });
   } catch (error) {
     logger.error('Failed to update identity settings:', error);
     res.status(500).json(errorJson('Failed to update identity settings', error));
@@ -2932,24 +2967,29 @@ router.get('/individuals', async (req: Request, res: Response) => {
     }
 
     res.json({
-      individuals: (data || []).map((identity) => ({
-        id: identity.id,
-        agentId: identity.agent_id,
-        name: identity.name,
-        role: identity.role,
-        description: identity.description,
-        values: identity.values,
-        relationships: identity.relationships,
-        capabilities: identity.capabilities,
-        metadata: identity.metadata,
-        heartbeat: identity.heartbeat,
-        soul: identity.soul,
-        hasSoul: !!identity.soul,
-        hasHeartbeat: !!identity.heartbeat,
-        version: identity.version,
-        createdAt: identity.created_at,
-        updatedAt: identity.updated_at,
-      })),
+      individuals: (data || []).map((identity) => {
+        const meta = (identity.metadata || {}) as Record<string, unknown>;
+        return {
+          id: identity.id,
+          agentId: identity.agent_id,
+          name: identity.name,
+          role: identity.role,
+          backend: identity.backend || null,
+          description: identity.description,
+          values: identity.values,
+          relationships: identity.relationships,
+          capabilities: identity.capabilities,
+          metadata: identity.metadata,
+          runtimeConfig: (meta.runtimeConfig as Record<string, unknown>) || null,
+          heartbeat: identity.heartbeat,
+          soul: identity.soul,
+          hasSoul: !!identity.soul,
+          hasHeartbeat: !!identity.heartbeat,
+          version: identity.version,
+          createdAt: identity.created_at,
+          updatedAt: identity.updated_at,
+        };
+      }),
     });
   } catch (error) {
     logger.error('Failed to list individuals:', error);
