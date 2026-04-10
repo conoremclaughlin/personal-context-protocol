@@ -6631,17 +6631,40 @@ router.get('/strategies', async (req: Request, res: Response) => {
       logger.warn('Failed to fetch tasks for strategies:', tasksError);
     }
 
-    // Fetch watchdog reminders for these groups
+    // Fetch watchdog scheduled reminders for these groups
     const { data: reminders, error: remindersError } = await supabase
-      .from('reminders')
-      .select('id, message, status, reminder_time, created_at, metadata')
+      .from('scheduled_reminders')
+      .select(
+        'id, title, description, status, next_run_at, last_run_at, run_count, created_at, metadata'
+      )
       .eq('user_id', authReq.pcpUserId)
-      .in('metadata->>taskGroupId', groupIds)
-      .order('reminder_time', { ascending: false })
-      .limit(200);
+      .contains('metadata', { strategyWatchdog: true } as never)
+      .in('metadata->>groupId', groupIds)
+      .order('created_at', { ascending: false })
+      .limit(100);
 
     if (remindersError) {
       logger.warn('Failed to fetch watchdog reminders:', remindersError);
+    }
+
+    // Fetch fire history for watchdog reminders
+    const watchdogIds = (reminders || []).map((r) => r.id);
+    let historyByReminder: Record<string, Array<{ triggeredAt: string; status: string }>> = {};
+    if (watchdogIds.length > 0) {
+      const { data: history } = await supabase
+        .from('reminder_history')
+        .select('reminder_id, triggered_at, status')
+        .in('reminder_id', watchdogIds)
+        .order('triggered_at', { ascending: false })
+        .limit(500);
+      for (const h of history || []) {
+        const rid = (h as Record<string, unknown>).reminder_id as string;
+        if (!historyByReminder[rid]) historyByReminder[rid] = [];
+        historyByReminder[rid].push({
+          triggeredAt: (h as Record<string, unknown>).triggered_at as string,
+          status: (h as Record<string, unknown>).status as string,
+        });
+      }
     }
 
     // Group tasks and reminders by group ID
@@ -6655,7 +6678,7 @@ router.get('/strategies', async (req: Request, res: Response) => {
     }
 
     for (const r of reminders || []) {
-      const gid = (r.metadata as Record<string, unknown>)?.taskGroupId as string;
+      const gid = (r.metadata as Record<string, unknown>)?.groupId as string;
       if (gid) {
         if (!remindersByGroup[gid]) remindersByGroup[gid] = [];
         remindersByGroup[gid].push(r);
@@ -6721,11 +6744,15 @@ router.get('/strategies', async (req: Request, res: Response) => {
         })),
         watchdog: (remindersByGroup[g.id] || []).map((r) => ({
           id: r.id,
-          content: r.message,
+          title: r.title,
+          description: r.description,
           status: r.status,
-          fireAt: r.reminder_time,
+          nextRunAt: r.next_run_at,
+          lastRunAt: r.last_run_at,
+          runCount: r.run_count,
           createdAt: r.created_at,
-          action: ((r.metadata as Record<string, unknown>)?.action as string) ?? null,
+          ownerAgentId: ((r.metadata as Record<string, unknown>)?.ownerAgentId as string) ?? null,
+          fires: historyByReminder[r.id] || [],
         })),
         createdAt: g.created_at,
         updatedAt: g.updated_at,
