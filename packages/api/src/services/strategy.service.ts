@@ -13,6 +13,7 @@
  */
 
 import type { DataComposer } from '../data/composer';
+import { getRequestContext } from '../utils/request-context';
 import type {
   TaskGroup,
   StrategyPreset,
@@ -590,6 +591,25 @@ export class StrategyService {
       const nextRunAt = new Date();
       nextRunAt.setMinutes(nextRunAt.getMinutes() + intervalMinutes);
 
+      // Capture the Ink session ID from request context — the watchdog can check
+      // if this session is still active before re-triggering (avoids interrupting
+      // an agent that's already working the strategy).
+      const reqCtx = getRequestContext();
+      const inkSessionId = reqCtx?.sessionId || null;
+
+      // Look up the backend session ID too (for future "is generation active" checks)
+      let backendSessionId: string | null = null;
+      if (inkSessionId) {
+        const { data: session } = await this.dataComposer
+          .getClient()
+          .from('sessions')
+          .select('backend_session_id')
+          .eq('id', inkSessionId)
+          .single();
+        if (session)
+          backendSessionId = (session as { backend_session_id: string | null }).backend_session_id;
+      }
+
       // Resolve the owner agent's identity for reminder routing
       let identityId: string | null = null;
       if (group.owner_agent_id) {
@@ -613,7 +633,10 @@ export class StrategyService {
           description: [
             `Check progress on task group ${group.id} (strategy: ${group.strategy}).`,
             `Use get_strategy_status(groupId: "${group.id}") to check progress.`,
-            'If the strategy is stuck (no progress since last check), re-trigger the owner agent on the thread.',
+            inkSessionId
+              ? `The strategy was started in session ${inkSessionId}. If that session is still active, the agent is likely still working — no action needed.`
+              : null,
+            'If the strategy is stuck (no progress since last check and no active session), re-trigger the owner agent on the thread.',
             group.thread_key ? `Thread: ${group.thread_key}` : null,
           ]
             .filter(Boolean)
@@ -628,6 +651,8 @@ export class StrategyService {
             strategy: group.strategy,
             ownerAgentId: group.owner_agent_id,
             threadKey: group.thread_key,
+            inkSessionId,
+            backendSessionId,
           },
         } as never);
 
