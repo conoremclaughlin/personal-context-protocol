@@ -25,8 +25,6 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { useApiQuery, useApiPatch, useQueryClient } from '@/lib/api';
 import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
-import clsx from 'clsx';
-
 interface RuntimeConfig {
   toolProfile?: string;
   toolRouting?: string;
