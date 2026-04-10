@@ -6624,4 +6624,196 @@ router.post('/contacts/resolve', async (req: Request, res: Response) => {
   }
 });
 
+// =============================================================================
+// Strategies
+// =============================================================================
+
+/**
+ * GET /api/admin/strategies
+ * List task groups that have an active or completed strategy, with their tasks
+ * and watchdog reminder history. Used by the strategy execution dashboard.
+ */
+router.get('/strategies', async (req: Request, res: Response) => {
+  try {
+    const supabase = createClient<Database>(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const authReq = req as AdminAuthRequest;
+
+    // Fetch task groups that have a strategy set
+    const { data: groups, error: groupsError } = await supabase
+      .from('task_groups')
+      .select('*, agent_identities(agent_id, name), projects(name)')
+      .eq('user_id', authReq.pcpUserId)
+      .not('strategy', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(100);
+
+    if (groupsError) {
+      res.status(500).json(errorJson('Failed to list strategies', groupsError));
+      return;
+    }
+
+    if (!groups || groups.length === 0) {
+      res.json({ strategies: [] });
+      return;
+    }
+
+    const groupIds = groups.map((g) => g.id);
+
+    // Fetch all tasks for these groups (ordered by task_order)
+    const { data: tasks, error: tasksError } = await supabase
+      .from('tasks')
+      .select(
+        'id, title, description, status, priority, task_order, completed_at, created_at, updated_at, task_group_id, tags'
+      )
+      .eq('user_id', authReq.pcpUserId)
+      .in('task_group_id', groupIds)
+      .order('task_order', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true });
+
+    if (tasksError) {
+      logger.warn('Failed to fetch tasks for strategies:', tasksError);
+    }
+
+    // Fetch watchdog reminders for these groups
+    const { data: reminders, error: remindersError } = await supabase
+      .from('reminders')
+      .select('id, message, status, reminder_time, created_at, metadata')
+      .eq('user_id', authReq.pcpUserId)
+      .in('metadata->>taskGroupId', groupIds)
+      .order('reminder_time', { ascending: false })
+      .limit(200);
+
+    if (remindersError) {
+      logger.warn('Failed to fetch watchdog reminders:', remindersError);
+    }
+
+    // Group tasks and reminders by group ID
+    const tasksByGroup: Record<string, typeof tasks> = {};
+    const remindersByGroup: Record<string, typeof reminders> = {};
+
+    for (const t of tasks || []) {
+      const gid = t.task_group_id!;
+      if (!tasksByGroup[gid]) tasksByGroup[gid] = [];
+      tasksByGroup[gid].push(t);
+    }
+
+    for (const r of reminders || []) {
+      const gid = (r.metadata as Record<string, unknown>)?.taskGroupId as string;
+      if (gid) {
+        if (!remindersByGroup[gid]) remindersByGroup[gid] = [];
+        remindersByGroup[gid].push(r);
+      }
+    }
+
+    const strategies = groups.map((g) => {
+      const groupTasks = tasksByGroup[g.id] || [];
+      const completed = groupTasks.filter((t) => t.status === 'completed').length;
+      const total = groupTasks.length;
+
+      // Compute elapsed duration
+      let elapsedMs: number | null = null;
+      if (g.strategy_started_at) {
+        const end =
+          g.status === 'completed'
+            ? new Date(g.updated_at).getTime()
+            : g.strategy_paused_at
+              ? new Date(g.strategy_paused_at).getTime()
+              : Date.now();
+        elapsedMs = end - new Date(g.strategy_started_at).getTime();
+      }
+
+      return {
+        id: g.id,
+        title: g.title,
+        description: g.description,
+        status: g.status,
+        strategy: g.strategy,
+        strategyConfig: g.strategy_config,
+        verificationMode: g.verification_mode,
+        planUri: g.plan_uri,
+        currentTaskIndex: g.current_task_index,
+        iterationsSinceApproval: g.iterations_since_approval,
+        strategyStartedAt: g.strategy_started_at,
+        strategyPausedAt: g.strategy_paused_at,
+        ownerAgentId: g.owner_agent_id,
+        agentId:
+          (g.agent_identities as { agent_id: string; name: string } | null)?.agent_id ?? null,
+        agentName: (g.agent_identities as { agent_id: string; name: string } | null)?.name ?? null,
+        projectName: (g.projects as { name: string } | null)?.name ?? null,
+        contextSummary: g.context_summary,
+        elapsedMs,
+        progress: {
+          total,
+          completed,
+          pending: groupTasks.filter((t) => t.status === 'pending').length,
+          inProgress: groupTasks.filter((t) => t.status === 'in_progress').length,
+          blocked: groupTasks.filter((t) => t.status === 'blocked').length,
+          completionRate: total > 0 ? Math.round((completed / total) * 100) : 0,
+        },
+        tasks: groupTasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          status: t.status,
+          priority: t.priority,
+          taskOrder: t.task_order,
+          tags: t.tags,
+          completedAt: t.completed_at,
+          createdAt: t.created_at,
+          updatedAt: t.updated_at,
+        })),
+        watchdog: (remindersByGroup[g.id] || []).map((r) => ({
+          id: r.id,
+          content: r.message,
+          status: r.status,
+          fireAt: r.reminder_time,
+          createdAt: r.created_at,
+          action: ((r.metadata as Record<string, unknown>)?.action as string) ?? null,
+        })),
+        createdAt: g.created_at,
+        updatedAt: g.updated_at,
+      };
+    });
+
+    res.json({ strategies });
+  } catch (error) {
+    logger.error('Failed to list strategies:', error);
+    res.status(500).json(errorJson('Failed to list strategies', error));
+  }
+});
+
+/**
+ * POST /api/admin/strategies/:groupId/action
+ * Execute a strategy action (pause/resume) from the dashboard
+ */
+router.post('/strategies/:groupId/action', async (req: Request, res: Response) => {
+  try {
+    const { groupId } = req.params;
+    const { action } = req.body;
+    const authReq = req as AdminAuthRequest;
+
+    if (!action || !['pause', 'resume'].includes(action)) {
+      res.status(400).json({ error: 'Invalid action. Must be "pause" or "resume".' });
+      return;
+    }
+
+    const dataComposer = await getDataComposer();
+    const { StrategyService } = await import('../services/strategy.service.js');
+    const strategyService = new StrategyService(dataComposer);
+
+    if (action === 'pause') {
+      const result = await strategyService.pauseStrategy(groupId, authReq.pcpUserId);
+      res.json({ success: true, action: 'paused', result });
+    } else {
+      const result = await strategyService.resumeStrategy(groupId, authReq.pcpUserId);
+      res.json({ success: true, action: 'resumed', result });
+    }
+  } catch (error) {
+    logger.error('Strategy action failed:', error);
+    res.status(500).json(errorJson('Strategy action failed', error));
+  }
+});
+
 export default router;
