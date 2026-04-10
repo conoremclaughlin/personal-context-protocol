@@ -221,13 +221,11 @@ ${injectedContext}`;
   }
 
   // No startup context provided. For Claude Code, the session-start hook
-  // injects constitution docs separately. But if hooks aren't installed or
+  // normally injects constitution docs. But if hooks aren't installed or
   // the hook fails, the agent needs to self-heal by calling bootstrap manually.
   return `${identityHeader}
 
-Skip directly to loading user config from ~/.ink/config.json and bootstrap as "${agentId}".
-
-**IMPORTANT**: After session initialization, verify that your constitution docs were loaded. Look for a "Session Context (PCP)" or "Bootstrapped Startup Context" section in your context that contains your identity, soul, values, process, and user documents. If these are NOT present, the session-start hook may have failed — you MUST call the \`bootstrap\` MCP tool manually to load your identity context. Do not proceed without your constitution.
+Load user config from ~/.ink/config.json, then check whether your constitution docs are already present. Look for a "Session Context (PCP)" or "Bootstrapped Startup Context" section in your context containing your identity, soul, values, process, and user documents. If these are present, the session-start hook succeeded — do NOT call bootstrap again. If these are NOT present, the hook may have failed — call the \`bootstrap\` MCP tool manually as "${agentId}" to load your identity context. Do not proceed without your constitution.
 
 ${toolPriority}`;
 }

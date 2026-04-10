@@ -7,15 +7,20 @@ import { buildIdentityPrompt } from './identity.js';
 import { decodeContextToken } from '@inklabs/shared';
 
 describe('buildIdentityPrompt conditional bootstrap', () => {
-  it('includes self-healing instructions when no startup context is provided', () => {
+  it('includes conditional self-healing instructions when no startup context is provided', () => {
     const prompt = buildIdentityPrompt('wren');
 
     expect(prompt).toContain('You are wren');
-    expect(prompt).toContain('Skip directly to loading user config');
-    expect(prompt).toContain('verify that your constitution docs were loaded');
-    expect(prompt).toContain('bootstrap');
+    // Should tell agent to check for existing docs first, not bootstrap unconditionally
+    expect(prompt).toContain('check whether your constitution docs are already present');
+    expect(prompt).toContain('If these are present');
+    expect(prompt).toContain('do NOT call bootstrap again');
+    expect(prompt).toContain('If these are NOT present');
+    expect(prompt).toContain('call the `bootstrap` MCP tool manually');
     expect(prompt).not.toContain('Bootstrap has already been completed');
-    // Should NOT have the actual startup context section (only a reference to it in self-healing text)
+    // Should NOT unconditionally instruct bootstrap
+    expect(prompt).not.toContain('Skip directly to loading user config');
+    // Should NOT have the actual startup context section
     expect(prompt).not.toContain('## Bootstrapped Startup Context (PCP)');
   });
 
@@ -28,7 +33,7 @@ describe('buildIdentityPrompt conditional bootstrap', () => {
     expect(prompt).toContain('## Bootstrapped Startup Context (PCP)');
     expect(prompt).toContain('### Identity');
     expect(prompt).toContain('I am Lumen.');
-    expect(prompt).not.toContain('verify that your constitution docs were loaded');
+    expect(prompt).not.toContain('check whether your constitution docs are already present');
   });
 });
 
