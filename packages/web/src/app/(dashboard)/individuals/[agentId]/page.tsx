@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { useApiQuery, useApiPut, useQueryClient } from '@/lib/api';
+import { useApiQuery, useApiPatch, useQueryClient } from '@/lib/api';
 import { normalizeDocMarkdown } from '@/lib/markdown/normalize-doc';
 import clsx from 'clsx';
 
@@ -84,7 +84,7 @@ const TOOL_PROFILES = [
 
 const TOOL_ROUTING = [
   { value: '', label: 'Not set (use CLI default)' },
-  { value: 'local', label: 'Local — PCP tools via pcp-tool blocks' },
+  { value: 'local', label: 'Local — Ink tools via ink-tool blocks' },
   { value: 'backend', label: 'Backend — Native MCP tool calling' },
 ];
 
@@ -101,11 +101,11 @@ function RuntimeSettingsPanel({ agentId, identity }: { agentId: string; identity
   const [recallCeiling, setRecallCeiling] = useState(String(rc.passiveRecall?.budgetCeiling ?? '0.8'));
   const [recallMaxInject, setRecallMaxInject] = useState(String(rc.passiveRecall?.maxInjectPerTurn ?? '2'));
 
-  const saveSettings = useApiPut<
+  const saveSettings = useApiPatch<
     { success: boolean },
     { id: string; body: Record<string, unknown> }
   >(
-    ({ id }) => `/api/admin/individuals/${id}/settings`,
+    ({ id }) => `/api/admin/identities/${id}/settings`,
     ({ body }) => body,
     { onSuccess: () => queryClient.invalidateQueries({ queryKey: ['individuals'] }) }
   );
@@ -145,7 +145,7 @@ function RuntimeSettingsPanel({ agentId, identity }: { agentId: string; identity
           <CardDescription>
             Configure default backend, tool permissions, and passive recall for{' '}
             <span className="font-semibold">{identity.name}</span>. These settings apply when
-            launching via <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">sb chat --agent {agentId}</code>.
+            launching via <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs">ink chat --agent {agentId}</code>.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -169,7 +169,7 @@ function RuntimeSettingsPanel({ agentId, identity }: { agentId: string; identity
                   <option key={p.value} value={p.value}>{p.label}</option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-gray-400">Which PCP tools are allowed without prompting.</p>
+              <p className="mt-1 text-xs text-gray-400">Which Ink tools are allowed without prompting.</p>
             </div>
 
             {/* Tool Routing */}
@@ -180,7 +180,7 @@ function RuntimeSettingsPanel({ agentId, identity }: { agentId: string; identity
                   <option key={r.value} value={r.value}>{r.label}</option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-gray-400">How PCP tool calls are routed.</p>
+              <p className="mt-1 text-xs text-gray-400">How Ink tool calls are routed.</p>
             </div>
           </div>
 
@@ -282,10 +282,10 @@ function RuntimeSettingsPanel({ agentId, identity }: { agentId: string; identity
         <CardContent>
           <pre className="bg-gray-900 text-gray-100 p-3 rounded-md text-xs font-mono overflow-x-auto">
 {`# Run ${identity.name} with saved settings
-sb chat --agent ${agentId}${backend ? ` --backend ${backend}` : ''}${toolProfile ? ` --profile ${toolProfile}` : ''}${toolRouting ? ` --tool-routing ${toolRouting}` : ''}${maxTurns ? ` --max-turns ${maxTurns}` : ''}
+ink chat --agent ${agentId}${backend ? ` --backend ${backend}` : ''}${toolProfile ? ` --profile ${toolProfile}` : ''}${toolRouting ? ` --tool-routing ${toolRouting}` : ''}${maxTurns ? ` --max-turns ${maxTurns}` : ''}
 
 # Heartbeat mode
-sb chat --agent ${agentId}${backend ? ` --backend ${backend}` : ''} --profile ${toolProfile || 'collaborative'} --max-turns ${maxTurns || '3'} --message "Heartbeat check"`}
+ink chat --agent ${agentId}${backend ? ` --backend ${backend}` : ''} --profile ${toolProfile || 'collaborative'} --max-turns ${maxTurns || '3'} --message "Heartbeat check"`}
           </pre>
         </CardContent>
       </Card>

@@ -2211,7 +2211,8 @@ router.get('/routing/agents/:agentId', async (req: Request, res: Response) => {
 
 /**
  * PATCH /api/admin/identities/:agentId/settings
- * Update SB-level settings (sandbox_bypass, etc.). Admin-only — not exposed via MCP.
+ * Update SB-level settings: sandbox_bypass, backend, runtime config (tool profile,
+ * tool routing, max turns, passive recall). Admin-only — not exposed via MCP.
  */
 router.patch('/identities/:agentId/settings', async (req: Request, res: Response) => {
   try {
@@ -2224,7 +2225,7 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
     // Find the identity for this agent + workspace
     const { data: identity, error: fetchErr } = await supabase
       .from('agent_identities')
-      .select('id')
+      .select('id, metadata')
       .eq('user_id', authReq.pcpUserId)
       .eq('workspace_id', authReq.pcpWorkspaceId)
       .eq('agent_id', agentId)
@@ -2238,8 +2239,33 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
     const body = (req.body || {}) as Record<string, unknown>;
     const updates: Record<string, unknown> = {};
 
+    // Top-level columns
     if (typeof body.sandboxBypass === 'boolean' || body.sandboxBypass === null) {
       updates.sandbox_bypass = body.sandboxBypass;
+    }
+    if (body.backend !== undefined) {
+      updates.backend = body.backend;
+    }
+
+    // Runtime config fields → stored in metadata.runtimeConfig
+    const { toolProfile, toolRouting, maxTurns, passiveRecall } = body;
+    if (
+      toolProfile !== undefined ||
+      toolRouting !== undefined ||
+      maxTurns !== undefined ||
+      passiveRecall !== undefined
+    ) {
+      const existingMeta = (identity.metadata || {}) as Record<string, unknown>;
+      const runtimeConfig: Record<string, unknown> = {
+        ...((existingMeta.runtimeConfig as Record<string, unknown>) || {}),
+      };
+
+      if (toolProfile !== undefined) runtimeConfig.toolProfile = toolProfile;
+      if (toolRouting !== undefined) runtimeConfig.toolRouting = toolRouting;
+      if (maxTurns !== undefined) runtimeConfig.maxTurns = maxTurns;
+      if (passiveRecall !== undefined) runtimeConfig.passiveRecall = passiveRecall;
+
+      updates.metadata = { ...existingMeta, runtimeConfig };
     }
 
     if (Object.keys(updates).length === 0) {
@@ -2249,10 +2275,12 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
 
     updates.updated_at = new Date().toISOString();
 
-    const { error: updateErr } = await supabase
+    const { data: updated, error: updateErr } = await supabase
       .from('agent_identities')
       .update(updates)
-      .eq('id', identity.id);
+      .eq('id', identity.id)
+      .select()
+      .single();
 
     if (updateErr) {
       logger.error('Failed to update identity settings:', updateErr);
@@ -2260,8 +2288,15 @@ router.patch('/identities/:agentId/settings', async (req: Request, res: Response
       return;
     }
 
+    const meta = (updated.metadata || {}) as Record<string, unknown>;
     logger.info('Identity settings updated', { agentId, updates });
-    res.json({ success: true, agentId, ...updates });
+    res.json({
+      success: true,
+      agentId,
+      backend: updated.backend || null,
+      sandbox_bypass: updated.sandbox_bypass,
+      runtimeConfig: (meta.runtimeConfig as Record<string, unknown>) || null,
+    });
   } catch (error) {
     logger.error('Failed to update identity settings:', error);
     res.status(500).json(errorJson('Failed to update identity settings', error));
@@ -2959,81 +2994,6 @@ router.get('/individuals', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to list individuals:', error);
     res.status(500).json(errorJson('Failed to list individuals', error));
-  }
-});
-
-/**
- * PUT /api/admin/individuals/:agentId/settings
- * Update runtime settings for an AI being
- */
-router.put('/individuals/:agentId/settings', async (req: Request, res: Response) => {
-  try {
-    const { agentId } = req.params;
-    const { backend, toolProfile, toolRouting, maxTurns, passiveRecall } = req.body;
-    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
-      auth: { autoRefreshToken: false, persistSession: false },
-    });
-    const authReq = req as AdminAuthRequest;
-
-    // Find the identity
-    const { data: identity, error: findError } = await supabase
-      .from('agent_identities')
-      .select('id, metadata, backend')
-      .eq('agent_id', agentId)
-      .eq('user_id', authReq.pcpUserId)
-      .eq('workspace_id', authReq.pcpWorkspaceId)
-      .single();
-
-    if (findError || !identity) {
-      res.status(404).json({ error: 'Agent not found' });
-      return;
-    }
-
-    // Build updates
-    const existingMeta = (identity.metadata || {}) as Record<string, unknown>;
-    const runtimeConfig: Record<string, unknown> = {
-      ...(existingMeta.runtimeConfig as Record<string, unknown> || {}),
-    };
-
-    if (toolProfile !== undefined) runtimeConfig.toolProfile = toolProfile;
-    if (toolRouting !== undefined) runtimeConfig.toolRouting = toolRouting;
-    if (maxTurns !== undefined) runtimeConfig.maxTurns = maxTurns;
-    if (passiveRecall !== undefined) runtimeConfig.passiveRecall = passiveRecall;
-
-    const updates: Record<string, unknown> = {
-      metadata: { ...existingMeta, runtimeConfig },
-    };
-
-    // backend is a top-level column, not metadata
-    if (backend !== undefined) {
-      updates.backend = backend;
-    }
-
-    const { data: updated, error: updateError } = await supabase
-      .from('agent_identities')
-      .update(updates as never)
-      .eq('id', identity.id)
-      .select()
-      .single();
-
-    if (updateError) {
-      logger.error('Failed to update agent settings:', updateError);
-      res.status(500).json(errorJson('Failed to update settings', updateError));
-      return;
-    }
-
-    const meta = (updated.metadata || {}) as Record<string, unknown>;
-    res.json({
-      success: true,
-      settings: {
-        agentId,
-        backend: updated.backend || null,
-        runtimeConfig: (meta.runtimeConfig as Record<string, unknown>) || null,
-      },
-    });
-  } catch (error) {
-    logger.error('Failed to update agent settings:', error);
-    res.status(500).json(errorJson('Failed to update agent settings', error));
   }
 });
 
