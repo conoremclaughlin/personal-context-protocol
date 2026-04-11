@@ -96,6 +96,11 @@ const STRATEGY_PROMPTS: Record<StrategyPreset, (group: TaskGroup, task: ProjectT
       `Task group ID: ${group.id}.`,
     ];
 
+    // Process conventions — critical for autonomous work
+    parts.push(
+      "IMPORTANT: You MUST follow the project's CONTRIBUTING.md and AGENTS.md conventions. This includes: feature branches (never push to main), PR process (separate PRs per feature), commit conventions, and review requirements. Read these files if you haven't already."
+    );
+
     if (group.plan_uri) {
       parts.push(
         `The full plan is at ${group.plan_uri} — refer to it for architectural decisions and context.`
@@ -108,6 +113,11 @@ const STRATEGY_PROMPTS: Record<StrategyPreset, (group: TaskGroup, task: ProjectT
 
     parts.push(
       `When you finish this task, call complete_task(taskId: "${task.id}") to advance to the next one. The system will return your next task automatically.`
+    );
+
+    // Task completion rules
+    parts.push(
+      'You must complete every task in order. Do NOT skip tasks or defer them without explicit approval from the human or architect. If a task is blocked, mark it as blocked and explain why — do not self-justify skipping it.'
     );
 
     if (config.checkInInterval) {
