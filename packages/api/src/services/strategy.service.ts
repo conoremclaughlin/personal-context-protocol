@@ -209,6 +209,17 @@ export class StrategyService {
     // Create a watchdog reminder so the heartbeat checks progress periodically
     await this.createWatchdogReminder(updated, input.userId);
 
+    // Log strategy start
+    await this.logStrategyEvent(
+      updated,
+      'strategy_started',
+      `Strategy "${input.strategy}" started on "${updated.title}"`,
+      {
+        firstTaskId: nextTask.id,
+        firstTaskTitle: nextTask.title,
+      }
+    );
+
     const prompt = STRATEGY_PROMPTS[input.strategy](updated, nextTask);
 
     return {
@@ -255,6 +266,16 @@ export class StrategyService {
         context_summary: summary,
       });
 
+      await this.logStrategyEvent(
+        group,
+        'approval_required',
+        `Approval gate: ${newIterations} tasks completed without approval`,
+        {
+          iterationsSinceApproval: newIterations,
+          progressSummary: summary,
+        }
+      );
+
       // Notify dispatcher
       const notified = await this.notifyDispatcher(
         group,
@@ -286,6 +307,17 @@ export class StrategyService {
       // Cancel watchdog — strategy is done
       await this.cancelWatchdogReminder(group.id);
 
+      await this.logStrategyEvent(
+        group,
+        'strategy_completed',
+        `Strategy complete: ${completed}/${tasks.length} tasks done`,
+        {
+          totalTasks: tasks.length,
+          completedTasks: completed,
+          pendingTasks: tasks.length - completed,
+        }
+      );
+
       // Notify dispatcher of completion
       await this.notifyDispatcher(
         group,
@@ -302,6 +334,18 @@ export class StrategyService {
 
     // Mark next task as in_progress
     await this.dataComposer.repositories.tasks.startTask(nextTask.id);
+
+    // Log task advancement
+    await this.logStrategyEvent(
+      group,
+      'task_advanced',
+      `Advanced to task #${newIndex + 1}: "${nextTask.title}"`,
+      {
+        taskId: nextTask.id,
+        taskTitle: nextTask.title,
+        taskIndex: newIndex,
+      }
+    );
 
     // Check if it's time for a check-in
     if (config.checkInInterval && newIndex > 0 && newIndex % config.checkInInterval === 0) {
@@ -357,6 +401,8 @@ export class StrategyService {
     // Cancel watchdog while paused
     await this.cancelWatchdogReminder(groupId);
 
+    await this.logStrategyEvent(group, 'strategy_paused', `Strategy paused on "${group.title}"`);
+
     return this.dataComposer.repositories.taskGroups.update(groupId, {
       status: 'paused',
       strategy_paused_at: new Date().toISOString(),
@@ -381,6 +427,8 @@ export class StrategyService {
 
     // Re-create watchdog reminder
     await this.createWatchdogReminder(group, userId);
+
+    await this.logStrategyEvent(group, 'strategy_resumed', `Strategy resumed on "${group.title}"`);
 
     const nextTask = await this.getTaskByOrder(groupId, group.current_task_index);
 
@@ -687,6 +735,40 @@ export class StrategyService {
       logger.info(`Strategy watchdog cancelled for group ${groupId}`);
     } catch (err) {
       logger.warn('Failed to cancel strategy watchdog reminder:', err);
+    }
+  }
+
+  /**
+   * Log a strategy event to the activity stream.
+   * Links to the task group via task_group_id for dashboard correlation.
+   */
+  private async logStrategyEvent(
+    group: TaskGroup,
+    subtype: string,
+    content: string,
+    payload?: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      const reqCtx = getRequestContext();
+      await this.dataComposer.repositories.activityStream.logActivity({
+        userId: group.user_id,
+        agentId: group.owner_agent_id || 'system',
+        type: 'state_change',
+        subtype,
+        content,
+        sessionId: reqCtx?.sessionId,
+        taskGroupId: group.id,
+        payload: {
+          groupId: group.id,
+          groupTitle: group.title,
+          strategy: group.strategy,
+          ...payload,
+        } as unknown as import('../data/repositories/activity-stream.repository').Json,
+        status: 'completed',
+      });
+    } catch (err) {
+      // Non-fatal — don't block strategy operations for logging failures
+      logger.warn('Failed to log strategy event:', err);
     }
   }
 }
