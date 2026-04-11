@@ -10,11 +10,16 @@ import {
   buildChunkMetadataUpdate,
   buildChunkRows,
   buildMemoryEmbeddingChunks,
+  countChunkViews,
+  type EmbeddedMemoryChunk,
   formatVectorLiteral,
+  inferChunkTypeFromMetadata,
+  type MemoryChunkType,
   MEMORY_EMBEDDING_CHUNKS_VERSION,
 } from '../../services/embeddings/memory-chunks';
 import { EmbeddingRouter } from '../../services/embeddings/router';
 import { getVettedEmbeddingModel } from '../../services/embeddings/vetted-models';
+import { computeChronologyAwareBoost } from '../../services/memory-dreaming';
 import type {
   Memory,
   MemoryCreateInput,
@@ -42,6 +47,8 @@ interface RecallCandidate {
   memory: Memory;
   semanticScore?: number;
   textScore?: number;
+  matchedChunkType?: MemoryChunkType | null;
+  semanticEvidenceCount?: number;
   finalScore: number;
 }
 
@@ -76,9 +83,26 @@ type SemanticChunkMatchRow = Omit<MemoryRow, 'embedding'> & {
   similarity?: number;
   matched_chunk_index?: number | null;
   matched_chunk_text?: string | null;
+  matched_chunk_type?: string | null;
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const EMBEDDING_PERSIST_RETRY_ATTEMPTS = 3;
+
+function computeChunkTypeBoost(chunkType?: MemoryChunkType | null): number {
+  switch (chunkType) {
+    case 'fact':
+      return 0.08;
+    case 'topic':
+      return 0.05;
+    case 'entity':
+      return 0.04;
+    case 'summary':
+      return 0.03;
+    default:
+      return 0;
+  }
+}
 
 function parseEmbeddingValue(value: MemoryRow['embedding'] | string | null): number[] | undefined {
   if (!value) return undefined;
@@ -159,6 +183,50 @@ function computeFocusBoost(memory: Memory, focusText?: string): number {
 
   const ratio = overlap / focusTokens.length;
   return 1 + Math.min(0.35, ratio * 0.35);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function normalizeErrorDetails(error: unknown): Record<string, unknown> {
+  if (error instanceof Error) {
+    return {
+      message: error.message,
+      name: error.name,
+      stack: error.stack,
+    };
+  }
+
+  if (error && typeof error === 'object') {
+    return error as Record<string, unknown>;
+  }
+
+  return { message: String(error) };
+}
+
+function summarizeChunkPersistenceContext(params: {
+  memory: Memory;
+  embeddedChunks: EmbeddedMemoryChunk[];
+}): Record<string, unknown> {
+  const { memory, embeddedChunks } = params;
+  const primary = embeddedChunks[0]?.embedding;
+
+  return {
+    memoryId: memory.id,
+    userId: memory.userId,
+    salience: memory.salience,
+    topicKey: memory.topicKey,
+    topicCount: memory.topics.length,
+    summaryLength: memory.summary?.length ?? 0,
+    contentLength: memory.content.length,
+    chunkCount: embeddedChunks.length,
+    chunkTypes: embeddedChunks.map((chunk) => chunk.chunkType),
+    chunkLengths: embeddedChunks.map((chunk) => chunk.text.length),
+    provider: primary?.provider,
+    model: primary?.model,
+    dimensions: primary?.dimensions,
+  };
 }
 
 export function computeKnowledgeMemoryScore(
@@ -305,19 +373,33 @@ export class MemoryRepository {
       (offset + limit) * Math.max(1, config.matchCountMultiplier)
     );
 
-    const [semanticCandidates, textCandidates] = await Promise.all([
-      this.trySemanticRecallCandidates(userId, query, options, limit, offset),
+    const [derivedSemanticCandidates, contentSemanticCandidates, textCandidates] = await Promise.all([
+      this.trySemanticRecallCandidates(
+        userId,
+        query,
+        options,
+        candidatePool,
+        0,
+        ['summary', 'fact', 'topic', 'entity']
+      ),
+      this.trySemanticRecallCandidates(userId, query, options, candidatePool, 0, ['content']),
       this.textRecallCandidates(userId, query, options, candidatePool, 0),
     ]);
 
     const byId = new Map<string, RecallCandidate>();
 
-    for (const candidate of semanticCandidates || []) {
+    for (const candidate of [...(derivedSemanticCandidates || []), ...(contentSemanticCandidates || [])]) {
       const existing = byId.get(candidate.memory.id);
       byId.set(candidate.memory.id, {
         memory: candidate.memory,
-        semanticScore: candidate.semanticScore,
+        semanticScore: Math.max(existing?.semanticScore ?? 0, candidate.semanticScore ?? 0),
         textScore: existing?.textScore,
+        matchedChunkType:
+          computeChunkTypeBoost(candidate.matchedChunkType) >
+          computeChunkTypeBoost(existing?.matchedChunkType)
+            ? candidate.matchedChunkType
+            : (existing?.matchedChunkType ?? candidate.matchedChunkType),
+        semanticEvidenceCount: (existing?.semanticEvidenceCount ?? 0) + 1,
         finalScore: 0,
       });
     }
@@ -328,14 +410,34 @@ export class MemoryRepository {
         memory: candidate.memory,
         semanticScore: existing?.semanticScore,
         textScore: candidate.textScore,
+        matchedChunkType: existing?.matchedChunkType,
+        semanticEvidenceCount: existing?.semanticEvidenceCount,
         finalScore: 0,
       });
     }
 
-    const merged = Array.from(byId.values()).map((candidate) => ({
-      ...candidate,
-      finalScore: this.computeHybridScore(candidate.semanticScore, candidate.textScore),
-    }));
+    const chronologyWindow = this.buildChronologyWindow(Array.from(byId.values()).map((c) => c.memory));
+    const merged = Array.from(byId.values()).map((candidate) => {
+      const chronologyBoost = chronologyWindow
+        ? computeChronologyAwareBoost({
+            query,
+            memory: candidate.memory,
+            minCreatedAt: chronologyWindow.min,
+            maxCreatedAt: chronologyWindow.max,
+          })
+        : 0;
+
+      return {
+        ...candidate,
+        finalScore: this.computeHybridScore(
+          candidate.semanticScore,
+          candidate.textScore,
+          candidate.matchedChunkType,
+          candidate.semanticEvidenceCount,
+          chronologyBoost
+        ),
+      };
+    });
 
     merged.sort(
       (a, b) =>
@@ -345,11 +447,39 @@ export class MemoryRepository {
     return merged.slice(offset, offset + limit).map((c) => c.memory);
   }
 
-  private computeHybridScore(semanticScore?: number, textScore?: number): number {
+  private computeHybridScore(
+    semanticScore?: number,
+    textScore?: number,
+    matchedChunkType?: MemoryChunkType | null,
+    semanticEvidenceCount?: number,
+    chronologyBoost = 0
+  ): number {
     const s = semanticScore ?? 0;
     const t = textScore ?? 0;
+    const multiViewBoost = Math.max(0, (semanticEvidenceCount ?? 1) - 1) * 0.03;
     // Blend with heavier semantic weighting, but allow lexical key matches to lift ranking.
-    return s * 0.7 + t * 0.3;
+    return Math.max(
+      0,
+      Math.min(
+        1,
+        s * 0.7 +
+          t * 0.3 +
+          computeChunkTypeBoost(matchedChunkType) +
+          multiViewBoost +
+          chronologyBoost
+      )
+    );
+  }
+
+  private buildChronologyWindow(memories: Memory[]): { min: Date; max: Date } | null {
+    if (memories.length === 0) return null;
+    let min = memories[0].createdAt;
+    let max = memories[0].createdAt;
+    for (const memory of memories) {
+      if (memory.createdAt.getTime() < min.getTime()) min = memory.createdAt;
+      if (memory.createdAt.getTime() > max.getTime()) max = memory.createdAt;
+    }
+    return { min, max };
   }
 
   private buildTextScore(query: string, memory: Memory): number {
@@ -497,7 +627,8 @@ export class MemoryRepository {
     query: string,
     options: MemorySearchOptions,
     limit: number,
-    offset: number
+    offset: number,
+    chunkTypes?: MemoryChunkType[]
   ): Promise<RecallCandidate[] | null> {
     const queryEmbedding = await this.embeddingRouter.embedQuery(query);
     if (!queryEmbedding) return null;
@@ -529,6 +660,7 @@ export class MemoryRepository {
       p_agent_id: options.agentId,
       p_include_shared: options.includeShared !== false,
       p_include_expired: options.includeExpired === true,
+      p_chunk_types: chunkTypes && chunkTypes.length > 0 ? chunkTypes : undefined,
     };
 
     const rpcClient = this.supabase as unknown as MatchMemoriesRpcClient;
@@ -559,14 +691,21 @@ export class MemoryRepository {
         continue;
       }
 
+      const matchedChunkType =
+        row.matched_chunk_type &&
+        ['summary', 'fact', 'topic', 'entity', 'content'].includes(row.matched_chunk_type)
+          ? (row.matched_chunk_type as MemoryChunkType)
+          : inferChunkTypeFromMetadata(row.matched_chunk_index, memory.metadata);
       const semanticScore = Math.max(0, Math.min(1, row.similarity ?? 0));
+      const boostedSemanticScore = Math.min(1, semanticScore + computeChunkTypeBoost(matchedChunkType));
       const existing = grouped.get(memory.id);
 
-      if (!existing || semanticScore > (existing.semanticScore ?? 0)) {
+      if (!existing || boostedSemanticScore > existing.finalScore) {
         grouped.set(memory.id, {
           memory,
           semanticScore,
-          finalScore: semanticScore,
+          matchedChunkType,
+          finalScore: boostedSemanticScore,
         });
       }
     }
@@ -574,7 +713,7 @@ export class MemoryRepository {
     return Array.from(grouped.values())
       .sort(
         (a, b) =>
-          (b.semanticScore ?? 0) - (a.semanticScore ?? 0) ||
+          b.finalScore - a.finalScore ||
           b.memory.createdAt.getTime() - a.memory.createdAt.getTime()
       )
       .slice(offset, offset + limit);
@@ -641,6 +780,10 @@ export class MemoryRepository {
     const chunks = buildMemoryEmbeddingChunks({
       summary: input.summary,
       content: input.content,
+      topicKey: input.topicKey,
+      topics: input.topics,
+      source: input.source,
+      salience: input.salience,
       model: vettedModel,
     });
     if (chunks.length === 0) return;
@@ -661,49 +804,102 @@ export class MemoryRepository {
       userId: memory.userId,
       chunks: embeddedChunks.map(({ chunk, embedding }) => ({ ...chunk, embedding })),
     });
+    const chunkContext = summarizeChunkPersistenceContext({
+      memory,
+      embeddedChunks: embeddedChunks.map(({ chunk, embedding }) => ({ ...chunk, embedding })),
+    });
 
-    const { error: chunkError } = await this.supabase
-      .from('memory_embedding_chunks')
-      .upsert(chunkRows, {
-        onConflict: 'memory_id,chunk_index',
+    let chunkErrorDetails: Record<string, unknown> | null = null;
+    for (let attempt = 1; attempt <= EMBEDDING_PERSIST_RETRY_ATTEMPTS; attempt += 1) {
+      const { error: chunkError } = await this.supabase
+        .from('memory_embedding_chunks')
+        .upsert(chunkRows, {
+          onConflict: 'memory_id,chunk_index',
+        });
+
+      if (!chunkError) {
+        chunkErrorDetails = null;
+        break;
+      }
+
+      chunkErrorDetails = normalizeErrorDetails(chunkError);
+      logger.warn('Failed to persist memory embedding chunks', {
+        ...chunkContext,
+        stage: 'chunk_upsert',
+        attempt,
+        retrying: attempt < EMBEDDING_PERSIST_RETRY_ATTEMPTS,
+        error: chunkErrorDetails,
       });
 
-    if (chunkError) {
-      logger.warn('Failed to persist memory embedding chunks', {
-        memoryId: memory.id,
-        error: chunkError.message,
+      if (attempt < EMBEDDING_PERSIST_RETRY_ATTEMPTS) {
+        await sleep(200 * attempt);
+      }
+    }
+
+    if (chunkErrorDetails) {
+      logger.error('Giving up on memory embedding chunk persistence', {
+        ...chunkContext,
+        stage: 'chunk_upsert',
+        attempts: EMBEDDING_PERSIST_RETRY_ATTEMPTS,
+        error: chunkErrorDetails,
       });
       return;
     }
 
-    const { error } = await this.supabase
-      .from('memories')
-      .update({
-        embedding: formatVectorLiteral(primaryEmbedding.vector),
-        embedding_chunks_version: MEMORY_EMBEDDING_CHUNKS_VERSION,
-        embedding_chunk_count: embeddedChunks.length,
-        metadata: {
-          ...buildChunkMetadataUpdate({
-            provider: primaryEmbedding.provider,
-            model: primaryEmbedding.model,
-            chunkCount: embeddedChunks.length,
-            existingMetadata: memory.metadata || {},
-          }),
-          embedding: {
-            provider: primaryEmbedding.provider,
-            model: primaryEmbedding.model,
-            dimensions: primaryEmbedding.dimensions,
-            updatedAt: new Date().toISOString(),
-          },
-        } as Database['public']['Tables']['memories']['Update']['metadata'],
-      })
-      .eq('id', memory.id)
-      .eq('user_id', memory.userId);
+    const memoryUpdate: Database['public']['Tables']['memories']['Update'] = {
+      embedding: formatVectorLiteral(primaryEmbedding.vector),
+      embedding_chunks_version: MEMORY_EMBEDDING_CHUNKS_VERSION,
+      embedding_chunk_count: embeddedChunks.length,
+      metadata: {
+        ...buildChunkMetadataUpdate({
+          provider: primaryEmbedding.provider,
+          model: primaryEmbedding.model,
+          chunkCount: embeddedChunks.length,
+          viewCounts: countChunkViews(embeddedChunks.map(({ chunk }) => chunk)),
+          existingMetadata: memory.metadata || {},
+        }),
+        embedding: {
+          provider: primaryEmbedding.provider,
+          model: primaryEmbedding.model,
+          dimensions: primaryEmbedding.dimensions,
+          updatedAt: new Date().toISOString(),
+        },
+      } as Database['public']['Tables']['memories']['Update']['metadata'],
+    };
 
-    if (error) {
-      logger.warn('Failed to persist memory embedding', {
-        memoryId: memory.id,
-        error: error.message,
+    let memoryErrorDetails: Record<string, unknown> | null = null;
+    for (let attempt = 1; attempt <= EMBEDDING_PERSIST_RETRY_ATTEMPTS; attempt += 1) {
+      const { error } = await this.supabase
+        .from('memories')
+        .update(memoryUpdate)
+        .eq('id', memory.id)
+        .eq('user_id', memory.userId);
+
+      if (!error) {
+        memoryErrorDetails = null;
+        break;
+      }
+
+      memoryErrorDetails = normalizeErrorDetails(error);
+      logger.warn('Failed to persist memory embedding metadata', {
+        ...chunkContext,
+        stage: 'memory_update',
+        attempt,
+        retrying: attempt < EMBEDDING_PERSIST_RETRY_ATTEMPTS,
+        error: memoryErrorDetails,
+      });
+
+      if (attempt < EMBEDDING_PERSIST_RETRY_ATTEMPTS) {
+        await sleep(200 * attempt);
+      }
+    }
+
+    if (memoryErrorDetails) {
+      logger.error('Giving up on memory embedding metadata persistence', {
+        ...chunkContext,
+        stage: 'memory_update',
+        attempts: EMBEDDING_PERSIST_RETRY_ATTEMPTS,
+        error: memoryErrorDetails,
       });
       return;
     }
@@ -714,6 +910,7 @@ export class MemoryRepository {
         provider: primaryEmbedding.provider,
         model: primaryEmbedding.model,
         chunkCount: embeddedChunks.length,
+        viewCounts: countChunkViews(embeddedChunks.map(({ chunk }) => chunk)),
         existingMetadata: memory.metadata || {},
       }),
       embedding: {
