@@ -295,13 +295,36 @@ export class StrategyService {
     const nextTask = await this.getTaskByOrder(groupId, newIndex);
 
     if (!nextTask) {
-      // All tasks done
+      // No more pending/in_progress tasks — strategy is done
       const tasks = await this.getGroupTasks(groupId);
       const completed = tasks.filter((t) => t.status === 'completed').length;
+      const pending = tasks.filter((t) => t.status === 'pending').length;
+      const blocked = tasks.filter((t) => t.status === 'blocked').length;
+
+      // Integrity check: flag if tasks are still pending/blocked
+      const hasIncomplete = pending > 0 || blocked > 0;
+      if (hasIncomplete) {
+        await this.logStrategyEvent(
+          group,
+          'process_violation',
+          `Strategy completing with ${pending} pending and ${blocked} blocked tasks out of ${tasks.length} total`,
+          {
+            totalTasks: tasks.length,
+            completedTasks: completed,
+            pendingTasks: pending,
+            blockedTasks: blocked,
+            skippedTasks: tasks
+              .filter((t) => t.status === 'pending' || t.status === 'blocked')
+              .map((t) => ({ id: t.id, title: t.title, status: t.status })),
+          }
+        );
+      }
 
       await this.dataComposer.repositories.taskGroups.update(groupId, {
         status: 'completed',
-        context_summary: `Strategy complete. ${completed}/${tasks.length} tasks done.`,
+        context_summary: hasIncomplete
+          ? `Strategy complete with issues: ${completed}/${tasks.length} done, ${pending} pending, ${blocked} blocked.`
+          : `Strategy complete. ${completed}/${tasks.length} tasks done.`,
       });
 
       // Cancel watchdog — strategy is done
@@ -314,7 +337,9 @@ export class StrategyService {
         {
           totalTasks: tasks.length,
           completedTasks: completed,
-          pendingTasks: tasks.length - completed,
+          pendingTasks: pending,
+          blockedTasks: blocked,
+          hasIncomplete,
         }
       );
 
@@ -322,9 +347,19 @@ export class StrategyService {
       await this.notifyDispatcher(
         group,
         config.checkInNotify || config.approvalNotify,
-        `Strategy "${group.strategy}" complete on "${group.title}": ${completed}/${tasks.length} tasks finished.`,
+        `Strategy "${group.strategy}" complete on "${group.title}": ${completed}/${tasks.length} tasks finished.${hasIncomplete ? ` WARNING: ${pending} pending, ${blocked} blocked tasks remain.` : ''}`,
         userId
       );
+
+      // Notify supervisor for final audit (if configured)
+      if (config.supervisorAgentId) {
+        await this.notifyDispatcher(
+          group,
+          config.supervisorAgentId,
+          `[Supervisor audit] Strategy "${group.strategy}" on "${group.title}" is complete. ${completed}/${tasks.length} tasks done.${hasIncomplete ? ` PROCESS VIOLATION: ${pending} pending, ${blocked} blocked tasks were not completed.` : ''} Review the activity stream for task_group_id ${group.id}.`,
+          userId
+        );
+      }
 
       return {
         action: 'group_complete',
@@ -363,6 +398,16 @@ export class StrategyService {
         `Check-in on "${group.title}": ${summary}`,
         userId
       );
+
+      // Notify supervisor at check-in points too
+      if (config.supervisorAgentId) {
+        await this.notifyDispatcher(
+          group,
+          config.supervisorAgentId,
+          `[Supervisor check-in] "${group.title}": ${summary} Review activity stream for task_group_id ${group.id}.`,
+          userId
+        );
+      }
 
       const prompt = STRATEGY_PROMPTS[group.strategy as StrategyPreset](
         { ...group, current_task_index: newIndex } as TaskGroup,

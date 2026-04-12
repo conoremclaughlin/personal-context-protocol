@@ -95,6 +95,12 @@ export const startStrategySchema = z.object({
     .array(z.string())
     .optional()
     .describe('What must pass before advancing (e.g., ["tests", "build"])'),
+  supervisorAgentId: z
+    .string()
+    .optional()
+    .describe(
+      'Agent ID that supervises the strategy. Gets check-in notifications and a final audit on completion. Separate from the worker — verifies process compliance.'
+    ),
 });
 
 export async function handleStartStrategy(
@@ -125,6 +131,7 @@ export async function handleStartStrategy(
         maxIterationsWithoutApproval: args.maxIterationsWithoutApproval,
         contextSummaryInterval: args.contextSummaryInterval,
         verificationGates: args.verificationGates,
+        supervisorAgentId: args.supervisorAgentId,
       },
     });
 
