@@ -352,13 +352,16 @@ export class StrategyService {
       );
 
       // Notify supervisor for final audit (if configured)
-      if (config.supervisorAgentId) {
-        await this.notifyDispatcher(
-          group,
-          config.supervisorAgentId,
-          `[Supervisor audit] Strategy "${group.strategy}" on "${group.title}" is complete. ${completed}/${tasks.length} tasks done.${hasIncomplete ? ` PROCESS VIOLATION: ${pending} pending, ${blocked} blocked tasks were not completed.` : ''} Review the activity stream for task_group_id ${group.id}.`,
-          userId
-        );
+      if (config.supervisorId) {
+        const supervisorSlug = await this.resolveAgentSlug(config.supervisorId);
+        if (supervisorSlug) {
+          await this.notifyDispatcher(
+            group,
+            supervisorSlug,
+            `[Supervisor audit] Strategy "${group.strategy}" on "${group.title}" is complete. ${completed}/${tasks.length} tasks done.${hasIncomplete ? ` PROCESS VIOLATION: ${pending} pending, ${blocked} blocked tasks were not completed.` : ''} Review the activity stream for task_group_id ${group.id}.`,
+            userId
+          );
+        }
       }
 
       return {
@@ -400,13 +403,16 @@ export class StrategyService {
       );
 
       // Notify supervisor at check-in points too
-      if (config.supervisorAgentId) {
-        await this.notifyDispatcher(
-          group,
-          config.supervisorAgentId,
-          `[Supervisor check-in] "${group.title}": ${summary} Review activity stream for task_group_id ${group.id}.`,
-          userId
-        );
+      if (config.supervisorId) {
+        const supervisorSlug = await this.resolveAgentSlug(config.supervisorId);
+        if (supervisorSlug) {
+          await this.notifyDispatcher(
+            group,
+            supervisorSlug,
+            `[Supervisor check-in] "${group.title}": ${summary} Review activity stream for task_group_id ${group.id}.`,
+            userId
+          );
+        }
       }
 
       const prompt = STRATEGY_PROMPTS[group.strategy as StrategyPreset](
@@ -780,6 +786,24 @@ export class StrategyService {
       logger.info(`Strategy watchdog cancelled for group ${groupId}`);
     } catch (err) {
       logger.warn('Failed to cancel strategy watchdog reminder:', err);
+    }
+  }
+
+  /**
+   * Resolve an identity UUID to an agent_id slug for notification routing.
+   * notifyDispatcher/handleSendToInbox accept slugs, but we store identity UUIDs.
+   */
+  private async resolveAgentSlug(identityId: string): Promise<string | null> {
+    try {
+      const { data } = await this.dataComposer
+        .getClient()
+        .from('agent_identities')
+        .select('agent_id')
+        .eq('id', identityId)
+        .single();
+      return data ? (data as { agent_id: string }).agent_id : null;
+    } catch {
+      return null;
     }
   }
 

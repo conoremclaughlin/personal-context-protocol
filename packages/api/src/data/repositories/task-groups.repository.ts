@@ -55,8 +55,8 @@ export interface StrategyConfig {
   verificationGates?: string[];
   /** How often (in minutes) the heartbeat should check if the strategy is stuck. Default: 10 */
   watchdogIntervalMinutes?: number;
-  /** Agent ID that supervises the strategy — gets check-in notifications and a final audit on completion */
-  supervisorAgentId?: string;
+  /** Supervisor agent identity ID — gets check-in notifications and a final audit on completion */
+  supervisorId?: string;
 }
 
 export interface CreateTaskGroupInput {
