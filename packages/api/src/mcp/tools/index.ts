@@ -247,6 +247,13 @@ import {
 import { handleCreateKindleToken, createKindleTokenSchema } from './kindle-handlers';
 
 import {
+  handleCreateTaskGroup,
+  handleListTaskGroups,
+  createTaskGroupSchema,
+  listTaskGroupsSchema,
+} from './task-group-handlers';
+
+import {
   handleStartStrategy,
   handlePauseStrategy,
   handleResumeStrategy,
@@ -950,6 +957,68 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleAddTaskComment(args, dataComposer);
       } catch (error) {
         logger.error('Error in add_task_comment:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // TASK GROUP TOOLS
+  // =====================================================
+
+  server.registerTool(
+    'create_task_group',
+    {
+      description: `Create a task group — a collection of ordered tasks for strategy execution. Add tasks with create_task(taskGroupId, taskOrder) after creating the group. Then activate with start_strategy.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: createTaskGroupSchema.shape,
+    },
+    async (args) => {
+      try {
+        return await handleCreateTaskGroup(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in create_task_group:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'list_task_groups',
+    {
+      description: `List task groups for a user, optionally filtered by status, strategy, or owner agent.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: listTaskGroupsSchema.shape,
+    },
+    async (args) => {
+      try {
+        return await handleListTaskGroups(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in list_task_groups:', error);
         return {
           content: [
             {
