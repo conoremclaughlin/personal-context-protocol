@@ -468,4 +468,621 @@ describe('StrategyService', () => {
       expect(result.prompt).toContain('ink://specs/my-plan');
     });
   });
+
+  // ============================================================================
+  // advanceStrategy
+  // ============================================================================
+
+  describe('advanceStrategy', () => {
+    // Helper: mock from() chain for getTaskByOrder when task IS found
+    function chainTaskFound(task: ProjectTask) {
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: task, error: null }),
+                }),
+              }),
+            }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        update: vi.fn().mockReturnValue({
+          contains: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      };
+    }
+
+    // Helper: mock from() chain for getTaskByOrder when task NOT found
+    // Handles both exact-match (PGRST116) and fallback (empty array)
+    function chainTaskNotFound() {
+      const inChain = vi.fn().mockReturnValue({
+        limit: vi.fn().mockReturnValue({
+          single: vi.fn().mockResolvedValue({ data: null, error: { code: 'PGRST116' } }),
+        }),
+        order: vi.fn().mockReturnValue({
+          order: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+        }),
+      });
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({ in: inChain }),
+            in: inChain,
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        update: vi.fn().mockReturnValue({
+          contains: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      };
+    }
+
+    // Helper: mock from() chain for getGroupTasks
+    function chainGroupTasks(tasks: ProjectTask[]) {
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            order: vi.fn().mockReturnValue({
+              order: vi.fn().mockResolvedValue({ data: tasks, error: null }),
+            }),
+          }),
+        }),
+      };
+    }
+
+    // Helper: mock from() chain for resolveAgentSlug
+    function chainResolveSlug(slug: string | null) {
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            single: vi.fn().mockResolvedValue({
+              data: slug ? { agent_id: slug } : null,
+              error: slug ? null : { code: 'PGRST116' },
+            }),
+          }),
+        }),
+      };
+    }
+
+    // Helper: generic noop chain for non-critical from() calls (watchdog, sessions)
+    function chainNoop() {
+      return {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              limit: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              }),
+            }),
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        update: vi.fn().mockReturnValue({
+          contains: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      };
+    }
+
+    // Sets up sequential from() returns on the mock client
+    function setupChains(mockDc: ReturnType<typeof createMockDataComposer>, chains: object[]) {
+      let idx = 0;
+      const client = mockDc.getClient();
+      client.from.mockImplementation(() => chains[idx++] || chainNoop());
+    }
+
+    it('should advance to the next task', async () => {
+      const group = createMockGroup({
+        current_task_index: 0,
+        iterations_since_approval: 0,
+      });
+      const nextTask = createMockTask({
+        id: 'task-2',
+        title: 'Second task',
+        task_order: 1,
+      });
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        current_task_index: 1,
+        iterations_since_approval: 1,
+      });
+
+      // from() calls: getTaskByOrder (1 call — exact match found)
+      setupChains(dc, [chainTaskFound(nextTask)]);
+
+      const result = await service.advanceStrategy('group-1', 'task-1', 'user-123');
+
+      expect(result.action).toBe('next_task');
+      expect(result.nextTask).toBeDefined();
+      expect(result.nextTask!.id).toBe('task-2');
+      expect(result.prompt).toContain('persistence strategy');
+      expect(result.prompt).toContain('Second task');
+
+      // Verify counters were incremented
+      expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+        'group-1',
+        expect.objectContaining({
+          current_task_index: 1,
+          iterations_since_approval: 1,
+        })
+      );
+
+      // Verify task was started
+      expect(dc.repositories.tasks.startTask).toHaveBeenCalledWith('task-2');
+
+      // Verify task_advanced event was logged
+      expect(dc.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subtype: 'task_advanced',
+          taskGroupId: 'group-1',
+        })
+      );
+    });
+
+    it('should trigger check-in at interval boundary', async () => {
+      const group = createMockGroup({
+        current_task_index: 2,
+        iterations_since_approval: 2,
+        strategy_config: { checkInInterval: 3, checkInNotify: 'myra' } as StrategyConfig,
+      });
+      const nextTask = createMockTask({
+        id: 'task-4',
+        title: 'Fourth task',
+        task_order: 3,
+      });
+      const groupTasks = [
+        createMockTask({ id: 't1', status: 'completed', task_order: 0 }),
+        createMockTask({ id: 't2', status: 'completed', task_order: 1 }),
+        createMockTask({ id: 't3', status: 'completed', task_order: 2 }),
+        createMockTask({ id: 't4', title: 'Fourth task', status: 'pending', task_order: 3 }),
+        createMockTask({ id: 't5', title: 'Fifth task', status: 'pending', task_order: 4 }),
+      ];
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        current_task_index: 3,
+      });
+
+      // from() calls: getTaskByOrder (found), getGroupTasks (for summary)
+      setupChains(dc, [chainTaskFound(nextTask), chainGroupTasks(groupTasks)]);
+
+      const result = await service.advanceStrategy('group-1', 'task-3', 'user-123');
+
+      expect(result.action).toBe('check_in');
+      expect(result.nextTask).toBeDefined();
+      expect(result.nextTask!.id).toBe('task-4');
+      expect(result.progressSummary).toContain('3/5 tasks completed');
+      expect(result.prompt).toContain('Fourth task');
+    });
+
+    it('should notify supervisor at check-in when configured', async () => {
+      const { handleSendToInbox: sendMock } = await import('../mcp/tools/inbox-handlers');
+
+      const group = createMockGroup({
+        current_task_index: 2,
+        iterations_since_approval: 2,
+        strategy_config: {
+          checkInInterval: 3,
+          checkInNotify: 'myra',
+          supervisorId: 'supervisor-uuid-123',
+        } as StrategyConfig,
+      });
+      const nextTask = createMockTask({ id: 'task-4', title: 'Fourth task', task_order: 3 });
+      const groupTasks = [
+        createMockTask({ status: 'completed', task_order: 0 }),
+        createMockTask({ status: 'completed', task_order: 1 }),
+        createMockTask({ status: 'completed', task_order: 2 }),
+        createMockTask({ id: 'task-4', status: 'pending', task_order: 3 }),
+      ];
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue(group);
+
+      // from() calls: getTaskByOrder, getGroupTasks, resolveAgentSlug
+      setupChains(dc, [
+        chainTaskFound(nextTask),
+        chainGroupTasks(groupTasks),
+        chainResolveSlug('lumen'),
+      ]);
+
+      const result = await service.advanceStrategy('group-1', 'task-3', 'user-123');
+
+      expect(result.action).toBe('check_in');
+      expect(result.notified).toBe(true);
+
+      // handleSendToInbox called twice: once for checkInNotify, once for supervisor
+      expect(sendMock).toHaveBeenCalledTimes(2);
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientAgentId: 'myra' }),
+        expect.anything()
+      );
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientAgentId: 'lumen' }),
+        expect.anything()
+      );
+    });
+
+    it('should pause for approval when max iterations reached', async () => {
+      const group = createMockGroup({
+        current_task_index: 4,
+        iterations_since_approval: 4,
+        strategy_config: {
+          maxIterationsWithoutApproval: 5,
+          approvalNotify: 'myra',
+        } as StrategyConfig,
+      });
+      const groupTasks = [
+        createMockTask({ status: 'completed', task_order: 0 }),
+        createMockTask({ status: 'completed', task_order: 1 }),
+        createMockTask({ status: 'completed', task_order: 2 }),
+        createMockTask({ status: 'completed', task_order: 3 }),
+        createMockTask({ status: 'completed', task_order: 4 }),
+        createMockTask({ status: 'pending', task_order: 5 }),
+      ];
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        status: 'paused',
+      });
+
+      // from() calls: getGroupTasks (for buildProgressSummary in approval gate)
+      setupChains(dc, [chainGroupTasks(groupTasks)]);
+
+      const result = await service.advanceStrategy('group-1', 'task-5', 'user-123');
+
+      expect(result.action).toBe('approval_required');
+      expect(result.progressSummary).toContain('5/6 tasks completed');
+
+      // Verify group was paused
+      expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+        'group-1',
+        expect.objectContaining({
+          status: 'paused',
+          strategy_paused_at: expect.any(String),
+          context_summary: expect.any(String),
+        })
+      );
+
+      // Verify approval_required event was logged
+      expect(dc.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subtype: 'approval_required',
+          taskGroupId: 'group-1',
+        })
+      );
+    });
+
+    it('should complete strategy when no more tasks', async () => {
+      const group = createMockGroup({
+        current_task_index: 2,
+        iterations_since_approval: 2,
+      });
+      const groupTasks = [
+        createMockTask({ status: 'completed', task_order: 0 }),
+        createMockTask({ status: 'completed', task_order: 1 }),
+        createMockTask({ status: 'completed', task_order: 2 }),
+      ];
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        status: 'completed',
+      });
+
+      // from() calls: getTaskByOrder not found (uses same chain for both paths),
+      // getGroupTasks, cancelWatchdog
+      const notFoundChain = chainTaskNotFound();
+      setupChains(dc, [notFoundChain, notFoundChain, chainGroupTasks(groupTasks), chainNoop()]);
+
+      const result = await service.advanceStrategy('group-1', 'task-3', 'user-123');
+
+      expect(result.action).toBe('group_complete');
+      expect(result.stats).toEqual({ total: 3, completed: 3 });
+
+      // Verify group was marked completed
+      expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+        'group-1',
+        expect.objectContaining({ status: 'completed' })
+      );
+
+      // Verify strategy_completed event was logged
+      expect(dc.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subtype: 'strategy_completed',
+          taskGroupId: 'group-1',
+        })
+      );
+    });
+
+    it('should log process violation when tasks remain incomplete', async () => {
+      const group = createMockGroup({
+        current_task_index: 1,
+        iterations_since_approval: 1,
+      });
+      const groupTasks = [
+        createMockTask({ status: 'completed', task_order: 0 }),
+        createMockTask({ status: 'completed', task_order: 1 }),
+        createMockTask({ id: 'blocked-1', title: 'Stuck task', status: 'blocked', task_order: 2 }),
+        createMockTask({
+          id: 'pending-1',
+          title: 'Skipped task',
+          status: 'pending',
+          task_order: 3,
+        }),
+      ];
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        status: 'completed',
+      });
+
+      const notFoundChain = chainTaskNotFound();
+      setupChains(dc, [notFoundChain, notFoundChain, chainGroupTasks(groupTasks), chainNoop()]);
+
+      const result = await service.advanceStrategy('group-1', 'task-2', 'user-123');
+
+      expect(result.action).toBe('group_complete');
+      expect(result.stats).toEqual({ total: 4, completed: 2 });
+
+      // Verify process_violation was logged
+      const violationCall = (
+        dc.repositories.activityStream.logActivity as ReturnType<typeof vi.fn>
+      ).mock.calls.find(
+        (call: unknown[]) => (call[0] as { subtype: string }).subtype === 'process_violation'
+      );
+      expect(violationCall).toBeDefined();
+      expect(violationCall![0]).toMatchObject({
+        subtype: 'process_violation',
+        taskGroupId: 'group-1',
+      });
+
+      // Verify context summary mentions the issue
+      const completionUpdate = (
+        dc.repositories.taskGroups.update as ReturnType<typeof vi.fn>
+      ).mock.calls.find(
+        (call: unknown[]) => (call[1] as { status?: string }).status === 'completed'
+      );
+      expect(completionUpdate).toBeDefined();
+      expect((completionUpdate![1] as { context_summary: string }).context_summary).toContain(
+        'issues'
+      );
+    });
+
+    it('should notify supervisor with audit on completion', async () => {
+      const { handleSendToInbox: sendMock } = await import('../mcp/tools/inbox-handlers');
+
+      const group = createMockGroup({
+        current_task_index: 1,
+        iterations_since_approval: 1,
+        strategy_config: {
+          checkInNotify: 'myra',
+          supervisorId: 'supervisor-uuid-456',
+        } as StrategyConfig,
+      });
+      const groupTasks = [
+        createMockTask({ status: 'completed', task_order: 0 }),
+        createMockTask({ status: 'completed', task_order: 1 }),
+      ];
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        status: 'completed',
+      });
+
+      const notFoundChain = chainTaskNotFound();
+      setupChains(dc, [
+        notFoundChain,
+        notFoundChain,
+        chainGroupTasks(groupTasks),
+        chainNoop(), // cancelWatchdog
+        chainResolveSlug('lumen'), // resolve supervisor UUID → slug
+      ]);
+
+      await service.advanceStrategy('group-1', 'task-2', 'user-123');
+
+      // Should notify both dispatcher (myra) and supervisor (lumen)
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({ recipientAgentId: 'myra' }),
+        expect.anything()
+      );
+      expect(sendMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          recipientAgentId: 'lumen',
+          content: expect.stringContaining('Supervisor audit'),
+        }),
+        expect.anything()
+      );
+    });
+
+    it('should short-circuit when group has no active strategy', async () => {
+      dc.repositories.taskGroups.findById.mockResolvedValue(
+        createMockGroup({ strategy: null, status: 'active' })
+      );
+
+      const result = await service.advanceStrategy('group-1', 'task-1', 'user-123');
+
+      expect(result.action).toBe('group_complete');
+      // Should NOT update the group or log events
+      expect(dc.repositories.taskGroups.update).not.toHaveBeenCalled();
+      expect(dc.repositories.activityStream.logActivity).not.toHaveBeenCalled();
+    });
+
+    it('should short-circuit when group is not active', async () => {
+      dc.repositories.taskGroups.findById.mockResolvedValue(
+        createMockGroup({ strategy: 'persistence', status: 'paused' })
+      );
+
+      const result = await service.advanceStrategy('group-1', 'task-1', 'user-123');
+
+      expect(result.action).toBe('group_complete');
+      expect(dc.repositories.taskGroups.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============================================================================
+  // resumeStrategy
+  // ============================================================================
+
+  describe('resumeStrategy', () => {
+    it('should resume a paused strategy and return next task with prompt', async () => {
+      const group = createMockGroup({
+        status: 'paused',
+        strategy: 'persistence',
+        current_task_index: 2,
+        iterations_since_approval: 3,
+        strategy_paused_at: '2026-04-10T12:00:00Z',
+      });
+      const currentTask = createMockTask({
+        id: 'task-3',
+        title: 'Third task',
+        task_order: 2,
+        status: 'pending',
+      });
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({
+        ...group,
+        status: 'active',
+        strategy_paused_at: null,
+        iterations_since_approval: 0,
+      });
+
+      // from() calls: createWatchdogReminder (session, identity, insert), getTaskByOrder
+      const mockClient = dc.getClient();
+      const taskChain = {
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: currentTask, error: null }),
+                }),
+              }),
+              limit: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              }),
+            }),
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        update: vi.fn().mockReturnValue({
+          contains: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      };
+      // All from() calls can use the same flexible chain — watchdog failures are non-fatal
+      mockClient.from.mockReturnValue(taskChain);
+
+      const result = await service.resumeStrategy('group-1', 'user-123');
+
+      expect(result.action).toBe('next_task');
+      expect(result.nextTask).toBeDefined();
+      expect(result.nextTask!.id).toBe('task-3');
+      expect(result.prompt).toContain('persistence strategy');
+      expect(result.prompt).toContain('Third task');
+
+      // Verify iterations were reset and status set to active
+      expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+        'group-1',
+        expect.objectContaining({
+          status: 'active',
+          strategy_paused_at: null,
+          iterations_since_approval: 0,
+        })
+      );
+
+      // Verify task was started
+      expect(dc.repositories.tasks.startTask).toHaveBeenCalledWith('task-3');
+
+      // Verify strategy_resumed event was logged
+      expect(dc.repositories.activityStream.logActivity).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subtype: 'strategy_resumed',
+          taskGroupId: 'group-1',
+        })
+      );
+    });
+
+    it('should not re-start task that is already in_progress', async () => {
+      const group = createMockGroup({
+        status: 'paused',
+        strategy: 'persistence',
+        current_task_index: 1,
+      });
+      const currentTask = createMockTask({
+        id: 'task-2',
+        title: 'Already started',
+        task_order: 1,
+        status: 'in_progress',
+      });
+
+      dc.repositories.taskGroups.findById.mockResolvedValue(group);
+      dc.repositories.taskGroups.update.mockResolvedValue({ ...group, status: 'active' });
+
+      const mockClient = dc.getClient();
+      mockClient.from.mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            eq: vi.fn().mockReturnValue({
+              in: vi.fn().mockReturnValue({
+                limit: vi.fn().mockReturnValue({
+                  single: vi.fn().mockResolvedValue({ data: currentTask, error: null }),
+                }),
+              }),
+              limit: vi.fn().mockReturnValue({
+                single: vi.fn().mockResolvedValue({ data: null, error: null }),
+              }),
+            }),
+            single: vi.fn().mockResolvedValue({ data: null, error: null }),
+          }),
+        }),
+        insert: vi.fn().mockResolvedValue({ data: null, error: null }),
+        update: vi.fn().mockReturnValue({
+          contains: vi.fn().mockResolvedValue({ data: null, error: null }),
+        }),
+      });
+
+      await service.resumeStrategy('group-1', 'user-123');
+
+      // startTask should NOT be called since task is already in_progress
+      expect(dc.repositories.tasks.startTask).not.toHaveBeenCalled();
+    });
+
+    it('should reject if strategy is not paused', async () => {
+      dc.repositories.taskGroups.findById.mockResolvedValue(createMockGroup({ status: 'active' }));
+
+      await expect(service.resumeStrategy('group-1', 'user-123')).rejects.toThrow('not paused');
+    });
+
+    it('should reject if no strategy is set', async () => {
+      dc.repositories.taskGroups.findById.mockResolvedValue(
+        createMockGroup({ status: 'paused', strategy: null })
+      );
+
+      await expect(service.resumeStrategy('group-1', 'user-123')).rejects.toThrow(
+        'No strategy set'
+      );
+    });
+
+    it('should reject if group does not belong to user', async () => {
+      dc.repositories.taskGroups.findById.mockResolvedValue(
+        createMockGroup({ status: 'paused', user_id: 'other-user' })
+      );
+
+      await expect(service.resumeStrategy('group-1', 'user-123')).rejects.toThrow(
+        'does not belong'
+      );
+    });
+  });
 });
