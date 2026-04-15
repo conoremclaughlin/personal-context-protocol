@@ -52,6 +52,12 @@ export const createTaskGroupSchema = z.object({
   ...userIdentifierSchema.shape,
   title: z.string().min(1).max(500).describe('Task group title'),
   description: z.string().optional().describe('Detailed description of the task group'),
+  instructions: z
+    .string()
+    .optional()
+    .describe(
+      'Free-form instructions injected into every strategy prompt. Use for branch context, env setup, tool hints, constraints — anything that applies to ALL tasks in the group.'
+    ),
   projectId: z.string().uuid().optional().describe('Project ID to scope the group to'),
   priority: z
     .enum(['low', 'normal', 'high', 'urgent'])
@@ -97,6 +103,7 @@ export async function handleCreateTaskGroup(
       project_id: args.projectId,
       title: args.title,
       description: args.description,
+      instructions: args.instructions,
       priority: args.priority,
       tags: args.tags,
       thread_key: args.threadKey,
@@ -108,6 +115,7 @@ export async function handleCreateTaskGroup(
         id: group.id,
         title: group.title,
         description: group.description,
+        instructions: group.instructions,
         status: group.status,
         priority: group.priority,
         tags: group.tags,

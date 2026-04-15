@@ -101,6 +101,10 @@ const STRATEGY_PROMPTS: Record<StrategyPreset, (group: TaskGroup, task: ProjectT
       "IMPORTANT: You MUST follow the project's CONTRIBUTING.md and AGENTS.md conventions. This includes: feature branches (never push to main), PR process (separate PRs per feature), commit conventions, and review requirements. Read these files if you haven't already."
     );
 
+    if (group.instructions) {
+      parts.push(`\n\n## Instructions\n${group.instructions}\n\n`);
+    }
+
     if (group.plan_uri) {
       parts.push(
         `The full plan is at ${group.plan_uri} — refer to it for architectural decisions and context.`

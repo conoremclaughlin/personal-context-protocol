@@ -19,6 +19,7 @@ export interface TaskGroup {
   project_id: string | null;
   title: string;
   description: string | null;
+  instructions: string | null;
   status: TaskGroupStatus;
   priority: string;
   tags: string[];
@@ -65,6 +66,7 @@ export interface CreateTaskGroupInput {
   project_id?: string;
   title: string;
   description?: string;
+  instructions?: string;
   priority?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;
@@ -79,6 +81,7 @@ export interface CreateTaskGroupInput {
 export interface UpdateTaskGroupInput {
   title?: string;
   description?: string;
+  instructions?: string;
   status?: TaskGroupStatus;
   priority?: string;
   tags?: string[];
@@ -108,6 +111,7 @@ export class TaskGroupsRepository {
         project_id: input.project_id || null,
         title: input.title,
         description: input.description || null,
+        instructions: input.instructions || null,
         priority: input.priority || 'normal',
         tags: input.tags || [],
         metadata: input.metadata || {},
