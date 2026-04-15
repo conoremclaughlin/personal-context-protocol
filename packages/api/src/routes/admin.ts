@@ -6374,6 +6374,12 @@ router.get('/task-groups', async (req: Request, res: Response) => {
           (g.agent_identities as { agent_id: string; name: string } | null)?.agent_id ?? null,
         agentName: (g.agent_identities as { agent_id: string; name: string } | null)?.name ?? null,
         taskCount: taskCountMap[g.id] || 0,
+        strategy: g.strategy ?? null,
+        ownerAgentId: g.owner_agent_id ?? null,
+        currentTaskIndex: g.current_task_index ?? 0,
+        strategyStartedAt: g.strategy_started_at ?? null,
+        strategyPausedAt: g.strategy_paused_at ?? null,
+        planUri: g.plan_uri ?? null,
         metadata: g.metadata,
         createdAt: g.created_at,
         updatedAt: g.updated_at,
@@ -6382,6 +6388,62 @@ router.get('/task-groups', async (req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to list task groups:', error);
     res.status(500).json(errorJson('Failed to list task groups', error));
+  }
+});
+
+/**
+ * GET /api/admin/task-groups/:id/activity
+ * Returns activity stream events for a task group (strategy timeline).
+ */
+router.get('/task-groups/:id/activity', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const limit = Math.min(Number(req.query.limit) || 50, 200);
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const authReq = req as AdminAuthRequest;
+
+    // Verify the group belongs to this user
+    const { data: group, error: groupError } = await supabase
+      .from('task_groups')
+      .select('id, user_id')
+      .eq('id', id)
+      .eq('user_id', authReq.pcpUserId)
+      .single();
+
+    if (groupError || !group) {
+      res.status(404).json(errorJson('Task group not found', groupError));
+      return;
+    }
+
+    const { data: events, error: eventsError } = await supabase
+      .from('activity_stream')
+      .select('id, type, subtype, content, payload, agent_id, session_id, created_at')
+      .eq('task_group_id' as never, id)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+
+    if (eventsError) {
+      res.status(500).json(errorJson('Failed to fetch activity', eventsError));
+      return;
+    }
+
+    res.json({
+      events: (events || []).map((e) => ({
+        id: e.id,
+        type: e.type,
+        subtype: e.subtype,
+        content: e.content,
+        agentId: e.agent_id,
+        sessionId: e.session_id,
+        payload: e.payload,
+        createdAt: e.created_at,
+      })),
+    });
+  } catch (error) {
+    logger.error('Failed to fetch task group activity:', error);
+    res.status(500).json(errorJson('Failed to fetch task group activity', error));
   }
 });
 
