@@ -20,6 +20,7 @@ import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
 import { injectSessionHeaders, buildSessionEnv, writeRuntimeSessionHint } from '@inklabs/shared';
+import { ensureStudioSettings } from '../studio-settings.js';
 
 /** Maximum time (ms) to wait for a Claude Code subprocess before killing it.
  *  Override with CLAUDE_PROCESS_TIMEOUT_MS env var. */
@@ -194,6 +195,19 @@ export class ClaudeRunner implements IRunner {
             accessToken: config.pcpAccessToken,
           })
         : null;
+
+    // Safety net: ensure .claude/settings.local.json exists before spawning.
+    // Non-fatal — if it fails, Claude still spawns with default permissions.
+    if (config.workingDirectory) {
+      try {
+        await ensureStudioSettings(config.workingDirectory);
+      } catch (err) {
+        logger.debug('ensureStudioSettings pre-spawn check failed (non-fatal)', {
+          cwd: config.workingDirectory,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
 
     // If headers were injected, patch the --mcp-config arg to point to the temp file
     if (mcpInjection?.modified) {

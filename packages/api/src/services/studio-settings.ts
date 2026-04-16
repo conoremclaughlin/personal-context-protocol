@@ -1,0 +1,147 @@
+/**
+ * Studio Settings Generator
+ *
+ * Generates `.claude/settings.local.json` with default permissions and hooks
+ * for studio worktrees. Called during studio creation (MCP) and as a safety
+ * net before Claude Code spawn.
+ */
+
+import { mkdir, readFile, writeFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { join, dirname } from 'path';
+import { logger } from '../utils/logger';
+
+const CLAUDE_SETTINGS_REL = '.claude/settings.local.json';
+
+/**
+ * Default deny rules — destructive commands that should always require
+ * confirmation, even in fully auto-approved studios.
+ */
+const DEFAULT_DENY_RULES: string[] = [
+  'Bash(rm -rf *)',
+  'Bash(git push --force *)',
+  'Bash(git push -f *)',
+  'Bash(git reset --hard *)',
+  'Bash(git clean -fd *)',
+  'Bash(git clean -f *)',
+  'Bash(git checkout -- .)',
+];
+
+/**
+ * Default allow rules — broad permissions for automated development work.
+ * Matches the CLI's `ink permissions auto` defaults plus mcp__* for all MCP
+ * servers (not just inkwell/github/supabase individually).
+ */
+const DEFAULT_ALLOW_RULES: string[] = [
+  'Bash(*)',
+  'Edit(*)',
+  'Write(*)',
+  'Read(*)',
+  'WebFetch(*)',
+  'WebSearch',
+  'mcp__*',
+];
+
+interface ClaudeSettings {
+  permissions?: {
+    allow?: string[];
+    deny?: string[];
+  };
+  hooks?: Record<string, unknown>;
+  enableAllProjectMcpServers?: boolean;
+  [key: string]: unknown;
+}
+
+/**
+ * Resolve the `ink` CLI binary path for hook commands.
+ * Checks well-known locations; falls back to bare `ink` (relies on PATH).
+ */
+function resolveInkBinaryPath(worktreePath: string): string {
+  // 1. Global install location (symlinked by `yarn workspace @personal-context/cli install:cli`)
+  const globalPath = join(process.env.HOME || '~', '.local', 'bin', 'ink');
+  if (existsSync(globalPath)) return globalPath;
+
+  // 2. Main worktree node_modules (for PM2/server environments)
+  //    The main worktree is typically the parent dir without the `--slug` suffix
+  const base = dirname(worktreePath);
+  const mainName = worktreePath
+    .split('/')
+    .pop()
+    ?.replace(/--[^/]+$/, '');
+  if (mainName) {
+    const mainBin = join(base, mainName, 'node_modules', '.bin', 'ink');
+    if (existsSync(mainBin)) return mainBin;
+  }
+
+  // 3. Bare fallback
+  return 'ink';
+}
+
+/**
+ * Build Claude Code lifecycle hooks that mirror `ink hooks install --claude-code`.
+ */
+function buildHooks(inkPath: string): Record<string, unknown> {
+  const cmd = (hookName: string) => `${inkPath} hooks ${hookName} --backend claude-code`;
+
+  return {
+    PreCompact: [{ hooks: [{ type: 'command', command: cmd('pre-compact') }] }],
+    SessionStart: [
+      { matcher: 'compact', hooks: [{ type: 'command', command: cmd('post-compact') }] },
+      { matcher: 'startup', hooks: [{ type: 'command', command: cmd('on-session-start') }] },
+    ],
+    UserPromptSubmit: [{ hooks: [{ type: 'command', command: cmd('on-prompt') }] }],
+    Stop: [{ hooks: [{ type: 'command', command: cmd('on-stop') }] }],
+  };
+}
+
+/**
+ * Generate or update `.claude/settings.local.json` in a worktree.
+ *
+ * Merges with existing settings — never overwrites hooks or permissions
+ * that are already configured. Returns true if a file was written.
+ */
+export async function ensureStudioSettings(worktreePath: string): Promise<boolean> {
+  const settingsPath = join(worktreePath, CLAUDE_SETTINGS_REL);
+
+  let existing: ClaudeSettings = {};
+  try {
+    const raw = await readFile(settingsPath, 'utf-8');
+    existing = JSON.parse(raw);
+  } catch {
+    // File doesn't exist or isn't parseable — start fresh
+  }
+
+  // Skip if permissions are already configured (user or CLI set them up)
+  if (existing.permissions?.allow?.length) {
+    logger.debug('Studio settings already have permissions, skipping generation', {
+      worktreePath,
+      existingAllowCount: existing.permissions.allow.length,
+    });
+    return false;
+  }
+
+  const inkPath = resolveInkBinaryPath(worktreePath);
+
+  const settings: ClaudeSettings = {
+    ...existing,
+    permissions: {
+      allow: DEFAULT_ALLOW_RULES,
+      deny: DEFAULT_DENY_RULES,
+    },
+    hooks: existing.hooks || buildHooks(inkPath),
+    enableAllProjectMcpServers: existing.enableAllProjectMcpServers ?? true,
+  };
+
+  await mkdir(join(worktreePath, '.claude'), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+
+  logger.info('Generated studio settings', {
+    worktreePath,
+    settingsPath,
+    allowRules: DEFAULT_ALLOW_RULES.length,
+    denyRules: DEFAULT_DENY_RULES.length,
+    hooksGenerated: !existing.hooks,
+  });
+
+  return true;
+}
