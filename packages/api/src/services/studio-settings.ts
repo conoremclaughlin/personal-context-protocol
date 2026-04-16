@@ -6,7 +6,7 @@
  * net before Claude Code spawn.
  */
 
-import { mkdir, readFile, writeFile } from 'fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { logger } from '../utils/logger';
@@ -208,6 +208,9 @@ export async function applyPermissionOverlay(
     try {
       if (originalContent) {
         await writeFile(settingsPath, originalContent);
+      } else {
+        // File didn't exist before overlay — remove it
+        await rm(settingsPath, { force: true });
       }
       logger.debug('Restored original settings after overlay', { worktreePath });
     } catch (err) {

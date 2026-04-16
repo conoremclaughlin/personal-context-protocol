@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readFile, mkdir, writeFile } from 'fs/promises';
+import { mkdtemp, rm, readFile, mkdir, writeFile, access } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { ensureStudioSettings, applyPermissionOverlay } from './studio-settings';
@@ -144,7 +144,9 @@ describe('applyPermissionOverlay', () => {
     expect(settings.permissions.allow).toEqual(['mcp__playwright__*']);
     expect(settings.permissions.deny).toEqual(['Bash(rm -rf /)']);
 
-    // Restore removes the file content (original was null)
+    // Restore removes the file (original was null)
     await restore();
+
+    await expect(access(join(tempDir, '.claude', 'settings.local.json'))).rejects.toThrow();
   });
 });
