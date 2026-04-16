@@ -246,6 +246,15 @@ export async function handleSendToInbox(args: unknown, dataComposer: DataCompose
   // Enforce identity on sender (who is performing the action), not recipient (target)
   const senderAgentId = getEffectiveAgentId(parsed.senderAgentId);
   const triggerSenderId = senderAgentId || 'system';
+
+  // SECURITY: permission_grant messages can only originate from the system layer
+  // (platform listeners verifying human identity), never from agents.
+  // See ink://specs/2fa-permission-grants for the full design.
+  if (messageType === 'permission_grant' && senderAgentId) {
+    throw new Error(
+      'permission_grant messages cannot be sent by agents — must originate from platform verification'
+    );
+  }
   const effectiveRecipientSessionId = recipientSessionId;
 
   // Default trigger behavior:

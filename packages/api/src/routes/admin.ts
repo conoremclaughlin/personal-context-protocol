@@ -6624,4 +6624,252 @@ router.post('/contacts/resolve', async (req: Request, res: Response) => {
   }
 });
 
+// ============== 2FA Approval Requests ==============
+
+/**
+ * Create an approval request for elevated permissions.
+ * Called by the CLI hook when a tool in the approval-required set is encountered.
+ * The server generates the request ID, sends to connected platforms, and returns
+ * the ID for polling.
+ */
+router.post('/approval-requests', async (req: Request, res: Response) => {
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const authReq = req as AdminAuthRequest;
+
+    const { tool, args, reason, studioId, sessionId, timeoutSeconds = 300 } = req.body;
+
+    if (!tool) {
+      res.status(400).json({ error: 'tool is required' });
+      return;
+    }
+
+    const expiresAt = new Date(Date.now() + timeoutSeconds * 1000).toISOString();
+
+    // Resolve requesting agent from session context header
+    const contextHeader = req.headers['x-ink-context'] as string | undefined;
+    let requestingAgentId = 'unknown';
+    if (contextHeader) {
+      try {
+        const decoded = JSON.parse(Buffer.from(contextHeader, 'base64url').toString());
+        requestingAgentId = decoded.agentId || 'unknown';
+      } catch {
+        // fall through
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('approval_requests')
+      .insert({
+        user_id: authReq.pcpUserId,
+        studio_id: studioId || null,
+        session_id: sessionId || null,
+        requesting_agent_id: requestingAgentId,
+        tool,
+        args: args || null,
+        reason: reason || null,
+        timeout_seconds: timeoutSeconds,
+        expires_at: expiresAt,
+      })
+      .select('id, status, expires_at')
+      .single();
+
+    if (error) {
+      res.status(500).json(errorJson('Failed to create approval request', error));
+      return;
+    }
+
+    // TODO (Phase 3b): Send approval message to connected platforms via platform listener
+    // For now, log the request — platform listener integration comes next
+    logger.info('Approval request created', {
+      requestId: data.id,
+      tool,
+      args,
+      requestingAgentId,
+      studioId,
+      expiresAt,
+    });
+
+    res.status(201).json({
+      requestId: data.id,
+      status: data.status,
+      expiresAt: data.expires_at,
+    });
+  } catch (error) {
+    logger.error('Failed to create approval request:', error);
+    res.status(500).json(errorJson('Failed to create approval request', error));
+  }
+});
+
+/**
+ * Poll an approval request's status.
+ * Called by the CLI hook while waiting for human response.
+ * Returns current status + resolution details when resolved.
+ */
+router.get('/approval-requests/:requestId/status', async (req: Request, res: Response) => {
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const authReq = req as AdminAuthRequest;
+    const { requestId } = req.params;
+
+    const { data, error } = await supabase
+      .from('approval_requests')
+      .select('id, status, action, granted_tools, granted_by, expires_at, resolved_at, created_at')
+      .eq('id', requestId)
+      .eq('user_id', authReq.pcpUserId)
+      .single();
+
+    if (error || !data) {
+      res.status(404).json({ error: 'Approval request not found' });
+      return;
+    }
+
+    // Auto-expire if past deadline and still pending
+    if (data.status === 'pending' && new Date(data.expires_at) < new Date()) {
+      await supabase
+        .from('approval_requests')
+        .update({ status: 'expired', resolved_at: new Date().toISOString() })
+        .eq('id', requestId);
+
+      res.json({
+        requestId: data.id,
+        status: 'expired',
+        action: null,
+        grantedTools: null,
+        grantedBy: null,
+        expiresAt: data.expires_at,
+        resolvedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    res.json({
+      requestId: data.id,
+      status: data.status,
+      action: data.action,
+      grantedTools: data.granted_tools,
+      grantedBy: data.granted_by,
+      expiresAt: data.expires_at,
+      resolvedAt: data.resolved_at,
+    });
+  } catch (error) {
+    logger.error('Failed to get approval request status:', error);
+    res.status(500).json(errorJson('Failed to get approval request status', error));
+  }
+});
+
+/**
+ * Resolve an approval request (grant or deny).
+ * ONLY callable from platform listeners (system layer) — not from agents.
+ * The platform listener verifies the human's identity via platformId before calling this.
+ */
+router.post('/approval-requests/:requestId/resolve', async (req: Request, res: Response) => {
+  try {
+    const supabase = createClient(env.SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const authReq = req as AdminAuthRequest;
+    const { requestId } = req.params;
+    const { action, grantedTools, grantedBy } = req.body;
+
+    if (!action || !['grant', 'grant-session', 'allow', 'deny'].includes(action)) {
+      res.status(400).json({ error: 'action must be one of: grant, grant-session, allow, deny' });
+      return;
+    }
+
+    // Verify this is a system-level call, not from an agent MCP session
+    // Platform listeners call this endpoint directly with server-side auth,
+    // not through the MCP tool layer. The x-ink-context header (set by CLI hooks)
+    // indicates an agent session — reject those.
+    const contextHeader = req.headers['x-ink-context'] as string | undefined;
+    if (contextHeader) {
+      try {
+        const decoded = JSON.parse(Buffer.from(contextHeader, 'base64url').toString());
+        if (decoded.agentId) {
+          res.status(403).json({
+            error: 'Approval resolution must come from system layer, not agent sessions',
+          });
+          return;
+        }
+      } catch {
+        // Malformed context header — not an agent, allow through
+      }
+    }
+
+    if (!grantedBy) {
+      res
+        .status(400)
+        .json({ error: 'grantedBy is required (e.g., "platform:telegram:<platformId>")' });
+      return;
+    }
+
+    // Fetch and validate the request
+    const { data: existing, error: fetchError } = await supabase
+      .from('approval_requests')
+      .select('id, status, user_id, expires_at')
+      .eq('id', requestId)
+      .eq('user_id', authReq.pcpUserId)
+      .single();
+
+    if (fetchError || !existing) {
+      res.status(404).json({ error: 'Approval request not found' });
+      return;
+    }
+
+    if (existing.status !== 'pending') {
+      res.status(409).json({ error: `Request already resolved: ${existing.status}` });
+      return;
+    }
+
+    if (new Date(existing.expires_at) < new Date()) {
+      await supabase
+        .from('approval_requests')
+        .update({ status: 'expired', resolved_at: new Date().toISOString() })
+        .eq('id', requestId);
+      res.status(410).json({ error: 'Request has expired' });
+      return;
+    }
+
+    const status = action === 'deny' ? 'denied' : 'granted';
+
+    const { error: updateError } = await supabase
+      .from('approval_requests')
+      .update({
+        status,
+        action,
+        granted_tools: grantedTools || null,
+        granted_by: grantedBy,
+        resolved_at: new Date().toISOString(),
+      })
+      .eq('id', requestId);
+
+    if (updateError) {
+      res.status(500).json(errorJson('Failed to resolve approval request', updateError));
+      return;
+    }
+
+    logger.info('Approval request resolved', {
+      requestId,
+      action,
+      grantedBy,
+      status,
+    });
+
+    res.json({
+      requestId,
+      status,
+      action,
+      grantedTools: grantedTools || null,
+      grantedBy,
+    });
+  } catch (error) {
+    logger.error('Failed to resolve approval request:', error);
+    res.status(500).json(errorJson('Failed to resolve approval request', error));
+  }
+});
+
 export default router;
