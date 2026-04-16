@@ -6351,6 +6351,28 @@ router.get('/task-groups', async (req: Request, res: Response) => {
       }
     }
 
+    // Resolve strategy owner display names (owner_agent_id may differ from creator)
+    const ownerAgentIds = [
+      ...new Set(groups.map((g) => g.owner_agent_id).filter(Boolean)),
+    ] as string[];
+    let ownerNameMap: Record<string, string> = {};
+
+    if (ownerAgentIds.length > 0) {
+      const { data: ownerData } = await supabase
+        .from('agent_identities')
+        .select('agent_id, name')
+        .eq('user_id', authReq.pcpUserId)
+        .in('agent_id', ownerAgentIds);
+
+      if (ownerData) {
+        for (const row of ownerData) {
+          if (row.agent_id && row.name) {
+            ownerNameMap[row.agent_id] = row.name;
+          }
+        }
+      }
+    }
+
     res.json({
       groups: groups.map((g) => ({
         id: g.id,
@@ -6376,6 +6398,7 @@ router.get('/task-groups', async (req: Request, res: Response) => {
         taskCount: taskCountMap[g.id] || 0,
         strategy: g.strategy ?? null,
         ownerAgentId: g.owner_agent_id ?? null,
+        ownerAgentName: (g.owner_agent_id && ownerNameMap[g.owner_agent_id]) || null,
         currentTaskIndex: g.current_task_index ?? 0,
         strategyStartedAt: g.strategy_started_at ?? null,
         strategyPausedAt: g.strategy_paused_at ?? null,
