@@ -20,7 +20,7 @@ import { formatInjectedContext } from './context-builder.js';
 import { logger } from '../../utils/logger.js';
 import { resolveBinaryPath, buildSpawnPath } from './resolve-binary.js';
 import { injectSessionHeaders, buildSessionEnv, writeRuntimeSessionHint } from '@inklabs/shared';
-import { ensureStudioSettings } from '../studio-settings.js';
+import { ensureStudioSettings, applyPermissionOverlay } from '../studio-settings.js';
 
 /** Maximum time (ms) to wait for a Claude Code subprocess before killing it.
  *  Override with CLAUDE_PROCESS_TIMEOUT_MS env var. */
@@ -209,6 +209,23 @@ export class ClaudeRunner implements IRunner {
       }
     }
 
+    // Apply per-session permission overlay (from strategy config or 2FA grant).
+    // The restore function is called after the process exits to revert the overlay.
+    let restoreOverlay: (() => Promise<void>) | null = null;
+    if (config.workingDirectory && config.permissionOverlay) {
+      try {
+        restoreOverlay = await applyPermissionOverlay(
+          config.workingDirectory,
+          config.permissionOverlay
+        );
+      } catch (err) {
+        logger.warn('Failed to apply permission overlay (non-fatal)', {
+          cwd: config.workingDirectory,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     // If headers were injected, patch the --mcp-config arg to point to the temp file
     if (mcpInjection?.modified) {
       const mcpIdx = args.indexOf('--mcp-config');
@@ -370,6 +387,7 @@ export class ClaudeRunner implements IRunner {
       proc.on('error', (error) => {
         clearTimeout(timeout);
         clearTimeout(idleTimer);
+        restoreOverlay?.().catch(() => {});
         if (!settled) {
           settled = true;
           reject(new Error(`Failed to spawn Claude: ${error.message}`));
@@ -380,6 +398,7 @@ export class ClaudeRunner implements IRunner {
         clearTimeout(timeout);
         clearTimeout(idleTimer);
         mcpInjection?.cleanup();
+        restoreOverlay?.().catch(() => {});
         if (settled) return; // Already resolved by timeout
         settled = true;
 

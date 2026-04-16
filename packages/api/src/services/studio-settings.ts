@@ -145,3 +145,76 @@ export async function ensureStudioSettings(worktreePath: string): Promise<boolea
 
   return true;
 }
+
+/**
+ * Read the current settings file content (for backup before overlay).
+ */
+async function readSettings(worktreePath: string): Promise<string | null> {
+  try {
+    return await readFile(join(worktreePath, CLAUDE_SETTINGS_REL), 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+export interface PermissionOverlay {
+  allow?: string[];
+  deny?: string[];
+}
+
+/**
+ * Apply a temporary permission overlay to `.claude/settings.local.json`.
+ *
+ * Merges the overlay rules into the existing settings (deduplicating).
+ * Returns a restore function that writes back the original content.
+ * Call the restore function when the session process exits.
+ */
+export async function applyPermissionOverlay(
+  worktreePath: string,
+  overlay: PermissionOverlay
+): Promise<() => Promise<void>> {
+  const settingsPath = join(worktreePath, CLAUDE_SETTINGS_REL);
+  const originalContent = await readSettings(worktreePath);
+
+  let settings: ClaudeSettings = {};
+  if (originalContent) {
+    try {
+      settings = JSON.parse(originalContent);
+    } catch {
+      // unparseable — start from current defaults
+    }
+  }
+
+  // Merge overlay rules (deduplicate with Set)
+  const existingAllow = settings.permissions?.allow || [];
+  const existingDeny = settings.permissions?.deny || [];
+
+  settings.permissions = {
+    allow: [...new Set([...existingAllow, ...(overlay.allow || [])])],
+    deny: [...new Set([...existingDeny, ...(overlay.deny || [])])],
+  };
+
+  await mkdir(join(worktreePath, '.claude'), { recursive: true });
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n');
+
+  logger.info('Applied permission overlay', {
+    worktreePath,
+    addedAllow: overlay.allow?.length || 0,
+    addedDeny: overlay.deny?.length || 0,
+  });
+
+  // Return restore function
+  return async () => {
+    try {
+      if (originalContent) {
+        await writeFile(settingsPath, originalContent);
+      }
+      logger.debug('Restored original settings after overlay', { worktreePath });
+    } catch (err) {
+      logger.warn('Failed to restore settings after overlay', {
+        worktreePath,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+}
