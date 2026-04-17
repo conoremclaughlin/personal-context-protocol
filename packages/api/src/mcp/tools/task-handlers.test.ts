@@ -1250,7 +1250,7 @@ describe('handleListTaskGroups', () => {
     });
   });
 
-  it('returns all groups including completed by default', async () => {
+  it('returns all groups when statuses is omitted', async () => {
     dc.repositories.taskGroups.listByUser.mockResolvedValue(sampleGroups);
     dc.repositories.taskGroups.taskCountsByGroup.mockResolvedValue({
       'grp-1': { total: 3, pending: 1, in_progress: 1, completed: 1, blocked: 0 },
@@ -1259,8 +1259,6 @@ describe('handleListTaskGroups', () => {
     const response = await handleListTaskGroups(
       {
         userId: 'user-123',
-        activeOnly: false,
-        includeCompleted: true,
         autonomousOnly: false,
         includeTaskCounts: true,
         limit: 200,
@@ -1286,14 +1284,33 @@ describe('handleListTaskGroups', () => {
     expect(data.groups[1].taskCounts.total).toBe(0);
   });
 
-  it('filters to active/paused when includeCompleted=false', async () => {
+  it('treats empty statuses array the same as omitted (all statuses)', async () => {
+    dc.repositories.taskGroups.listByUser.mockResolvedValue(sampleGroups);
+
+    await handleListTaskGroups(
+      {
+        userId: 'user-123',
+        statuses: [],
+        autonomousOnly: false,
+        includeTaskCounts: false,
+        limit: 200,
+      } as any,
+      dc as any
+    );
+
+    expect(dc.repositories.taskGroups.listByUser).toHaveBeenCalledWith(
+      'user-123',
+      expect.objectContaining({ status: undefined })
+    );
+  });
+
+  it('passes statuses array through to the repository', async () => {
     dc.repositories.taskGroups.listByUser.mockResolvedValue([sampleGroups[0]]);
 
     await handleListTaskGroups(
       {
         userId: 'user-123',
-        activeOnly: false,
-        includeCompleted: false,
+        statuses: ['active', 'paused'],
         autonomousOnly: false,
         includeTaskCounts: false,
         limit: 200,
@@ -1307,15 +1324,13 @@ describe('handleListTaskGroups', () => {
     );
   });
 
-  it('explicit status filter overrides activeOnly/includeCompleted', async () => {
+  it('supports single-element statuses arrays', async () => {
     dc.repositories.taskGroups.listByUser.mockResolvedValue([sampleGroups[1]]);
 
     await handleListTaskGroups(
       {
         userId: 'user-123',
-        status: 'completed',
-        activeOnly: true,
-        includeCompleted: false,
+        statuses: ['completed'],
         autonomousOnly: false,
         includeTaskCounts: false,
         limit: 200,
@@ -1325,28 +1340,7 @@ describe('handleListTaskGroups', () => {
 
     expect(dc.repositories.taskGroups.listByUser).toHaveBeenCalledWith(
       'user-123',
-      expect.objectContaining({ status: 'completed' })
-    );
-  });
-
-  it('activeOnly maps to [active, paused]', async () => {
-    dc.repositories.taskGroups.listByUser.mockResolvedValue([sampleGroups[0]]);
-
-    await handleListTaskGroups(
-      {
-        userId: 'user-123',
-        activeOnly: true,
-        includeCompleted: true,
-        autonomousOnly: false,
-        includeTaskCounts: false,
-        limit: 200,
-      } as any,
-      dc as any
-    );
-
-    expect(dc.repositories.taskGroups.listByUser).toHaveBeenCalledWith(
-      'user-123',
-      expect.objectContaining({ status: ['active', 'paused'] })
+      expect.objectContaining({ status: ['completed'] })
     );
   });
 
@@ -1356,8 +1350,6 @@ describe('handleListTaskGroups', () => {
     const response = await handleListTaskGroups(
       {
         userId: 'user-123',
-        activeOnly: false,
-        includeCompleted: true,
         autonomousOnly: false,
         includeTaskCounts: false,
         limit: 200,
@@ -1377,8 +1369,6 @@ describe('handleListTaskGroups', () => {
     const response = await handleListTaskGroups(
       {
         userId: 'nonexistent',
-        activeOnly: false,
-        includeCompleted: true,
         autonomousOnly: false,
         includeTaskCounts: true,
         limit: 200,

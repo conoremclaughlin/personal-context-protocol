@@ -638,21 +638,11 @@ export async function handleCreateTaskGroup(
 
 export const listTaskGroupsSchema = z.object({
   ...userIdentifierSchema.shape,
-  status: z
-    .union([taskGroupStatusEnum, z.array(taskGroupStatusEnum)])
+  statuses: z
+    .array(taskGroupStatusEnum)
     .optional()
-    .describe('Filter by status (string or array). Omit to include all statuses.'),
-  activeOnly: z
-    .boolean()
-    .optional()
-    .default(false)
-    .describe('Shortcut for status in [active, paused]'),
-  includeCompleted: z
-    .boolean()
-    .optional()
-    .default(true)
     .describe(
-      'When no status filter is set, whether to include completed/cancelled groups. Default true.'
+      'Filter by one or more statuses: active, paused, completed, cancelled. Omit or pass empty array to include all statuses.'
     ),
   projectId: z.string().uuid().optional().describe('Filter by project'),
   identityId: z.string().uuid().optional().describe('Filter by agent identity UUID'),
@@ -675,24 +665,11 @@ export async function handleListTaskGroups(
       return mcpResponse({ success: false, error: 'User not found' }, true);
     }
 
-    let statusFilter:
-      | 'active'
-      | 'paused'
-      | 'completed'
-      | 'cancelled'
-      | Array<'active' | 'paused' | 'completed' | 'cancelled'>
-      | undefined;
-
-    if (args.status) {
-      statusFilter = args.status;
-    } else if (args.activeOnly) {
-      statusFilter = ['active', 'paused'];
-    } else if (!args.includeCompleted) {
-      statusFilter = ['active', 'paused'];
-    }
+    // Empty array is treated the same as omitted: include all statuses.
+    const statuses = args.statuses && args.statuses.length > 0 ? args.statuses : undefined;
 
     const groups = await dataComposer.repositories.taskGroups.listByUser(resolved.user.id, {
-      status: statusFilter,
+      status: statuses,
       projectId: args.projectId,
       identityId: args.identityId,
       autonomousOnly: args.autonomousOnly,
