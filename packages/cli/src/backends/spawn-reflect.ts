@@ -2,7 +2,7 @@
  * spawn-reflect: helper for `.live.test.ts` backend reflection tests.
  *
  * Spawns a backend CLI (claude | codex | gemini) via `ink -b <backend> -p`,
- * instructs the LLM to call the server's `debug_request_context` MCP tool,
+ * instructs the LLM to call the server's `debug_request` MCP tool,
  * and returns the reflected server-side context.
  *
  * What this proves: headers are actually reaching the server when the CLI
@@ -62,7 +62,7 @@ const RESULT_MARKER = 'PCP_DEBUG_RESULT:';
 /**
  * Prompt crafted to be compact and unambiguous across backends. We ask the
  * LLM to:
- *  1. Call `debug_request_context` with no args
+ *  1. Call `debug_request` with no args
  *  2. Copy the tool's JSON result verbatim after a known marker
  *  3. Output nothing else after that line
  *
@@ -73,7 +73,7 @@ function buildReflectionPrompt(): string {
   return [
     'You are a test harness, not an assistant. Do exactly this and nothing else:',
     '',
-    '1. Call the MCP tool named `debug_request_context` with no arguments.',
+    '1. Call the MCP tool named `debug_request` with no arguments.',
     '2. The tool returns a JSON object. Copy that JSON verbatim onto a single line,',
     `   prefixed with the literal marker "${RESULT_MARKER} " (marker, one space, then the JSON).`,
     '3. Do not explain, do not wrap in code fences, do not add anything after the JSON.',
@@ -92,12 +92,12 @@ export function parseReflectedOutput(stdout: string): ReflectedRequestContext {
   const markerLine = lines.find((line) => line.trimStart().startsWith(RESULT_MARKER));
   if (!markerLine) {
     throw new Error(
-      `debug_request_context marker not found in stdout. Last 400 chars:\n${stdout.slice(-400)}`
+      `debug_request marker not found in stdout. Last 400 chars:\n${stdout.slice(-400)}`
     );
   }
   const payload = markerLine.trimStart().slice(RESULT_MARKER.length).trim();
   if (payload === 'UNAVAILABLE') {
-    throw new Error('Backend reported debug_request_context tool unavailable');
+    throw new Error('Backend reported debug_request tool unavailable');
   }
   let parsed: unknown;
   try {
@@ -108,7 +108,7 @@ export function parseReflectedOutput(stdout: string): ReflectedRequestContext {
     );
   }
   if (!parsed || typeof parsed !== 'object') {
-    throw new Error(`Expected object from debug_request_context, got: ${typeof parsed}`);
+    throw new Error(`Expected object from debug_request, got: ${typeof parsed}`);
   }
   return parsed as ReflectedRequestContext;
 }

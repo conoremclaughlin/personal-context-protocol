@@ -9,7 +9,7 @@
  *     adapter args/env → claude runtime → .mcp.json substitution
  *         → HTTP Authorization/x-ink-context headers
  *             → server middleware → RequestContext
- *                 → debug_request_context → stdout
+ *                 → debug_request → stdout
  *
  * Opt-in via `yarn test:live`. Excluded from `yarn test`.
  *

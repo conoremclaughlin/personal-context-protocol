@@ -24,7 +24,7 @@ describe('parseReflectedOutput', () => {
 
   it('throws a helpful error when the marker is absent', () => {
     expect(() => parseReflectedOutput('I have no idea what you are asking\n')).toThrow(
-      /debug_request_context marker not found/
+      /debug_request marker not found/
     );
   });
 
