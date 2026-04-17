@@ -285,7 +285,6 @@ export const rememberSchema = userIdentifierBaseSchema.extend({
     ),
   studioId: z
     .string()
-    .uuid()
     .optional()
     .describe(
       'Studio ID — preferred session scope for parallel worktree scenarios. Stored in metadata, not as a first-class field.'
@@ -349,7 +348,6 @@ export const startSessionSchema = userIdentifierBaseSchema.extend({
     .describe('Identifier for the agent (e.g., "claude-code", "telegram-myra")'),
   studioId: z
     .string()
-    .uuid()
     .optional()
     .describe(
       'Studio ID to scope this session to. Allows multiple active sessions per agent (one per studio).'
@@ -391,7 +389,6 @@ export const endSessionSchema = userIdentifierBaseSchema.extend({
     .describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
   studioId: z
     .string()
-    .uuid()
     .optional()
     .describe('Studio ID for session resolution when sessionId not provided'),
   summary: z.string().optional().describe('End-of-session summary'),
@@ -409,7 +406,6 @@ export const getSessionSchema = userIdentifierBaseSchema.extend({
     .describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
   studioId: z
     .string()
-    .uuid()
     .optional()
     .describe('Studio ID for session resolution when sessionId not provided'),
   includeLogs: z.boolean().optional().describe('Include session logs (default: false)'),
@@ -445,7 +441,6 @@ export const updateSessionPhaseSchema = userIdentifierBaseSchema.extend({
     ),
   studioId: z
     .string()
-    .uuid()
     .optional()
     .describe(
       'Studio ID for session resolution. When sessionId is not provided, finds the active session in this studio. Useful for parallel worktree scenarios.'
@@ -571,7 +566,6 @@ export const compactSessionSchema = userIdentifierBaseSchema.extend({
     .describe('Agent identifier for session resolution (e.g., "wren", "benson")'),
   studioId: z
     .string()
-    .uuid()
     .optional()
     .describe('Studio ID for session resolution when sessionId not provided'),
   groupByTopics: z.boolean().optional().describe('Group logs by inferred topics (default: true)'),

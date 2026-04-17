@@ -132,14 +132,19 @@ describe('startSessionSchema', () => {
     }
   });
 
-  it('should reject non-UUID studioId', () => {
+  it('should accept non-UUID studioId (e.g. "main")', () => {
+    // studioId accepts any string; non-UUID values like "main" are filtered
+    // by isStudioUuid() before reaching DB queries — see handleStartSession.
     const result = startSessionSchema.safeParse({
       email: 'test@test.com',
       agentId: 'wren',
-      studioId: 'not-a-uuid',
+      studioId: 'main',
     });
 
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.studioId).toBe('main');
+    }
   });
 
   it('should still require user identification', () => {
