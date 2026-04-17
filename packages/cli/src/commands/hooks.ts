@@ -2236,16 +2236,10 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
     });
   }
 
-  // Skip inbox injection when the channel plugin is active — it handles
-  // real-time delivery via the Channels API. Fall back to hook-based
-  // injection when the channel plugin is not present.
-  if (hasActiveChannelPlugin(cwd)) {
-    return;
-  }
-
-  // No channel plugin — use hook-based inbox injection as fallback.
-  // Drain pending message queue first — these are trigger messages
-  // routed here because cli_attached=true.
+  // Always drain the pending message queue — these are trigger messages
+  // routed here because cli_attached=true. The pending queue is in-memory
+  // (response-handlers.ts), NOT in inbox tables, so the channel plugin
+  // can't see them. Must drain regardless of channel plugin status.
   try {
     const pending = await callPcpTool('get_pending_messages', {
       channel: 'agent',
@@ -2273,6 +2267,14 @@ async function onPromptHandler(options?: { backend?: string }): Promise<void> {
     // Silent — pending queue may not have messages
   }
 
+  // Skip inbox polling when the channel plugin is active — it handles
+  // real-time delivery via the Channels API. The pending queue drain
+  // above still runs because channel plugin can't see those messages.
+  if (hasActiveChannelPlugin(cwd)) {
+    return;
+  }
+
+  // No channel plugin — use hook-based inbox polling as fallback.
   // Check if inbox check is stale (> 5 minutes)
   const lastCheck = readRuntimeFile(cwd, 'last-inbox-check');
   const staleThresholdMs = 5 * 60 * 1000;
