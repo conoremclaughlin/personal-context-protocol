@@ -1,9 +1,11 @@
 /**
  * Task Groups Repository
  *
- * Manages task_groups: autonomous work containers that bundle tasks under
- * a shared strategy, thread, and output target. See migration
- * 20260311021747_task_groups_unify_tasks_permissions.sql.
+ * Manages task_groups: collections of ordered tasks that can be executed via
+ * work strategies (persistence, review, architect, etc.). Groups bundle tasks
+ * under a shared strategy, thread, and output target. See migrations
+ * 20260311021747_task_groups_unify_tasks_permissions.sql and the strategy
+ * columns added in Phase 1.
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -13,6 +15,8 @@ export type TaskGroupStatus = 'active' | 'paused' | 'completed' | 'cancelled';
 export type TaskGroupPriority = 'low' | 'normal' | 'high' | 'urgent';
 export type TaskGroupOutputTarget = 'spec' | 'pr' | 'report' | 'proposal';
 export type TaskGroupOutputStatus = 'ready_for_review' | 'needs_more_work' | 'blocked';
+export type StrategyPreset = 'persistence' | 'review' | 'architect' | 'parallel' | 'swarm';
+export type VerificationMode = 'self' | 'peer' | 'architect';
 
 export interface TaskGroup {
   id: string;
@@ -21,6 +25,7 @@ export interface TaskGroup {
   project_id: string | null;
   title: string;
   description: string | null;
+  instructions: string | null;
   status: TaskGroupStatus;
   priority: TaskGroupPriority;
   tags: string[];
@@ -33,8 +38,32 @@ export interface TaskGroup {
   output_target: TaskGroupOutputTarget | null;
   output_status: TaskGroupOutputStatus | null;
   thread_key: string | null;
+  // Strategy columns (Phase 1)
+  strategy: StrategyPreset | null;
+  strategy_config: StrategyConfig;
+  verification_mode: VerificationMode;
+  plan_uri: string | null;
+  current_task_index: number;
+  iterations_since_approval: number;
+  strategy_started_at: string | null;
+  strategy_paused_at: string | null;
+  owner_agent_id: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface StrategyConfig {
+  planUri?: string;
+  checkInInterval?: number;
+  checkInNotify?: string;
+  approvalNotify?: string;
+  maxIterationsWithoutApproval?: number;
+  contextSummaryInterval?: number;
+  verificationGates?: string[];
+  /** How often (in minutes) the heartbeat should check if the strategy is stuck. Default: 10 */
+  watchdogIntervalMinutes?: number;
+  /** Supervisor agent identity ID — gets check-in notifications and a final audit on completion */
+  supervisorId?: string;
 }
 
 export interface CreateTaskGroupInput {
@@ -43,6 +72,7 @@ export interface CreateTaskGroupInput {
   project_id?: string | null;
   title: string;
   description?: string;
+  instructions?: string;
   status?: TaskGroupStatus;
   priority?: TaskGroupPriority;
   tags?: string[];
@@ -54,11 +84,17 @@ export interface CreateTaskGroupInput {
   output_target?: TaskGroupOutputTarget;
   output_status?: TaskGroupOutputStatus;
   thread_key?: string;
+  strategy?: StrategyPreset;
+  strategy_config?: StrategyConfig;
+  verification_mode?: VerificationMode;
+  plan_uri?: string;
+  owner_agent_id?: string;
 }
 
 export interface UpdateTaskGroupInput {
   title?: string;
   description?: string | null;
+  instructions?: string | null;
   status?: TaskGroupStatus;
   priority?: TaskGroupPriority;
   tags?: string[];
@@ -73,6 +109,15 @@ export interface UpdateTaskGroupInput {
   thread_key?: string | null;
   identity_id?: string | null;
   project_id?: string | null;
+  strategy?: StrategyPreset | null;
+  strategy_config?: StrategyConfig;
+  verification_mode?: VerificationMode;
+  plan_uri?: string | null;
+  current_task_index?: number;
+  iterations_since_approval?: number;
+  strategy_started_at?: string | null;
+  strategy_paused_at?: string | null;
+  owner_agent_id?: string | null;
 }
 
 export interface ListTaskGroupsOptions {
@@ -80,6 +125,8 @@ export interface ListTaskGroupsOptions {
   projectId?: string;
   identityId?: string;
   autonomousOnly?: boolean;
+  strategy?: StrategyPreset;
+  ownerAgentId?: string;
   limit?: number;
 }
 
@@ -95,6 +142,7 @@ export class TaskGroupsRepository {
         project_id: input.project_id ?? null,
         title: input.title,
         description: input.description,
+        instructions: input.instructions ?? null,
         status: input.status || 'active',
         priority: input.priority || 'normal',
         tags: input.tags || [],
@@ -106,6 +154,11 @@ export class TaskGroupsRepository {
         output_target: input.output_target ?? null,
         output_status: input.output_status ?? null,
         thread_key: input.thread_key,
+        strategy: input.strategy ?? null,
+        strategy_config: input.strategy_config ?? {},
+        verification_mode: input.verification_mode ?? 'self',
+        plan_uri: input.plan_uri ?? null,
+        owner_agent_id: input.owner_agent_id ?? null,
       } as never)
       .select()
       .single();
@@ -158,6 +211,14 @@ export class TaskGroupsRepository {
       query = query.eq('autonomous', true);
     }
 
+    if (options?.strategy) {
+      query = query.eq('strategy', options.strategy);
+    }
+
+    if (options?.ownerAgentId) {
+      query = query.eq('owner_agent_id', options.ownerAgentId);
+    }
+
     if (options?.limit) {
       query = query.limit(options.limit);
     }
@@ -175,6 +236,7 @@ export class TaskGroupsRepository {
     const updates: Record<string, unknown> = {};
     if (input.title !== undefined) updates.title = input.title;
     if (input.description !== undefined) updates.description = input.description;
+    if (input.instructions !== undefined) updates.instructions = input.instructions;
     if (input.status !== undefined) updates.status = input.status;
     if (input.priority !== undefined) updates.priority = input.priority;
     if (input.tags !== undefined) updates.tags = input.tags;
@@ -189,6 +251,19 @@ export class TaskGroupsRepository {
     if (input.thread_key !== undefined) updates.thread_key = input.thread_key;
     if (input.identity_id !== undefined) updates.identity_id = input.identity_id;
     if (input.project_id !== undefined) updates.project_id = input.project_id;
+    if (input.strategy !== undefined) updates.strategy = input.strategy;
+    if (input.strategy_config !== undefined) updates.strategy_config = input.strategy_config;
+    if (input.verification_mode !== undefined) updates.verification_mode = input.verification_mode;
+    if (input.plan_uri !== undefined) updates.plan_uri = input.plan_uri;
+    if (input.current_task_index !== undefined)
+      updates.current_task_index = input.current_task_index;
+    if (input.iterations_since_approval !== undefined)
+      updates.iterations_since_approval = input.iterations_since_approval;
+    if (input.strategy_started_at !== undefined)
+      updates.strategy_started_at = input.strategy_started_at;
+    if (input.strategy_paused_at !== undefined)
+      updates.strategy_paused_at = input.strategy_paused_at;
+    if (input.owner_agent_id !== undefined) updates.owner_agent_id = input.owner_agent_id;
 
     const { data, error } = await this.client
       .from('task_groups' as never)
@@ -204,15 +279,43 @@ export class TaskGroupsRepository {
     return data as unknown as TaskGroup;
   }
 
+  /**
+   * Archive a task group (soft delete). Groups are never hard-deleted —
+   * the execution log must be reproducible.
+   */
+  async archive(id: string): Promise<TaskGroup> {
+    return this.update(id, { status: 'cancelled' });
+  }
+
+  /**
+   * @deprecated Use archive() instead. Task groups should never be hard-deleted.
+   */
   async delete(id: string): Promise<void> {
-    const { error } = await this.client
+    await this.archive(id);
+  }
+
+  /**
+   * Find active strategies for an agent — used by heartbeat recovery
+   */
+  async findActiveStrategies(userId: string, ownerAgentId?: string): Promise<TaskGroup[]> {
+    let query = this.client
       .from('task_groups' as never)
-      .delete()
-      .eq('id', id);
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .not('strategy', 'is', null);
+
+    if (ownerAgentId) {
+      query = query.eq('owner_agent_id', ownerAgentId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
-      throw new Error(`Failed to delete task group: ${error.message}`);
+      throw new Error(`Failed to find active strategies: ${error.message}`);
     }
+
+    return (data || []) as unknown as TaskGroup[];
   }
 
   /**

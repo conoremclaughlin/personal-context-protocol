@@ -446,7 +446,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
     // Resolve studioHint via cascade:
     //   1. reminder.studio_hint (direct override)
     //   2. channel_routes.studio_hint (matched by delivery channel)
-    //   3. agent_identities.studio_hint (agent's home studio)
+    //   3. agent_identities.studio_hint (agent's default studio)
     //   4. null → resolveStudioId() uses its own cascade (agent studio → main)
     let reminderStudioHint: string | null = null;
 
@@ -478,7 +478,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
       }
     }
 
-    // Fallback to agent identity's home studio
+    // Fallback to agent identity's default studio
     if (!reminderStudioHint && reminder.identity_id && dataComposer) {
       const { data: identity } = await dataComposer
         .getClient()
@@ -488,7 +488,7 @@ async function startServer(config: ServerConfig = {}): Promise<void> {
         .single();
       if (identity?.studio_hint) {
         reminderStudioHint = identity.studio_hint;
-        logger.debug(`[Heartbeat] Using agent home studio`, {
+        logger.debug(`[Heartbeat] Using agent default studio`, {
           studioHint: reminderStudioHint,
           identityId: reminder.identity_id,
         });
@@ -769,9 +769,21 @@ Do NOT just respond here — you MUST explicitly call send_response to reach ext
       }
 
       if (identityRows.length > 1) {
-        throw new Error(
-          `Ambiguous identity for agent "${targetAgentId}" (multiple workspace-scoped identities). Include inboxMessageId with recipient_identity_id or pass metadata.workspaceId.`
+        // Disambiguate: prefer workspace-scoped over null-workspace (orphaned)
+        const workspaceScoped = identityRows.filter(
+          (r: { workspace_id: string | null }) => r.workspace_id != null
         );
+        if (workspaceScoped.length === 1) {
+          resolvedIdentityId = workspaceScoped[0].id;
+          resolvedWorkspaceId = workspaceScoped[0].workspace_id || undefined;
+          logger.info(
+            `[Trigger] Disambiguated ${targetAgentId}: preferred workspace-scoped identity ${resolvedIdentityId}`
+          );
+        } else {
+          throw new Error(
+            `Ambiguous identity for agent "${targetAgentId}" (${identityRows.length} identities, ${workspaceScoped.length} workspace-scoped). Include inboxMessageId with recipient_identity_id or pass metadata.workspaceId.`
+          );
+        }
       } else {
         resolvedIdentityId = identityRows[0].id;
         resolvedWorkspaceId = identityRows[0].workspace_id || undefined;
@@ -890,14 +902,23 @@ When you complete a task_request, mark it as completed using update_inbox_messag
 
     const result = await sessionService!.handleMessage(request);
 
-    // 5. Route any responses
-    if (result.responses && result.responses.length > 0) {
-      await routeResponses(result.responses);
-    }
-
     if (!result.success) {
       logger.error(`[Trigger] SessionService failed for ${targetAgentId}: ${result.error}`);
       throw new Error(result.error || 'SessionService processing failed');
+    }
+
+    // 5. Route any responses — wrapped in try-catch because the session already
+    // succeeded at this point. A failure here (channel send error, cleanup race)
+    // should NOT emit trigger:error or send a "Trigger failed" notification.
+    try {
+      if (result.responses && result.responses.length > 0) {
+        await routeResponses(result.responses);
+      }
+    } catch (routeErr) {
+      logger.error(
+        `[Trigger] Response routing failed for ${targetAgentId} (session succeeded):`,
+        routeErr
+      );
     }
 
     logger.info(`[Trigger] Successfully processed trigger for ${targetAgentId}`);

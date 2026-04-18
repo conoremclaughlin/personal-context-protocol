@@ -251,6 +251,17 @@ import {
 import { handleCreateKindleToken, createKindleTokenSchema } from './kindle-handlers';
 
 import {
+  handleStartStrategy,
+  handlePauseStrategy,
+  handleResumeStrategy,
+  handleGetStrategyStatus,
+  startStrategySchema,
+  pauseStrategySchema,
+  resumeStrategySchema,
+  getStrategyStatusSchema,
+} from './strategy-handlers';
+
+import {
   handleUpdateIntegrationHealth,
   handleGetIntegrationHealth,
   updateIntegrationHealthSchema,
@@ -736,12 +747,19 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   server.registerTool(
     'create_task',
     {
-      description: `Create a task tied to a project. Tasks persist across sessions and can be tracked.
+      description: `Create a task. Tasks persist across sessions and can be tracked. Can be standalone, project-scoped, or added to a task group for strategy execution.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: {
         ...userIdentifierFields,
-        projectId: z.string().uuid().describe('Project ID to add the task to'),
+        projectId: z.string().uuid().optional().describe('Project ID to add the task to'),
+        taskGroupId: z.string().uuid().optional().describe('Task group ID to add the task to'),
+        taskOrder: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Order within the task group (0-based)'),
         title: z.string().min(1).max(500).describe('Task title'),
         description: z.string().optional().describe('Detailed task description'),
         priority: z.enum(['low', 'medium', 'high', 'critical']).optional().default('medium'),
@@ -958,11 +976,10 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
   // TASK GROUP TOOLS
   // =====================================================
 
-  // Register create_task_group tool
   server.registerTool(
     'create_task_group',
     {
-      description: `Create a task group — a container for related tasks that share a title, strategy/description, priority, and optionally an autonomous execution plan or output target (spec/pr/report/proposal). Use to bundle multi-step work under one thread key or strategy. Returns the created group with its UUID.
+      description: `Create a task group — a container for related tasks that share a title, strategy/description, priority, and optionally an autonomous execution plan or output target (spec/pr/report/proposal). Add tasks with create_task(taskGroupId, taskOrder) after creating the group, then activate with start_strategy. Returns the created group with its UUID.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: createTaskGroupSchema.shape,
@@ -988,11 +1005,10 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
     }
   );
 
-  // Register list_task_groups tool
   server.registerTool(
     'list_task_groups',
     {
-      description: `List task groups for a user with per-status task counts per group. Omit \`statuses\` (or pass an empty array) to include all statuses. Pass a multi-select array to narrow (e.g. statuses: ["active","paused"]). Also supports projectId, identityId, and autonomousOnly filters.
+      description: `List task groups for a user with per-status task counts per group. Omit \`statuses\` (or pass an empty array) to include all statuses. Pass a multi-select array to narrow (e.g. statuses: ["active","paused"]). Also supports projectId, identityId, autonomousOnly, strategy, and ownerAgentId filters.
 
 User can be identified by ONE of: userId, email, phone, or platform + platformId`,
       inputSchema: listTaskGroupsSchema.shape,
@@ -1002,6 +1018,137 @@ User can be identified by ONE of: userId, email, phone, or platform + platformId
         return await handleListTaskGroups(args, dataComposer);
       } catch (error) {
         logger.error('Error in list_task_groups:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  // =====================================================
+  // WORK STRATEGY TOOLS
+  // =====================================================
+
+  server.registerTool(
+    'start_strategy',
+    {
+      description: `Activate a work strategy on a task group. The strategy defines how the agent executes tasks autonomously.
+
+Strategies:
+- persistence: Sequential task execution in the same session. Agent completes a task, gets the next one, continues.
+- review: Review-oriented workflow (Phase 2).
+- architect: Worker + verifier loop (Phase 2).
+- parallel: Multiple agents on different tasks (Phase 2).
+- swarm: Dynamic task distribution (Phase 3).
+
+The agent calling this becomes the strategy owner. After activation, each complete_task call automatically advances to the next task with a strategy-specific prompt.
+
+Empty task groups are valid — if planUri is set, the agent reads the plan, decomposes it into tasks, and starts working.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: startStrategySchema.shape,
+    },
+    async (args) => {
+      try {
+        return await handleStartStrategy(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in start_strategy:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'pause_strategy',
+    {
+      description: `Pause an active strategy on a task group. The current task stays in progress but no new tasks will be auto-assigned.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: pauseStrategySchema.shape,
+    },
+    async (args) => {
+      try {
+        return await handlePauseStrategy(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in pause_strategy:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'resume_strategy',
+    {
+      description: `Resume a paused strategy (also serves as approve_continuation after an approval gate). Resets the approval counter and returns the next task to work on.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: resumeStrategySchema.shape,
+    },
+    async (args) => {
+      try {
+        return await handleResumeStrategy(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in resume_strategy:', error);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({
+                success: false,
+                error: error instanceof Error ? error.message : 'Unknown error',
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
+    }
+  );
+
+  server.registerTool(
+    'get_strategy_status',
+    {
+      description: `Get the status of a work strategy on a task group. Returns progress, current task, config, and a human-friendly summary suitable for forwarding to Telegram/Slack.
+
+User can be identified by ONE of: userId, email, phone, or platform + platformId`,
+      inputSchema: getStrategyStatusSchema.shape,
+    },
+    async (args) => {
+      try {
+        return await handleGetStrategyStatus(args, dataComposer);
+      } catch (error) {
+        logger.error('Error in get_strategy_status:', error);
         return {
           content: [
             {
