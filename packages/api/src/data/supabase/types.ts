@@ -3606,6 +3606,7 @@ export type Database = {
           match_count?: number;
           match_threshold?: number;
           p_agent_id?: string;
+          p_chunk_types?: string[];
           p_include_expired?: boolean;
           p_include_shared?: boolean;
           p_salience?: string;
@@ -3624,6 +3625,7 @@ export type Database = {
           identity_id: string;
           matched_chunk_index: number;
           matched_chunk_text: string;
+          matched_chunk_type: string;
           metadata: Json;
           salience: string;
           similarity: number;
