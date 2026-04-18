@@ -2003,7 +2003,10 @@ export function loadApprovalSet(cwd: string): string[] {
     const settingsPath = join(cwd, '.claude', 'settings.local.json');
     if (!existsSync(settingsPath)) return [];
     const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    return settings.approvalRequired || [];
+    // Claude Code rejects unknown top-level fields; nest under `permissions`
+    // which accepts additionalProperties. Fall back to top-level for
+    // backcompat with any config written before this fix.
+    return settings.permissions?.approvalRequired || settings.approvalRequired || [];
   } catch {
     return [];
   }
@@ -2068,7 +2071,7 @@ async function onToolApprovalHandler(options?: { backend?: string }): Promise<vo
   if (token) headers.Authorization = `Bearer ${token}`;
 
   // Forward context header so server knows the agent/studio
-  const contextToken = process.env.INK_CONTEXT_TOKEN?.trim();
+  const contextToken = process.env.INK_CONTEXT?.trim();
   if (contextToken) headers['x-ink-context'] = contextToken;
 
   const sessionId = process.env.INK_SESSION_ID?.trim() || undefined;
