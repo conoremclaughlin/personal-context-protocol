@@ -6748,12 +6748,19 @@ router.post('/approval-requests', async (req: Request, res: Response) => {
       }
     }
 
+    // studio_id is a UUID column. The CLI sends the literal string "main"
+    // for the root repo (see .ink/identity.json), which would fail insert —
+    // coerce non-UUID values to null.
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const studioIdForInsert = studioId && UUID_RE.test(studioId) ? studioId : null;
+    const sessionIdForInsert = sessionId && UUID_RE.test(sessionId) ? sessionId : null;
+
     const { data, error } = await supabase
       .from('approval_requests')
       .insert({
         user_id: authReq.pcpUserId,
-        studio_id: studioId || null,
-        session_id: sessionId || null,
+        studio_id: studioIdForInsert,
+        session_id: sessionIdForInsert,
         requesting_agent_id: requestingAgentId,
         tool,
         args: args || null,
@@ -6765,6 +6772,13 @@ router.post('/approval-requests', async (req: Request, res: Response) => {
       .single();
 
     if (error) {
+      logger.error('Failed to insert approval request', {
+        error: error.message,
+        code: error.code,
+        studioId,
+        sessionId,
+        tool,
+      });
       res.status(500).json(errorJson('Failed to create approval request', error));
       return;
     }

@@ -2047,11 +2047,20 @@ async function onToolApprovalHandler(options?: { backend?: string }): Promise<vo
   const cwd = process.cwd();
 
   // Claude Code PreToolUse passes: { tool_name, tool_input }
+  // For Bash, tool_input is { command, description } — match against command
+  // so patterns like `Bash(docker push *)` work (Claude Code native syntax).
+  // For other tools, fall back to JSON so patterns can still inspect the full
+  // input shape if ever needed.
   const toolName = (stdin.tool_name as string) || '';
-  const toolInput =
-    typeof stdin.tool_input === 'string'
-      ? stdin.tool_input
-      : JSON.stringify(stdin.tool_input || '');
+  const rawInput = stdin.tool_input;
+  let toolInput: string;
+  if (typeof rawInput === 'string') {
+    toolInput = rawInput;
+  } else if (rawInput && typeof (rawInput as { command?: unknown }).command === 'string') {
+    toolInput = (rawInput as { command: string }).command;
+  } else {
+    toolInput = JSON.stringify(rawInput || '');
+  }
 
   hookLog('on_tool_approval', { toolName, toolInputPreview: toolInput.substring(0, 100) });
 
