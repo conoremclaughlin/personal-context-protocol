@@ -14,6 +14,7 @@ import {
   handleGetTaskStats,
   handleCreateTaskGroup,
   handleListTaskGroups,
+  handleUpdateTaskGroup,
 } from './task-handlers';
 
 // =====================================================
@@ -1295,6 +1296,168 @@ describe('handleCreateTaskGroup', () => {
     expect(response.isError).toBe(true);
     expect(data.error).toBe('User not found');
     expect(dc.repositories.taskGroups.create).not.toHaveBeenCalled();
+  });
+});
+
+// =====================================================
+// handleUpdateTaskGroup
+// =====================================================
+
+describe('handleUpdateTaskGroup', () => {
+  let dc: ReturnType<typeof createMockDataComposer>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dc = createMockDataComposer();
+    resolveUserMock.mockResolvedValue({
+      user: { id: 'user-123' } as any,
+      resolvedBy: 'userId',
+    });
+  });
+
+  const existingGroup = {
+    id: '11111111-2222-3333-4444-555555555555',
+    user_id: 'user-123',
+    identity_id: null,
+    project_id: null,
+    title: 'Feature X',
+    description: null,
+    status: 'active',
+    priority: 'normal',
+    tags: [],
+    metadata: { preset: 'wren' },
+    autonomous: false,
+    max_sessions: null,
+    sessions_used: 0,
+    context_summary: null,
+    next_run_after: null,
+    output_target: null,
+    output_status: null,
+    thread_key: null,
+    owner_agent_id: null,
+    created_at: '2026-04-18T10:00:00Z',
+    updated_at: '2026-04-18T10:00:00Z',
+  };
+
+  it('closes a group with completed status and records closedReason in metadata', async () => {
+    dc.repositories.taskGroups.findById.mockResolvedValue(existingGroup);
+    dc.repositories.taskGroups.update.mockResolvedValue({
+      ...existingGroup,
+      status: 'completed',
+      metadata: { preset: 'wren', closed_reason: 'Shipped via PR #100' },
+    });
+
+    const response = await handleUpdateTaskGroup(
+      {
+        userId: 'user-123',
+        groupId: '11111111-2222-3333-4444-555555555555',
+        status: 'completed',
+        closedReason: 'Shipped via PR #100',
+      } as any,
+      dc as any
+    );
+
+    const data = parseResponse(response);
+    expect(response.isError).toBeFalsy();
+    expect(data.success).toBe(true);
+    expect(data.group.status).toBe('completed');
+    expect(data.group.metadata).toEqual({ preset: 'wren', closed_reason: 'Shipped via PR #100' });
+
+    expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+      '11111111-2222-3333-4444-555555555555',
+      expect.objectContaining({
+        status: 'completed',
+        metadata: { preset: 'wren', closed_reason: 'Shipped via PR #100' },
+      })
+    );
+  });
+
+  it('merges metadata by default, preserving existing keys', async () => {
+    dc.repositories.taskGroups.findById.mockResolvedValue(existingGroup);
+    dc.repositories.taskGroups.update.mockResolvedValue({
+      ...existingGroup,
+      metadata: { preset: 'wren', studioSlug: 'wren-omega' },
+    });
+
+    await handleUpdateTaskGroup(
+      {
+        userId: 'user-123',
+        groupId: '11111111-2222-3333-4444-555555555555',
+        metadata: { studioSlug: 'wren-omega' },
+      } as any,
+      dc as any
+    );
+
+    expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+      '11111111-2222-3333-4444-555555555555',
+      expect.objectContaining({
+        metadata: { preset: 'wren', studioSlug: 'wren-omega' },
+      })
+    );
+  });
+
+  it('replaces metadata when mergeMetadata is false', async () => {
+    dc.repositories.taskGroups.findById.mockResolvedValue(existingGroup);
+    dc.repositories.taskGroups.update.mockResolvedValue({
+      ...existingGroup,
+      metadata: { studioSlug: 'wren-omega' },
+    });
+
+    await handleUpdateTaskGroup(
+      {
+        userId: 'user-123',
+        groupId: '11111111-2222-3333-4444-555555555555',
+        metadata: { studioSlug: 'wren-omega' },
+        mergeMetadata: false,
+      } as any,
+      dc as any
+    );
+
+    expect(dc.repositories.taskGroups.update).toHaveBeenCalledWith(
+      '11111111-2222-3333-4444-555555555555',
+      expect.objectContaining({
+        metadata: { studioSlug: 'wren-omega' },
+      })
+    );
+  });
+
+  it('rejects update when group belongs to a different user', async () => {
+    dc.repositories.taskGroups.findById.mockResolvedValue({
+      ...existingGroup,
+      user_id: 'someone-else',
+    });
+
+    const response = await handleUpdateTaskGroup(
+      {
+        userId: 'user-123',
+        groupId: '11111111-2222-3333-4444-555555555555',
+        status: 'completed',
+      } as any,
+      dc as any
+    );
+
+    const data = parseResponse(response);
+    expect(response.isError).toBe(true);
+    expect(data.error).toBe('Task group does not belong to this user');
+    expect(dc.repositories.taskGroups.update).not.toHaveBeenCalled();
+  });
+
+  it('returns error when group does not exist', async () => {
+    dc.repositories.taskGroups.findById.mockResolvedValue(null);
+
+    const response = await handleUpdateTaskGroup(
+      {
+        userId: 'user-123',
+        groupId: '11111111-2222-3333-4444-555555555555',
+        status: 'completed',
+      } as any,
+      dc as any
+    );
+
+    const data = parseResponse(response);
+    expect(response.isError).toBe(true);
+    expect(data.error).toBe('Task group not found');
+    expect(dc.repositories.taskGroups.update).not.toHaveBeenCalled();
   });
 });
 
